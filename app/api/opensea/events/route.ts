@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 
 const OPENSEA_COLLECTION_SLUG = "hypurr-hyperevm";
 const OPENSEA_BASE_URL = "https://api.opensea.io/api/v2";
+const HYPURR_CONTRACT = "0x9125E2d6827a00B0F8330D6ef7BEF07730Bac685";
+const HYPURR_CHAIN = "hyperevm";
+const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
 
 function getHeaders() {
   const apiKey = process.env.OPENSEA_API_KEY;
@@ -10,110 +13,156 @@ function getHeaders() {
   return headers;
 }
 
+function normalizeImage(url: string | undefined | null) {
+  if (!url) return "";
+  if (url.startsWith("ipfs://")) return `https://ipfs.io/ipfs/${url.replace("ipfs://", "")}`;
+  return url;
+}
+
+function toNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatNative(value: number, symbol = "HYPE") {
+  if (!Number.isFinite(value) || value <= 0) return `-- ${symbol}`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M ${symbol}`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(2)}K ${symbol}`;
+  if (value >= 100) return `${value.toFixed(0)} ${symbol}`;
+  if (value >= 1) return `${value.toFixed(2)} ${symbol}`;
+  return `${value.toPrecision(3)} ${symbol}`;
+}
+
+function formatRelativeTime(timestamp: string | number | undefined) {
+  if (!timestamp) return "--";
+  const date = typeof timestamp === "number" ? new Date(timestamp > 10_000_000_000 ? timestamp : timestamp * 1000) : new Date(timestamp);
+  const diff = Date.now() - date.getTime();
+  if (!Number.isFinite(diff)) return "--";
+  const minutes = Math.max(0, Math.floor(diff / 60_000));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 function getEvents(payload: any) {
   const events = payload?.asset_events || payload?.events || [];
   return Array.isArray(events) ? events : [];
 }
 
+function getNft(event: any) {
+  return event?.nft || event?.asset || event?.item || {};
+}
+
 function getIdentifier(event: any) {
-  const nft = event?.nft || event?.asset || {};
-  return String(nft.identifier || nft.token_id || event?.token_id || event?.nft_id || "");
+  const nft = getNft(event);
+  const nftId = String(nft.identifier || nft.token_id || nft.tokenId || event?.token_id || event?.tokenId || event?.nft_id || "");
+  const match = nftId.match(/(\d+)$/);
+  return match ? match[1] : nftId;
 }
 
-function getExistingImage(event: any) {
-  const nft = event?.nft || event?.asset || {};
-  return nft.display_image_url || nft.image_url || nft.imageUrl || nft.image || event?.image_url || event?.asset?.image_url || event?.asset?.image_original_url || "";
-}
-
-function getContractAddress(event: any) {
-  const nft = event?.nft || event?.asset || {};
-  return (
-    nft.contract ||
-    nft.contract_address ||
-    nft.contractAddress ||
-    nft.asset_contract?.address ||
-    event?.asset_contract?.address ||
-    event?.asset?.asset_contract?.address ||
+function getEventImage(event: any) {
+  const nft = getNft(event);
+  return normalizeImage(
+    nft.display_image_url ||
+    nft.image_url ||
+    nft.imageUrl ||
+    nft.image ||
+    event?.image_url ||
+    event?.asset?.image_url ||
+    event?.asset?.image_original_url ||
+    event?.asset?.imageUrl ||
     ""
   );
 }
 
-function getChain(event: any) {
-  const nft = event?.nft || event?.asset || {};
-  return nft.chain || event?.chain || event?.asset?.chain || "hyperevm";
+function getPrice(event: any) {
+  const payment = event.payment || event.payment_token || event.price?.currency || {};
+  const symbol = payment.symbol || event.price?.currency?.symbol || "HYPE";
+  const decimals = Number(payment.decimals ?? event.price?.currency?.decimals ?? 18);
+  const raw = event.payment?.quantity ?? event.closing_price ?? event.price?.quantity ?? event.quantity ?? event.sale_price;
+  const value = toNumber(raw);
+  if (!value) return `-- ${symbol}`;
+  const normalized = value > 1_000_000_000 ? value / 10 ** decimals : value;
+  return formatNative(normalized, symbol);
 }
 
 async function fetchJson(url: string, headers: HeadersInit) {
   const response = await fetch(url, { method: "GET", headers, cache: "no-store" });
-  if (!response.ok) throw new Error(`${url} failed with ${response.status}`);
+  if (!response.ok) throw new Error(`${url} failed ${response.status}`);
   return response.json();
 }
 
+async function fetchNftImage(identifier: string, headers: HeadersInit) {
+  if (!identifier) return "";
+  const urls = [
+    `${OPENSEA_BASE_URL}/chain/${HYPURR_CHAIN}/contract/${HYPURR_CONTRACT}/nfts/${identifier}`,
+    `${OPENSEA_BASE_URL}/chain/hyperevm/contract/${HYPURR_CONTRACT.toLowerCase()}/nfts/${identifier}`,
+  ];
+  for (const url of urls) {
+    try {
+      const payload = await fetchJson(url, headers);
+      const nft = payload?.nft || payload;
+      const image = normalizeImage(nft?.display_image_url || nft?.image_url || nft?.imageUrl || nft?.image || "");
+      if (image) return image;
+    } catch (error) {
+      // try next form
+    }
+  }
+  return "";
+}
+
 async function fetchCollectionImageMap(headers: HeadersInit) {
+  const map = new Map<string, string>();
   try {
     const payload = await fetchJson(`${OPENSEA_BASE_URL}/collection/${OPENSEA_COLLECTION_SLUG}/nfts?limit=200`, headers);
     const nfts = Array.isArray(payload?.nfts) ? payload.nfts : [];
-    return new Map(
-      nfts.map((nft: any) => [String(nft.identifier || nft.token_id || ""), nft.display_image_url || nft.image_url || nft.imageUrl || nft.image || ""]),
-    );
+    for (const nft of nfts) {
+      const id = String(nft.identifier || nft.token_id || nft.tokenId || "");
+      const image = normalizeImage(nft.display_image_url || nft.image_url || nft.imageUrl || nft.image || "");
+      if (id && image) map.set(id, image);
+    }
   } catch (error) {
-    return new Map<string, string>();
+    // optional improvement only
   }
+  return map;
 }
 
-async function fetchSingleNftImage(event: any, headers: HeadersInit) {
-  const identifier = getIdentifier(event);
-  const contract = getContractAddress(event);
-  const chain = getChain(event);
-  if (!identifier || !contract) return "";
-
-  try {
-    const payload = await fetchJson(`${OPENSEA_BASE_URL}/chain/${chain}/contract/${contract}/nfts/${identifier}`, headers);
-    const nft = payload?.nft || payload;
-    return nft?.display_image_url || nft?.image_url || nft?.imageUrl || nft?.image || "";
-  } catch (error) {
-    return "";
-  }
+function buildOpenSeaUrl(identifier: string) {
+  return identifier ? `https://opensea.io/assets/${HYPURR_CHAIN}/${HYPURR_CONTRACT}/${identifier}` : OPENSEA_COLLECTION_URL;
 }
 
 export async function GET() {
   const headers = getHeaders();
-
   try {
-    const eventsPayload = await fetchJson(`${OPENSEA_BASE_URL}/events/collection/${OPENSEA_COLLECTION_SLUG}?event_type=sale&limit=24`, headers);
+    const [eventsPayload, imageMap] = await Promise.all([
+      fetchJson(`${OPENSEA_BASE_URL}/events/collection/${OPENSEA_COLLECTION_SLUG}?event_type=sale&limit=30`, headers),
+      fetchCollectionImageMap(headers),
+    ]);
+
     const events = getEvents(eventsPayload).slice(0, 18);
-    const imageMap = await fetchCollectionImageMap(headers);
+    const sales = await Promise.all(events.map(async (event: any) => {
+      const nft = getNft(event);
+      const identifier = getIdentifier(event);
+      const imageFromEvent = getEventImage(event);
+      const imageFromMap = identifier ? imageMap.get(identifier) || "" : "";
+      const image = imageFromEvent || imageFromMap || await fetchNftImage(identifier, headers);
+      const timestamp = event.event_timestamp || event.created_date || event.transaction?.timestamp || event.timestamp;
+      return {
+        id: identifier || "?",
+        name: nft.name || (identifier ? `Hypurr #${identifier}` : "Hypurr"),
+        price: getPrice(event),
+        time: formatRelativeTime(timestamp),
+        timestamp,
+        image,
+        url: nft.permalink || buildOpenSeaUrl(identifier),
+        buyer: event.buyer || event.to_account?.address || event.taker?.address || "",
+        seller: event.seller || event.from_account?.address || event.maker?.address || "",
+      };
+    }));
 
-    const enrichedEvents = await Promise.all(
-      events.map(async (event: any) => {
-        const nft = event?.nft || event?.asset || {};
-        const identifier = getIdentifier(event);
-        const mappedImage = identifier ? imageMap.get(identifier) || "" : "";
-        const existingImage = getExistingImage(event) || mappedImage;
-        const recoveredImage = existingImage ? "" : await fetchSingleNftImage(event, headers);
-
-        return {
-          ...event,
-          image_url: existingImage || recoveredImage || "",
-          nft: {
-            ...nft,
-            identifier: identifier || nft.identifier,
-            image_url: nft.image_url || existingImage || recoveredImage || "",
-            display_image_url: nft.display_image_url || existingImage || recoveredImage || "",
-          },
-        };
-      }),
-    );
-
-    return NextResponse.json(
-      {
-        events: enrichedEvents,
-        generatedAt: new Date().toISOString(),
-        source: "opensea-rest",
-      },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ sales, events: sales, source: "opensea-rest-enriched", generatedAt: new Date().toISOString() }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    return NextResponse.json({ events: [], error: "OpenSea events route failed" }, { status: 500 });
+    return NextResponse.json({ sales: [], events: [], error: "OpenSea enriched events route failed" }, { status: 500 });
   }
 }

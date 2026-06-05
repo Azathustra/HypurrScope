@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
 
-const HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info";
-const DEFAULT_COINS = ["HYPE"];
+const HYPERLIQUID_INFO_ENDPOINT = "https://api.hyperliquid.xyz/info";
 
-type RecentTrade = {
-  px: string;
-  sz: string;
-  side: "A" | "B" | string;
+type NormalizedTrade = {
+  side: "Buy" | "Sell";
+  price: number;
+  size: number;
+  notional: number;
   time: number;
-  tid?: number;
 };
 
 function toNumber(value: unknown) {
@@ -24,109 +23,73 @@ function formatUsd(value: number) {
   return `$${value.toFixed(2)}`;
 }
 
-function formatPrice(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return "$--";
-  if (value >= 1_000) return `$${Math.round(value).toLocaleString("en-US")}`;
-  if (value >= 1) return `$${value.toFixed(3)}`;
-  return `$${value.toPrecision(4)}`;
+function formatNative(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "-- HYPE";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M HYPE`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(2)}K HYPE`;
+  if (value >= 1) return `${value.toFixed(2)} HYPE`;
+  return `${value.toPrecision(3)} HYPE`;
 }
 
-function relativeTime(timestamp: number) {
-  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+function formatRelativeTime(timestamp: number) {
+  const diff = Date.now() - timestamp;
+  const minutes = Math.max(0, Math.floor(diff / 60_000));
   if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
 }
 
-async function fetchRecentTrades(coin: string) {
-  const response = await fetch(HYPERLIQUID_INFO_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "recentTrades", coin }),
-    cache: "no-store",
-  });
-
-  if (!response.ok) throw new Error(`recentTrades failed for ${coin}: ${response.status}`);
-  const payload = await response.json();
-  return Array.isArray(payload) ? (payload as RecentTrade[]) : [];
-}
-
-function median(values: number[]) {
-  const clean = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
-  if (clean.length === 0) return 0;
-  const mid = Math.floor(clean.length / 2);
-  return clean.length % 2 ? clean[mid] : (clean[mid - 1] + clean[mid]) / 2;
-}
-
-function buildTwapLikeRows(coin: string, trades: RecentTrade[]) {
-  const now = Date.now();
-  const recent = trades
-    .filter((trade) => Number.isFinite(trade.time) && now - trade.time <= 20 * 60_000)
-    .sort((a, b) => a.time - b.time);
-
-  return ["B", "A"].flatMap((side) => {
-    const sideTrades = recent.filter((trade) => trade.side === side);
-    if (sideTrades.length < 3) return [];
-
-    const notionals = sideTrades.map((trade) => toNumber(trade.px) * toNumber(trade.sz)).filter((value) => value > 0);
-    const sizes = sideTrades.map((trade) => toNumber(trade.sz)).filter((value) => value > 0);
-    const totalNotional = notionals.reduce((sum, value) => sum + value, 0);
-    const medianSize = median(sizes);
-    const similarSizeCount = medianSize > 0 ? sizes.filter((size) => Math.abs(size - medianSize) / medianSize <= 0.35).length : 0;
-    const similarityRatio = sizes.length ? similarSizeCount / sizes.length : 0;
-    const first = sideTrades[0];
-    const last = sideTrades[sideTrades.length - 1];
-    const windowMinutes = Math.max(1, Math.round((last.time - first.time) / 60_000));
-
-    if (totalNotional < 50_000 || similarityRatio < 0.34) return [];
-
-    let confidenceScore = 35;
-    confidenceScore += Math.min(sideTrades.length * 6, 28);
-    confidenceScore += similarityRatio >= 0.66 ? 22 : similarityRatio >= 0.5 ? 14 : 6;
-    confidenceScore += windowMinutes >= 3 ? 8 : 0;
-    confidenceScore += totalNotional >= 1_000_000 ? 10 : totalNotional >= 250_000 ? 6 : 0;
-
-    const confidence = confidenceScore >= 78 ? "High" : confidenceScore >= 58 ? "Medium" : "Low";
-    const avgNotional = totalNotional / Math.max(1, notionals.length);
-
-    return [
-      {
-        market: coin,
-        side: side === "B" ? "Buy" : "Sell",
-        notional: formatUsd(totalNotional),
-        slices: `${sideTrades.length} trades`,
-        avgSize: formatUsd(avgNotional),
-        lastPrice: formatPrice(toNumber(last.px)),
-        confidence,
-        time: relativeTime(last.time),
-        rawNotional: totalNotional,
-        window: `${windowMinutes}m window`,
-        source: "recentTrades",
-      },
-    ];
-  });
+function normalizeTrade(trade: any): NormalizedTrade | null {
+  const price = toNumber(trade.px || trade.price);
+  const size = toNumber(trade.sz || trade.size);
+  const rawSide = String(trade.side || trade.dir || "").toLowerCase();
+  const time = toNumber(trade.time || trade.timestamp);
+  const side = rawSide === "b" || rawSide.includes("buy") ? "Buy" : rawSide === "a" || rawSide.includes("sell") ? "Sell" : "Buy";
+  if (!price || !size || !time) return null;
+  return { side, price, size, notional: price * size, time };
 }
 
 export async function GET() {
   try {
-    const results = await Promise.allSettled(DEFAULT_COINS.map(async (coin) => ({ coin, trades: await fetchRecentTrades(coin) })));
+    const response = await fetch(HYPERLIQUID_INFO_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "recentTrades", coin: "HYPE" }),
+      cache: "no-store",
+    });
 
-    const rows = results
-      .flatMap((result) => (result.status === "fulfilled" ? buildTwapLikeRows(result.value.coin, result.value.trades) : []))
-      .sort((a: any, b: any) => b.rawNotional - a.rawNotional)
-      .slice(0, 12)
-      .map(({ rawNotional, ...row }: any) => row);
+    if (!response.ok) {
+      const text = await response.text();
+      return NextResponse.json({ rows: [], error: text || "recentTrades failed" }, { status: response.status });
+    }
 
-    return NextResponse.json(
-      {
-        rows,
-        generatedAt: new Date().toISOString(),
-        note: "HYPE-only TWAP-style detector from Hyperliquid recentTrades. This is not an official all-user native TWAP feed.",
-      },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    const payload = await response.json();
+    const trades = (Array.isArray(payload) ? payload : [])
+      .map(normalizeTrade)
+      .filter(Boolean) as NormalizedTrade[];
+
+    const recentCutoff = Date.now() - 30 * 60 * 1000;
+    const recentTrades = trades.filter((trade) => trade.time >= recentCutoff);
+    const grouped = ["Buy", "Sell"].map((side) => {
+      const sideTrades = recentTrades.filter((trade) => trade.side === side);
+      const notional = sideTrades.reduce((sum, trade) => sum + trade.notional, 0);
+      const size = sideTrades.reduce((sum, trade) => sum + trade.size, 0);
+      const avgPrice = size > 0 ? notional / size : 0;
+      const lastTrade = sideTrades.length ? Math.max(...sideTrades.map((trade) => trade.time)) : 0;
+      const confidence = sideTrades.length >= 20 && notional >= 1_000_000 ? "High" : sideTrades.length >= 10 && notional >= 250_000 ? "Medium" : "Low";
+      return {
+        side,
+        notional: formatUsd(notional),
+        rawNotional: notional,
+        slices: sideTrades.length,
+        avgSize: formatNative(sideTrades.length ? size / sideTrades.length : 0),
+        avgPrice: formatUsd(avgPrice),
+        lastTrade: lastTrade ? formatRelativeTime(lastTrade) : "--",
+        confidence,
+      };
+    }).filter((row) => row.rawNotional > 50_000 || row.slices >= 5);
+
+    return NextResponse.json({ rows: grouped, generatedAt: new Date().toISOString(), source: "hyperliquid-recentTrades" }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    return NextResponse.json({ rows: [], error: "HYPE TWAP watcher failed" }, { status: 500 });
+    return NextResponse.json({ rows: [], error: "HYPE TWAP detector failed" }, { status: 500 });
   }
 }
