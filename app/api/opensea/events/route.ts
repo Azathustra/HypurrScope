@@ -274,9 +274,19 @@ function findPriceNearToken(plainText: string, identifier: string) {
 function extractIdsFromActivityHtml(html: string) {
   const ids = new Set<string>();
   const itemRegex = new RegExp(`/item/${HYPURR_CHAIN}/${HYPURR_CONTRACT_LOWER}/(\\d+)`, "gi");
-  for (const match of html.matchAll(itemRegex)) ids.add(match[1]);
+
+  let itemMatch: RegExpExecArray | null;
+  while ((itemMatch = itemRegex.exec(html)) !== null) {
+    ids.add(itemMatch[1]);
+  }
+
   const text = html.replace(/<script[\s\S]*?<\/script>/g, " ").replace(/<style[\s\S]*?<\/style>/g, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-  for (const match of text.matchAll(/Hypurr\s*#\s*(\d+)/gi)) ids.add(match[1]);
+  const hypurrRegex = /Hypurr\s*#\s*(\d+)/gi;
+  let hypurrMatch: RegExpExecArray | null;
+  while ((hypurrMatch = hypurrRegex.exec(text)) !== null) {
+    ids.add(hypurrMatch[1]);
+  }
+
   return { ids: Array.from(ids).slice(0, 12), text };
 }
 
