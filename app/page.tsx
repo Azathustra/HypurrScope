@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  Sparkles,
   TrendingDown,
   TrendingUp,
   Wallet,
