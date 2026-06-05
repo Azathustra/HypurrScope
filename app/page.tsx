@@ -423,9 +423,9 @@ function NftSaleCard({ sale, compact = false }: { sale: NftSale; compact?: boole
   const hasImage = Boolean(sale.image && !broken);
   return (
     <a href={sale.url || OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer" className="group block overflow-hidden rounded-2xl border border-white/15 bg-[#071f1d]/90 transition hover:-translate-y-0.5 hover:border-cyan-200/35 hover:bg-white/[0.06]">
-      <div className={cn("relative flex items-center justify-center overflow-hidden bg-gradient-to-br from-[#0b3a35] via-[#082b28] to-[#061716]", compact ? "aspect-square" : "aspect-[4/5]")}> 
+      <div className={cn("relative flex items-center justify-center overflow-hidden bg-gradient-to-br from-[#0b3a35] via-[#082b28] to-[#061716]", compact ? "aspect-[5/4]" : "aspect-square")}> 
         {hasImage ? (
-          <img src={sale.image} alt={sale.name} onError={() => setBroken(true)} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-full w-full object-contain p-1 transition duration-500 group-hover:scale-[1.025]" />
+          <img src={sale.image} alt={sale.name} onError={() => setBroken(true)} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-full w-full object-contain p-2 transition duration-500 group-hover:scale-[1.025]" />
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-cyan-100/45">
             <ImageIcon className="h-8 w-8" />
@@ -433,7 +433,7 @@ function NftSaleCard({ sale, compact = false }: { sale: NftSale; compact?: boole
           </div>
         )}
       </div>
-      <div className={cn("space-y-2", compact ? "p-3" : "p-4")}>
+      <div className={cn("space-y-2", compact ? "p-3.5" : "p-4")}> 
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="truncate text-sm font-black text-white">{sale.name}</p>
@@ -450,13 +450,13 @@ function NftGrid({ sales, loading, message, compact = false, max = 12 }: { sales
   if (!loading && sales.length === 0) return <NftEmptyState message={message} compact={compact} />;
   if (loading && sales.length === 0) {
     return (
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        {Array.from({ length: compact ? 6 : 9 }).map((_, index) => <div key={index} className={cn("animate-pulse rounded-2xl border border-white/10 bg-white/[0.045]", compact ? "h-48" : "h-72")} />)}
+      <div className={cn("grid gap-4", compact ? "grid-cols-2" : "grid-cols-2 md:grid-cols-3 xl:grid-cols-4")}> 
+        {Array.from({ length: compact ? 4 : 12 }).map((_, index) => <div key={index} className={cn("animate-pulse rounded-2xl border border-white/10 bg-white/[0.045]", compact ? "h-64" : "h-80")} />)}
       </div>
     );
   }
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-3">
+    <div className={cn("grid gap-4", compact ? "grid-cols-2" : "grid-cols-2 md:grid-cols-3 xl:grid-cols-4")}> 
       {sales.slice(0, max).map((sale) => <NftSaleCard key={`${sale.id}-${sale.price}-${sale.time}`} sale={sale} compact={compact} />)}
     </div>
   );
@@ -625,7 +625,7 @@ export default function App() {
             <div><h2 className="text-lg font-black text-white">Latest Hypurr NFT sales</h2><p className="text-sm text-white/50">Images + prices. Auto-refresh every 120s.</p></div>
             <a href={OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-white/15 px-3 py-1 text-xs text-cyan-100 hover:bg-white/10">OpenSea <ExternalLink className="h-3 w-3" /></a>
           </div>
-          <NftGrid sales={nftSales} loading={nftStatus === "loading"} message={nftMessage} compact max={6} />
+          <NftGrid sales={nftSales} loading={nftStatus === "loading"} message={nftMessage} compact max={4} />
         </DataCard>
       </div>
 
