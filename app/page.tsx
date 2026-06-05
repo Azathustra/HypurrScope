@@ -4,9 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Activity,
-  AlertTriangle,
   BarChart3,
-  CheckCircle2,
   Clock,
   Coins,
   ExternalLink,
@@ -14,11 +12,9 @@ import {
   Globe2,
   Image as ImageIcon,
   Layers,
-  Lock,
   Radio,
   RefreshCw,
   Search,
-  ShieldAlert,
   Sparkles,
   TrendingUp,
   Wallet,
@@ -27,7 +23,7 @@ import {
 } from "lucide-react";
 
 type ApiStatus = "loading" | "live" | "fallback";
-type ViewId = "overview" | "markets" | "twaps" | "nfts" | "etfs" | "vaults" | "whales" | "methodology";
+type ViewId = "overview" | "markets" | "twaps" | "nfts" | "flows" | "vaults" | "whales";
 
 type MarketRow = {
   symbol: string;
@@ -95,9 +91,37 @@ type TwapRow = {
   market: string;
   side: "Buy" | "Sell";
   notional: string;
-  filled: string;
-  status: string;
+  slices: string;
+  avgSize: string;
+  lastPrice: string;
+  confidence: "High" | "Medium" | "Low" | string;
   time: string;
+  source?: string;
+  window?: string;
+};
+
+type FlowRow = {
+  name: string;
+  ticker: string;
+  venue: string;
+  status: string;
+  dailyFlow: string;
+  rawDailyFlow: number;
+  aum: string;
+  holdings: string;
+  fee: string;
+  lastData: string;
+  url: string;
+};
+
+type WhaleAccountRow = {
+  rank: number;
+  address: string;
+  label: string;
+  accountValue: string;
+  pnl: string;
+  roi: string;
+  volume: string;
 };
 
 const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
@@ -117,9 +141,9 @@ const fallbackWhaleRows: WhaleRow[] = [
 ];
 
 const fallbackVaultRows: VaultRow[] = [
-  { name: "Blue Whale", aum: "$42.60M", rawAum: 42_600_000, apr: "+18.40%", dd: "Live", age: "214d", score: 78, status: "Open" },
-  { name: "Delta Neutral Alpha", aum: "$18.90M", rawAum: 18_900_000, apr: "+7.20%", dd: "Live", age: "126d", score: 35, status: "Open" },
-  { name: "Hyper Momentum", aum: "$11.20M", rawAum: 11_200_000, apr: "+39.80%", dd: "Live", age: "58d", score: 88, status: "Open" },
+  { name: "HLP", aum: "Loading", rawAum: 0, apr: "Loading", dd: "Live", age: "--", score: 45, status: "Open" },
+  { name: "High-yield vault example", aum: "$18.90M", rawAum: 18_900_000, apr: "+7.20%", dd: "Live", age: "126d", score: 35, status: "Open" },
+  { name: "Momentum vault example", aum: "$11.20M", rawAum: 11_200_000, apr: "+39.80%", dd: "Live", age: "58d", score: 88, status: "Open" },
 ];
 
 const fallbackNftStats: NftStats = {
@@ -137,34 +161,60 @@ const fallbackNftSales: NftSale[] = [
   { id: "411", name: "Hypurr #411", price: "351 HYPE", usd: "$24.00K", time: "1h ago", url: OPENSEA_COLLECTION_URL },
 ];
 
-const fallbackTwapRows: TwapRow[] = [
-  { market: "HYPE", side: "Buy", notional: "$2.40M", filled: "42%", status: "Proxy / planned", time: "Live route next" },
-  { market: "BTC", side: "Sell", notional: "$8.10M", filled: "67%", status: "Proxy / planned", time: "Live route next" },
-  { market: "ETH", side: "Buy", notional: "$3.80M", filled: "18%", status: "Proxy / planned", time: "Live route next" },
+const fallbackTwapRows: TwapRow[] = [];
+
+const fallbackFlowRows: FlowRow[] = [
+  {
+    name: "21Shares Hyperliquid ETP",
+    ticker: "HYPE",
+    venue: "SIX / EU venues",
+    status: "Live ETP",
+    dailyFlow: "Pending",
+    rawDailyFlow: 0,
+    aum: "Pending",
+    holdings: "Pending",
+    fee: "2.50%",
+    lastData: "Add source",
+    url: "https://www.21shares.com/",
+  },
+  {
+    name: "CoinShares Hyperliquid Staking ETP",
+    ticker: "LIQD",
+    venue: "Xetra",
+    status: "Live ETP",
+    dailyFlow: "Pending",
+    rawDailyFlow: 0,
+    aum: "Pending",
+    holdings: "Pending",
+    fee: "0.00% mgmt",
+    lastData: "Add source",
+    url: "https://coinshares.com/",
+  },
+  {
+    name: "Bitwise Hyperliquid ETF",
+    ticker: "BHYP",
+    venue: "NYSE Arca proposed",
+    status: "Filing watch",
+    dailyFlow: "Not live",
+    rawDailyFlow: 0,
+    aum: "Pending",
+    holdings: "Pending",
+    fee: "Pending",
+    lastData: "SEC filing",
+    url: "https://www.sec.gov/",
+  },
 ];
 
-const etpRows = [
-  { name: "21Shares Hyperliquid ETP", ticker: "HYPE", isin: "CH1471826029", venue: "SIX / EU venues", fee: "2.50%", status: "Live ETP", aum: "$--", flow: "Manual watch", url: "https://www.21shares.com/" },
-  { name: "CoinShares Hyperliquid Staking ETP", ticker: "LIQD", isin: "GB00BVBJQ593", venue: "Xetra", fee: "0.00% mgmt", status: "Live ETP", aum: "$--", flow: "Manual watch", url: "https://coinshares.com/" },
-  { name: "Bitwise Hyperliquid ETF", ticker: "BHYP", isin: "SEC filing", venue: "NYSE Arca proposed", fee: "Pending", status: "Filing watch", aum: "Pending", flow: "Watchlist", url: "https://www.sec.gov/" },
-];
-
-const methodologyItems = [
-  { title: "Left sidebar navigation", description: "No anchor scrolling. Each click swaps the central workspace, closer to an app/dashboard UX." },
-  { title: "NFT sales with images", description: "OpenSea events are parsed client-side and the sold NFT image is shown when the API payload provides it." },
-  { title: "Read-only safety", description: "No wallet connect, no private keys, no order routing, no copy-trading execution." },
-  { title: "Next data modules", description: "TWAP tape, ETF/ETP flow automation and richer Hyperliquid stats should be added as separate API routes." },
-];
+const fallbackTopWhales: WhaleAccountRow[] = [];
 
 const navItems: Array<{ id: ViewId; label: string; description: string; icon: any }> = [
-  { id: "overview", label: "Overview", description: "Main dashboard", icon: Gauge },
+  { id: "overview", label: "Overview", description: "Dashboard", icon: Gauge },
   { id: "markets", label: "Markets", description: "Perps, OI, funding", icon: BarChart3 },
-  { id: "twaps", label: "TWAPs", description: "Tape module", icon: Clock },
+  { id: "twaps", label: "HYPE TWAP", description: "HYPE sliced flow", icon: Clock },
   { id: "nfts", label: "Hypurr NFTs", description: "Floor & sales", icon: ImageIcon },
-  { id: "etfs", label: "TradFi Flow", description: "ETP / ETF watch", icon: Globe2 },
-  { id: "vaults", label: "Vaults", description: "Vault risk", icon: Layers },
-  { id: "whales", label: "Whales", description: "Wallet scanner", icon: Wallet },
-  { id: "methodology", label: "Methodology", description: "Safety & logic", icon: Lock },
+  { id: "flows", label: "TradFi Flows", description: "Daily inflows", icon: Globe2 },
+  { id: "vaults", label: "HLP", description: "Yield & vaults", icon: Layers },
+  { id: "whales", label: "Whales", description: "Top 20 + scanner", icon: Wallet },
 ];
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -187,6 +237,12 @@ function formatUsd(value: number) {
   if (value >= 1_000) return `$${Math.round(value).toLocaleString("en-US")}`;
   if (value >= 1) return `$${value.toFixed(2)}`;
   return `$${value.toPrecision(3)}`;
+}
+
+function formatSignedUsd(value: number) {
+  if (!Number.isFinite(value) || value === 0) return "Pending";
+  const prefix = value > 0 ? "+" : "-";
+  return `${prefix}${formatUsd(Math.abs(value))}`;
 }
 
 function formatPercent(value: number, digits = 2) {
@@ -396,15 +452,23 @@ function normalizeOpenSeaEventPrice(event: any) {
   return formatNative(normalized, symbol);
 }
 
+function normalizeImageUrl(url: string | undefined | null) {
+  if (!url) return "";
+  if (url.startsWith("ipfs://")) return `https://ipfs.io/ipfs/${url.replace("ipfs://", "")}`;
+  return url;
+}
+
 function extractNftImage(nft: any, event: any) {
-  return (
+  return normalizeImageUrl(
     nft.display_image_url ||
     nft.image_url ||
     nft.imageUrl ||
-    nft.metadata_url ||
+    nft.image ||
+    event.image_url ||
     event.asset?.image_url ||
     event.asset?.image_original_url ||
-    ""
+    event.asset?.imageUrl ||
+    "",
   );
 }
 
@@ -435,6 +499,47 @@ function buildNftSalesFromOpenSeaEvents(payload: any): NftSale[] {
 
   if (rows.length === 0) throw new Error("No sale events parsed");
   return rows;
+}
+
+function normalizeFlowRows(payload: any): FlowRow[] {
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  if (rows.length === 0) return fallbackFlowRows;
+  return rows.map((row: any) => ({
+    name: row.name || "Unknown product",
+    ticker: row.ticker || "--",
+    venue: row.venue || "--",
+    status: row.status || "Watch",
+    dailyFlow: row.dailyFlow || formatSignedUsd(toNumber(row.rawDailyFlow)),
+    rawDailyFlow: toNumber(row.rawDailyFlow),
+    aum: row.aum || "Pending",
+    holdings: row.holdings || "Pending",
+    fee: row.fee || "--",
+    lastData: row.lastData || "--",
+    url: row.url || "#",
+  }));
+}
+
+function normalizeWhaleAccounts(payload: any): WhaleAccountRow[] {
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  return rows.slice(0, 20).map((row: any, index: number) => ({
+    rank: Number(row.rank || index + 1),
+    address: row.address || row.trader_address || row.user || "",
+    label: row.label || row.trader_address_label || "Whale",
+    accountValue: row.accountValue || formatUsd(toNumber(row.account_value || row.accountValueUsd)),
+    pnl: row.pnl || formatUsd(toNumber(row.total_pnl || row.pnlUsd)),
+    roi: row.roi || (Number.isFinite(Number(row.roi_pct || row.roi)) ? formatPercent(Number(row.roi_pct || row.roi), 2) : "--"),
+    volume: row.volume || formatUsd(toNumber(row.volume || row.trading_volume)),
+  })).filter((row: WhaleAccountRow) => isValidEvmAddress(row.address));
+}
+
+function findHlpVault(rows: VaultRow[]) {
+  return rows.find((vault) => /(^|\b)HLP($|\b)|hyperliquidity|liquidity provider/i.test(vault.name)) || rows[0] || fallbackVaultRows[0];
+}
+
+function parsePercentLabel(value: string) {
+  const cleaned = value.replace("%", "").replace("+", "");
+  const number = Number(cleaned);
+  return Number.isFinite(number) ? number : 0;
 }
 
 function Button({ children, className = "", variant = "solid", size = "default", ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "solid" | "outline"; size?: "default" | "sm" }) {
@@ -553,7 +658,18 @@ export default function App() {
   const [nftSaleRows, setNftSaleRows] = useState<NftSale[]>(fallbackNftSales);
   const [nftApiStatus, setNftApiStatus] = useState<ApiStatus>("loading");
   const [nftLastUpdated, setNftLastUpdated] = useState<Date | null>(null);
-  const [nftError, setNftError] = useState("OpenSea API usually requires a server-side key. Fallback data is shown if blocked.");
+  const [nftError, setNftError] = useState("OpenSea REST polling. Add OPENSEA_API_KEY in Vercel for better reliability.");
+  const [twapRows, setTwapRows] = useState<TwapRow[]>(fallbackTwapRows);
+  const [twapApiStatus, setTwapApiStatus] = useState<ApiStatus>("loading");
+  const [twapLastUpdated, setTwapLastUpdated] = useState<Date | null>(null);
+  const [twapError, setTwapError] = useState("Live flow detector loading from Hyperliquid recent trades.");
+  const [flowRows, setFlowRows] = useState<FlowRow[]>(fallbackFlowRows);
+  const [flowApiStatus, setFlowApiStatus] = useState<ApiStatus>("loading");
+  const [flowLastUpdated, setFlowLastUpdated] = useState<Date | null>(null);
+  const [flowError, setFlowError] = useState("Daily flow source loading. Product metadata is kept small; daily inflow is the main metric.");
+  const [topWhales, setTopWhales] = useState<WhaleAccountRow[]>(fallbackTopWhales);
+  const [topWhalesStatus, setTopWhalesStatus] = useState<ApiStatus>("loading");
+  const [topWhalesError, setTopWhalesError] = useState("Loading top whale leaderboard.");
 
   useEffect(() => {
     let isMounted = true;
@@ -660,7 +776,105 @@ export default function App() {
     }
 
     loadHypurrNftPulse();
-    const interval = window.setInterval(loadHypurrNftPulse, 60_000);
+    const interval = window.setInterval(loadHypurrNftPulse, 30_000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTwapFlow() {
+      try {
+        setTwapApiStatus((current) => (current === "live" ? "live" : "loading"));
+        const response = await fetch("/api/hyperliquid/twaps", { method: "GET" });
+        if (!response.ok) throw new Error(`TWAP flow route error ${response.status}`);
+        const payload = await response.json();
+        const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+        if (isMounted) {
+          setTwapRows(rows);
+          setTwapApiStatus("live");
+          setTwapLastUpdated(new Date());
+          setTwapError(payload?.note || "Live TWAP-like flow detector updated.");
+        }
+      } catch (error) {
+        if (isMounted) {
+          setTwapRows([]);
+          setTwapApiStatus("fallback");
+          setTwapLastUpdated(new Date());
+          setTwapError("TWAP flow route failed. Check the Vercel deployment logs for /api/hyperliquid/twaps.");
+        }
+      }
+    }
+
+    loadTwapFlow();
+    const interval = window.setInterval(loadTwapFlow, 20_000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTradFiFlows() {
+      try {
+        setFlowApiStatus((current) => (current === "live" ? "live" : "loading"));
+        const response = await fetch("/api/tradfi/flows", { method: "GET" });
+        if (!response.ok) throw new Error(`TradFi flow route error ${response.status}`);
+        const payload = await response.json();
+        if (isMounted) {
+          setFlowRows(normalizeFlowRows(payload));
+          setFlowApiStatus(payload?.sourceReady ? "live" : "fallback");
+          setFlowLastUpdated(new Date());
+          setFlowError(payload?.note || "Daily flow route updated.");
+        }
+      } catch (error) {
+        if (isMounted) {
+          setFlowRows(fallbackFlowRows);
+          setFlowApiStatus("fallback");
+          setFlowLastUpdated(new Date());
+          setFlowError("TradFi flow route failed. Showing product watchlist only.");
+        }
+      }
+    }
+
+    loadTradFiFlows();
+    const interval = window.setInterval(loadTradFiFlows, 300_000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTopWhales() {
+      try {
+        setTopWhalesStatus((current) => (current === "live" ? "live" : "loading"));
+        const response = await fetch("/api/hyperliquid/whales", { method: "GET" });
+        if (!response.ok) throw new Error(`Whale leaderboard route error ${response.status}`);
+        const payload = await response.json();
+        if (isMounted) {
+          setTopWhales(normalizeWhaleAccounts(payload));
+          setTopWhalesStatus(payload?.needsApiKey ? "fallback" : "live");
+          setTopWhalesError(payload?.note || "Top whale leaderboard updated.");
+        }
+      } catch (error) {
+        if (isMounted) {
+          setTopWhales([]);
+          setTopWhalesStatus("fallback");
+          setTopWhalesError("Top whale route failed. Manual wallet scan still works.");
+        }
+      }
+    }
+
+    loadTopWhales();
+    const interval = window.setInterval(loadTopWhales, 300_000);
     return () => {
       isMounted = false;
       window.clearInterval(interval);
@@ -715,16 +929,16 @@ export default function App() {
       <WorkspaceShell>
         <ViewHeader
           icon={Sparkles}
-          eyebrow="Hyperliquid intelligence"
-          title="Hyperliquid intelligence, cleaner and sharper."
-          description="A fixed-sidebar workspace for markets, TWAPs, Hypurr NFTs, TradFi flows, vaults and whale data. No front-page wallet block, no anchor-scroll landing page — just modules that feel like a real app."
+          eyebrow="Hyperliquid dashboard"
+          title="HYPE flows, Hypurr NFTs and whale activity."
+          description="A cleaner read-only dashboard focused on what matters: HYPE market pressure, HYPE-only TWAP-style flow, Hypurr NFT sales, TradFi inflows, HLP yield and whale wallets."
           right={<StatusPill status={apiStatus} />}
         />
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard icon={Gauge} label="Global Risk" value={String(dashboardStats.globalRisk)} sub="Funding, OI, 24h move, volume" tone={dashboardStats.globalRisk >= 65 ? "amber" : "cyan"} />
-          <StatCard icon={Activity} label="Tracked OI" value={formatUsd(dashboardStats.totalOi)} sub="Live Hyperliquid perps universe" />
-          <StatCard icon={Waves} label="24h Volume" value={formatUsd(dashboardStats.totalVolume)} sub="Across tracked markets" tone="green" />
+          <StatCard icon={Gauge} label="HYPE Price" value={dashboardStats.hypeRow.price} sub={`${dashboardStats.hypeRow.change} 24h · OI ${dashboardStats.hypeRow.oi}`} tone={dashboardStats.hypeRow.rawChange >= 0 ? "green" : "red"} />
+          <StatCard icon={Activity} label="Tracked OI" value={formatUsd(dashboardStats.totalOi)} sub="Hyperliquid perps universe" />
+          <StatCard icon={Waves} label="Daily TradFi Flow" value={flowRows[0]?.dailyFlow || "Pending"} sub={flowRows[0]?.lastData || "Waiting for source"} tone={flowRows[0]?.rawDailyFlow > 0 ? "green" : "cyan"} />
           <StatCard icon={ImageIcon} label="NFT Floor" value={nftStats.floor} sub="Hypurr collection" tone="amber" />
         </div>
 
@@ -734,7 +948,7 @@ export default function App() {
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <h2 className="text-xl font-semibold">Market Pulse</h2>
-                  <p className="text-sm text-white/50">Live markets by priority, OI and risk.</p>
+                  <p className="text-sm text-white/50">Live markets by priority, OI and risk. HYPE has its own flow page.</p>
                 </div>
                 <Button variant="outline" size="sm" onClick={() => setActiveView("markets")}>Open markets</Button>
               </div>
@@ -747,7 +961,7 @@ export default function App() {
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <h2 className="text-xl font-semibold">Recent Hypurr sales</h2>
-                  <p className="text-sm text-white/45">Images appear when OpenSea returns them.</p>
+                  <p className="text-sm text-white/45">Images appear when OpenSea or the enriched route returns them.</p>
                 </div>
                 <StatusPill status={nftApiStatus} />
               </div>
@@ -785,31 +999,41 @@ export default function App() {
   }
 
   function renderTwaps() {
+    const hypeTwapRows = twapRows.filter((row) => row.market === "HYPE");
     return (
       <WorkspaceShell>
         <ViewHeader
           icon={Clock}
-          eyebrow="TWAP tape"
-          title="TWAP monitor"
-          description="This is the page structure for the TWAP module. Next step is wiring the correct Hyperliquid TWAP endpoint / source. For now it is isolated from the rest of the site so it can become a real-time tape without changing the layout again."
-          right={<span className="rounded-full border border-amber-300/30 bg-amber-300/10 px-3 py-1 text-xs text-amber-200">Data route pending</span>}
+          eyebrow="HYPE-only flow"
+          title="HYPE TWAP-style tape"
+          description="This page only tracks HYPE. BTC, ETH and other markets were removed so the view stays focused on the Hyperliquid token flow. The route refreshes frequently and detects repeated sliced trades from public recent trades."
+          right={<div className="flex items-center gap-2"><StatusPill status={twapApiStatus} /><span className="text-xs text-white/40">{twapLastUpdated ? `Updated ${twapLastUpdated.toLocaleTimeString()}` : "Waiting for data"}</span></div>}
         />
         <Card>
           <CardContent>
-            <div className="mb-4 rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm leading-6 text-amber-100/85">
-              Important: je n’ai pas branché une fausse donnée TWAP. La page est prête visuellement, mais il faut ajouter une API route dédiée une fois la source fiable confirmée.
+            <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-cyan-200/15 bg-cyan-300/10 p-4 text-sm leading-6 text-cyan-50/80 lg:flex-row lg:items-center lg:justify-between">
+              <span>{twapError}</span>
+              <Button variant="outline" size="sm" onClick={() => window.location.reload()}><RefreshCw className="mr-2 h-3.5 w-3.5" /> Refresh</Button>
             </div>
             <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/10">
-              <div className="grid grid-cols-5 bg-white/[0.04] px-4 py-3 text-xs uppercase tracking-[0.18em] text-white/35">
-                <div>Market</div><div>Side</div><div>Notional</div><div>Filled</div><div>Status</div>
+              <div className="grid grid-cols-6 bg-white/[0.04] px-4 py-3 text-xs uppercase tracking-[0.18em] text-white/35">
+                <div>Side</div><div>Notional</div><div>Slices</div><div>Avg slice</div><div>Last price</div><div>Confidence</div>
               </div>
-              {fallbackTwapRows.map((row) => (
-                <div key={`${row.market}-${row.side}`} className="grid grid-cols-5 border-t border-white/10 px-4 py-4 text-sm text-white/75">
-                  <div className="font-semibold text-white">{row.market}</div>
-                  <div className={row.side === "Buy" ? "text-emerald-300" : "text-red-300"}>{row.side}</div>
+              {hypeTwapRows.length === 0 ? (
+                <div className="border-t border-white/10 px-4 py-8 text-sm text-white/55">
+                  No HYPE sliced-flow cluster detected in the current polling window. This is normal when HYPE activity is quiet or if the public API is rate-limited.
+                </div>
+              ) : hypeTwapRows.map((row) => (
+                <div key={`${row.market}-${row.side}-${row.time}-${row.notional}`} className="grid grid-cols-6 border-t border-white/10 px-4 py-4 text-sm text-white/75">
+                  <div>
+                    <div className={row.side === "Buy" ? "font-semibold text-emerald-300" : "font-semibold text-red-300"}>{row.side}</div>
+                    <div className="text-xs text-white/35">{row.window || row.time}</div>
+                  </div>
                   <div>{row.notional}</div>
-                  <div>{row.filled}</div>
-                  <div className="text-white/45">{row.status}</div>
+                  <div>{row.slices}</div>
+                  <div>{row.avgSize}</div>
+                  <div>{row.lastPrice}</div>
+                  <div className={cn("font-medium", row.confidence === "High" ? "text-emerald-300" : row.confidence === "Medium" ? "text-amber-200" : "text-white/45")}>{row.confidence}</div>
                 </div>
               ))}
             </div>
@@ -824,9 +1048,9 @@ export default function App() {
       <WorkspaceShell>
         <ViewHeader
           icon={ImageIcon}
-          eyebrow="Hypurr NFT pulse"
+          eyebrow="Hypurr NFT tape"
           title="Hypurr NFT sales, floor and images"
-          description="Recent sales now render as cards and display the sold NFT image whenever OpenSea returns image_url/display_image_url in the event payload. Refresh interval: 60 seconds."
+          description="Recent sales render as cards with price, time and sold NFT image when OpenSea provides or can recover the media. Refresh interval: 30 seconds."
           right={<div className="flex items-center gap-2"><StatusPill status={nftApiStatus} /><a href={OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-2xl border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/5">OpenSea <ExternalLink className="h-3.5 w-3.5" /></a></div>}
         />
 
@@ -857,70 +1081,122 @@ export default function App() {
     );
   }
 
-  function renderEtfs() {
+  function renderFlows() {
+    const netFlow = flowRows.reduce((sum, row) => sum + (row.rawDailyFlow || 0), 0);
     return (
       <WorkspaceShell>
         <ViewHeader
           icon={Globe2}
           eyebrow="TradFi flow"
-          title="HYPE ETP / ETF watchlist"
-          description="This keeps the TradFi angle separate from NFTs and perps. Flow/AUM automation should become its own source-backed route instead of hard-coded cards."
+          title="HYPE daily inflow monitor"
+          description="The big number is daily net inflow. Product details are intentionally secondary because most users only care whether new TradFi money is entering or leaving HYPE exposure."
+          right={<div className="flex items-center gap-2"><StatusPill status={flowApiStatus} /><span className="text-xs text-white/40">{flowLastUpdated ? `Updated ${flowLastUpdated.toLocaleTimeString()}` : "Waiting for data"}</span></div>}
         />
-        <div className="grid gap-4 lg:grid-cols-3">
-          {etpRows.map((row) => (
-            <Card key={row.name}>
-              <CardContent>
-                <div className="mb-4 flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-semibold text-white">{row.name}</h3>
-                    <p className="mt-1 text-sm text-white/45">{row.ticker} · {row.isin}</p>
-                  </div>
-                  <span className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-2 py-1 text-[11px] text-cyan-200">{row.status}</span>
-                </div>
-                <div className="space-y-3 text-sm">
-                  <Metric label="Venue" value={row.venue} />
-                  <Metric label="Fee" value={row.fee} />
-                  <Metric label="AUM" value={row.aum} />
-                  <Metric label="Flow" value={row.flow} />
-                </div>
-                <a href={row.url} target="_blank" rel="noreferrer" className="mt-5 inline-flex items-center gap-2 text-sm text-cyan-200 hover:text-cyan-100">Source <ExternalLink className="h-4 w-4" /></a>
-              </CardContent>
-            </Card>
-          ))}
+        <div className="grid gap-4 lg:grid-cols-[1fr_0.8fr]">
+          <Card>
+            <CardContent>
+              <p className="text-xs uppercase tracking-[0.24em] text-white/40">Daily net flow</p>
+              <p className="mt-3 text-5xl font-semibold text-white">{netFlow !== 0 ? formatUsd(netFlow) : "Pending"}</p>
+              <p className="mt-3 text-sm leading-6 text-white/50">{flowError}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent>
+              <p className="text-xs uppercase tracking-[0.24em] text-white/40">What matters here</p>
+              <div className="mt-4 space-y-3 text-sm text-white/62">
+                <p>1. Daily net creations / redemptions.</p>
+                <p>2. Total HYPE exposure held by ETP / ETF products.</p>
+                <p>3. Whether the flow is accelerating or drying up.</p>
+              </div>
+            </CardContent>
+          </Card>
         </div>
+
+        <Card className="mt-5">
+          <CardContent>
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold">Products tracked</h2>
+                <p className="text-sm text-white/45">Secondary metadata kept small. Flow is refreshed by the server route when a source is configured.</p>
+              </div>
+            </div>
+            <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/10">
+              <div className="grid grid-cols-7 bg-white/[0.04] px-4 py-3 text-xs uppercase tracking-[0.18em] text-white/35">
+                <div className="col-span-2">Product</div><div>Daily flow</div><div>AUM</div><div>Holdings</div><div>Fee</div><div>Status</div>
+              </div>
+              {flowRows.map((row) => (
+                <div key={`${row.name}-${row.ticker}`} className="grid grid-cols-7 items-center border-t border-white/10 px-4 py-4 text-sm text-white/70">
+                  <div className="col-span-2">
+                    <div className="font-semibold text-white">{row.name}</div>
+                    <div className="text-xs text-white/38">{row.ticker} · {row.venue} · {row.lastData}</div>
+                  </div>
+                  <div className={row.rawDailyFlow > 0 ? "font-semibold text-emerald-300" : row.rawDailyFlow < 0 ? "font-semibold text-red-300" : "text-white/45"}>{row.dailyFlow}</div>
+                  <div>{row.aum}</div>
+                  <div>{row.holdings}</div>
+                  <div>{row.fee}</div>
+                  <div><a href={row.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-cyan-200 hover:text-cyan-100">{row.status} <ExternalLink className="h-3.5 w-3.5" /></a></div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       </WorkspaceShell>
     );
   }
 
   function renderVaults() {
+    const hlp = findHlpVault(vaults);
+    const yieldVaults = vaults.filter((vault) => vault.name !== hlp.name).sort((a, b) => Math.abs(parsePercentLabel(b.apr)) - Math.abs(parsePercentLabel(a.apr))).slice(0, 5);
     return (
       <WorkspaceShell>
         <ViewHeader
           icon={Layers}
-          eyebrow="Vault screener"
-          title="Hyperliquid vault risk"
-          description="Open vaults ranked by AUM with a basic risk heuristic based on TVL, APR pressure and age."
+          eyebrow="HLP yield"
+          title="HLP first, other vaults second"
+          description="The old vault page was too generic. This version puts the main HLP-style liquidity vault first, then keeps a smaller list of higher-yield vaults for people who specifically care about yield/risk."
           right={<div className="flex items-center gap-2"><StatusPill status={vaultApiStatus} /><span className="text-xs text-white/40">{vaultLastUpdated ? `Updated ${vaultLastUpdated.toLocaleTimeString()}` : "Waiting for data"}</span></div>}
         />
-        <div className="grid gap-4 xl:grid-cols-2">
-          {vaults.map((vault) => (
-            <Card key={`${vault.name}-${vault.vaultAddress || vault.rawAum}`}>
-              <CardContent>
-                <div className="mb-4 flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-semibold text-white">{vault.name}</h3>
-                    <p className="mt-1 text-sm text-white/45">AUM {vault.aum} · Age {vault.age} · {vault.status}</p>
-                  </div>
+
+        <Card>
+          <CardContent>
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.24em] text-white/40">Main vault</p>
+                <h2 className="mt-2 text-4xl font-semibold text-white">{hlp.name}</h2>
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-white/52">Useful for users who want a quick read on the main Hyperliquid liquidity vault: AUM, return proxy, age and basic risk. This is more actionable than listing every small vault by default.</p>
+              </div>
+              <RiskPill value={hlp.score} />
+            </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-4">
+              <Metric label="AUM" value={hlp.aum} />
+              <Metric label="Return proxy" value={hlp.apr} />
+              <Metric label="Age" value={hlp.age} />
+              <Metric label="Status" value={hlp.status} />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="mt-5">
+          <CardContent>
+            <div className="mb-4">
+              <h2 className="text-xl font-semibold">Other interesting yield vaults</h2>
+              <p className="text-sm text-white/45">Small secondary table. People who do not care about vault hunting can ignore it.</p>
+            </div>
+            <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/10">
+              <div className="grid grid-cols-5 bg-white/[0.04] px-4 py-3 text-xs uppercase tracking-[0.18em] text-white/35">
+                <div className="col-span-2">Vault</div><div>AUM</div><div>Return</div><div>Risk</div>
+              </div>
+              {yieldVaults.map((vault) => (
+                <div key={`${vault.name}-${vault.vaultAddress || vault.rawAum}`} className="grid grid-cols-5 items-center border-t border-white/10 px-4 py-4 text-sm text-white/70">
+                  <div className="col-span-2"><div className="font-semibold text-white">{vault.name}</div><div className="text-xs text-white/38">Age {vault.age} · {vault.status}</div></div>
+                  <div>{vault.aum}</div>
+                  <div className="text-emerald-300">{vault.apr}</div>
                   <RiskPill value={vault.score} />
                 </div>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <Metric label="APR / Return proxy" value={vault.apr} />
-                  <Metric label="Status" value={vault.dd} />
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       </WorkspaceShell>
     );
   }
@@ -930,12 +1206,45 @@ export default function App() {
       <WorkspaceShell>
         <ViewHeader
           icon={Wallet}
-          eyebrow="Manual wallet scan"
-          title="Whale Watch"
-          description="Paste a wallet and scan open perp positions through Hyperliquid clearinghouseState. Read-only only."
-          right={<StatusPill status={whaleApiStatus} />}
+          eyebrow="Whale watch"
+          title="Top 20 whales + wallet scanner"
+          description="The page now has two uses: a top-20 leaderboard when a data provider key is configured, and a manual scanner for any Hyperliquid wallet address."
+          right={<div className="flex items-center gap-2"><StatusPill status={topWhalesStatus} /><StatusPill status={whaleApiStatus} /></div>}
         />
+
         <Card>
+          <CardContent>
+            <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold">Top 20 tracked whales</h2>
+                <p className="text-sm text-white/45">{topWhalesError}</p>
+              </div>
+            </div>
+            {topWhales.length === 0 ? (
+              <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm leading-6 text-amber-50/80">
+                No public top-20 list loaded yet. Manual wallet scan below still works. To make this real, add a NANSEN_API_KEY in Vercel or wire another leaderboard source into /api/hyperliquid/whales.
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/10">
+                <div className="grid grid-cols-7 bg-white/[0.04] px-4 py-3 text-xs uppercase tracking-[0.18em] text-white/35">
+                  <div>Rank</div><div className="col-span-2">Wallet</div><div>Account value</div><div>PNL</div><div>ROI</div><div>Action</div>
+                </div>
+                {topWhales.map((whale) => (
+                  <div key={whale.address} className="grid grid-cols-7 items-center border-t border-white/10 px-4 py-4 text-sm text-white/70">
+                    <div className="font-semibold text-white">#{whale.rank}</div>
+                    <div className="col-span-2"><div className="font-medium text-white">{shortenAddress(whale.address)}</div><div className="text-xs text-white/38">{whale.label}</div></div>
+                    <div>{whale.accountValue}</div>
+                    <div>{whale.pnl}</div>
+                    <div>{whale.roi}</div>
+                    <button onClick={() => { setTrackedWallet(whale.address); setActiveView("whales"); }} className="text-cyan-200 hover:text-cyan-100">Load</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="mt-5">
           <CardContent>
             <div className="mb-4 flex flex-col gap-3 lg:flex-row">
               <div className="flex flex-1 items-center gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
@@ -971,45 +1280,21 @@ export default function App() {
     );
   }
 
-  function renderMethodology() {
-    return (
-      <WorkspaceShell>
-        <ViewHeader
-          icon={ShieldAlert}
-          eyebrow="Methodology"
-          title="What changed in this phase"
-          description="This is a layout/product patch first. Data modules can now be added one by one without turning the page into a long scroll again."
-        />
-        <div className="grid gap-4 lg:grid-cols-2">
-          {methodologyItems.map((item) => (
-            <Card key={item.title}>
-              <CardContent>
-                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-2xl bg-cyan-300/10 text-cyan-200"><CheckCircle2 className="h-5 w-5" /></div>
-                <h3 className="font-semibold text-white">{item.title}</h3>
-                <p className="mt-2 text-sm leading-6 text-white/55">{item.description}</p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </WorkspaceShell>
-    );
-  }
-
   const activeMeta = navItems.find((item) => item.id === activeView) || navItems[0];
 
   return (
     <main className="min-h-screen bg-[#071815] text-white">
       <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_top_left,rgba(94,234,212,0.22),transparent_32%),radial-gradient(circle_at_70%_10%,rgba(251,191,36,0.09),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(45,212,191,0.18),transparent_34%)]" />
       <div className="fixed inset-0 -z-10 bg-[linear-gradient(rgba(255,255,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.025)_1px,transparent_1px)] bg-[size:56px_56px] opacity-40" />
-      <div className="mx-auto flex min-h-screen max-w-[1680px]">
-        <aside className="sticky top-0 hidden h-screen w-72 shrink-0 border-r border-cyan-100/10 bg-[#041210]/70 p-4 backdrop-blur-2xl lg:block">
+      <div className="flex min-h-screen w-full">
+        <aside className="fixed left-0 top-0 z-30 hidden h-screen w-72 shrink-0 border-r border-cyan-100/10 bg-[#041210]/82 p-4 backdrop-blur-2xl lg:block">
           <div className="flex h-full flex-col">
             <div className="rounded-3xl border border-cyan-100/10 bg-gradient-to-br from-white/[0.09] to-cyan-300/[0.035] p-4 shadow-2xl shadow-black/20">
               <div className="mb-4 flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-200 via-teal-200 to-emerald-200 text-slate-950 shadow-lg shadow-cyan-950/30"><Sparkles className="h-5 w-5" /></div>
                 <div>
                   <div className="font-semibold">HypurrScope</div>
-                  <div className="text-xs text-white/45">Ecosystem intelligence</div>
+                  <div className="text-xs text-white/45">HYPE flow dashboard</div>
                 </div>
               </div>
               <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/[0.18] px-3 py-2 text-xs text-white/60">
@@ -1045,7 +1330,7 @@ export default function App() {
           </div>
         </aside>
 
-        <section className="min-w-0 flex-1 p-4 lg:p-7">
+        <section className="min-w-0 flex-1 p-4 lg:ml-72 lg:p-7">
           <div className="mb-4 flex items-center justify-between gap-3 rounded-3xl border border-white/12 bg-white/[0.07] p-3 backdrop-blur lg:hidden">
             <div>
               <div className="font-semibold">HypurrScope</div>
@@ -1060,13 +1345,12 @@ export default function App() {
           {activeView === "markets" && renderMarkets()}
           {activeView === "twaps" && renderTwaps()}
           {activeView === "nfts" && renderNfts()}
-          {activeView === "etfs" && renderEtfs()}
+          {activeView === "flows" && renderFlows()}
           {activeView === "vaults" && renderVaults()}
           {activeView === "whales" && renderWhales()}
-          {activeView === "methodology" && renderMethodology()}
 
           <footer className="mt-8 flex flex-col gap-2 border-t border-white/10 pt-5 text-xs text-white/42 lg:flex-row lg:items-center lg:justify-between">
-            <span>HypurrScope · Read-only Hyperliquid ecosystem dashboard</span>
+            <span>HypurrScope · Read-only Hyperliquid dashboard</span>
             <span>{lastUpdated ? `Markets updated ${lastUpdated.toLocaleTimeString()}` : "Waiting for market data"}</span>
           </footer>
         </section>
