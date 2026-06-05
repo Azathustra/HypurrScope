@@ -18,7 +18,6 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
-  Sparkles,
   TrendingDown,
   TrendingUp,
   Wallet,
@@ -423,9 +422,9 @@ function NftSaleCard({ sale, compact = false }: { sale: NftSale; compact?: boole
   const hasImage = Boolean(sale.image && !broken);
   return (
     <a href={sale.url || OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer" className="group block overflow-hidden rounded-2xl border border-white/15 bg-[#071f1d]/90 transition hover:-translate-y-0.5 hover:border-cyan-200/35 hover:bg-white/[0.06]">
-      <div className={cn("relative flex items-center justify-center overflow-hidden bg-gradient-to-br from-[#0b3a35] via-[#082b28] to-[#061716]", compact ? "aspect-[5/4]" : "aspect-square")}> 
+      <div className={cn("relative flex items-center justify-center overflow-hidden bg-gradient-to-br from-[#0b3a35] via-[#082b28] to-[#061716]", compact ? "aspect-[4/3]" : "aspect-[4/3]")}> 
         {hasImage ? (
-          <img src={sale.image} alt={sale.name} onError={() => setBroken(true)} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-full w-full object-contain p-2 transition duration-500 group-hover:scale-[1.025]" />
+          <img src={sale.image} alt={sale.name} onError={() => setBroken(true)} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-full w-full object-cover object-left transition duration-500 group-hover:scale-[1.04]" />
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-cyan-100/45">
             <ImageIcon className="h-8 w-8" />
@@ -666,7 +665,7 @@ export default function App() {
   return (
     <main className="min-h-screen bg-[#031b18] text-white">
       <aside className="fixed left-0 top-0 z-30 hidden h-screen w-60 border-r border-white/10 bg-[#031612]/95 p-4 backdrop-blur lg:block">
-        <div className="mb-8 flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-200/20 bg-cyan-300/10"><Sparkles className="h-5 w-5 text-cyan-100" /></div><div><p className="text-sm font-black uppercase tracking-[0.25em]">Hypurr Scope</p><p className="text-xs text-white/45">HYPE market console</p></div></div>
+        <div className="mb-8 flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-200/20 bg-cyan-300/10"><Zap className="h-5 w-5 text-cyan-100" /></div><div><p className="text-sm font-black uppercase tracking-[0.25em]">Hypurr Scope</p><p className="text-xs text-white/45">HYPE market console</p></div></div>
         <nav className="space-y-2">{navItems.map((item) => { const Icon = item.icon; const active = activeView === item.id; return <button key={item.id} onClick={() => setActiveView(item.id)} className={cn("flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition", active ? "border-cyan-200/25 bg-cyan-300/10 text-white" : "border-transparent text-white/55 hover:bg-white/[0.04] hover:text-white")}><Icon className="h-4 w-4" /><span><span className="block text-sm font-black">{item.label}</span><span className="block text-[11px] text-white/45">{item.description}</span></span></button>; })}</nav>
         <div className="absolute bottom-4 left-4 right-4 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-xs text-white/45"><div className="mb-2 flex items-center justify-between"><span>Refresh</span><RefreshCw className="h-3.5 w-3.5" /></div><p>Markets 20s · NFTs 120s</p><p>Last update: {formatClock(lastUpdated)}</p></div>
       </aside>
