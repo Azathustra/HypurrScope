@@ -52,7 +52,7 @@ type MarketRow = {
 type HistoryPoint = { time: number; price: number; volume: number };
 type TwapRow = { side: "Buy" | "Sell"; notional: string; rawNotional: number; slices: number; avgSize: string; avgPrice: string; lastTrade: string; confidence: string };
 type NftStats = { floor: string; volume24h: string; totalVolume: string; listed: string; owners: string; sales24h: string };
-type NftSale = { id: string; name: string; price: string; usd?: string; time: string; image?: string; url?: string; buyer?: string; seller?: string };
+type NftSale = { id: string; name: string; price: string; usd?: string; time: string; image?: string; url?: string; buyer?: string; seller?: string; imageStatus?: string };
 type VaultRow = { name: string; aum: string; rawAum: number; apr: string; score: number; status: string; leader?: string; age?: string };
 type WhaleRow = { coin: string; side: string; size: string; notional: string; entry: string; pnl: string; rawPnl: number; liquidation: string; leverage: string; danger: "Low" | "Medium" | "High" | "Watch" };
 type BuybackData = {
@@ -87,13 +87,6 @@ const fallbackHistory: HistoryPoint[] = Array.from({ length: 36 }).map((_, index
 });
 
 const fallbackNftStats: NftStats = { floor: "-- HYPE", volume24h: "-- HYPE", totalVolume: "-- HYPE", listed: "--", owners: "--", sales24h: "--" };
-const fallbackNftSales: NftSale[] = Array.from({ length: 9 }).map((_, index) => ({
-  id: `${100 + index}`,
-  name: `Hypurr #${100 + index}`,
-  price: "-- HYPE",
-  time: "live feed",
-  url: OPENSEA_COLLECTION_URL,
-}));
 
 const fallbackVaults: VaultRow[] = [
   { name: "HLP", aum: "Loading", rawAum: 0, apr: "Loading", score: 42, status: "Live" },
@@ -289,6 +282,7 @@ function normalizeNftSale(raw: any): NftSale {
     url: raw.url || raw.permalink || OPENSEA_COLLECTION_URL,
     buyer: raw.buyer || "",
     seller: raw.seller || "",
+    imageStatus: raw.imageStatus || "",
   };
 }
 
@@ -338,12 +332,13 @@ function NftThumb({ sale, compact = false }: { sale: NftSale; compact?: boolean 
     <a href={sale.url || OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer" className="group relative block min-h-[210px] overflow-hidden rounded-[1.45rem] border border-white/10 bg-gradient-to-br from-emerald-300/10 via-cyan-300/10 to-teal-950 shadow-[0_18px_60px_rgba(0,0,0,.26)]">
       {hasImage ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={sale.image} alt={sale.name} onError={() => setBroken(true)} className="absolute inset-0 h-full w-full object-cover transition duration-500 group-hover:scale-105" loading="lazy" />
+        <img src={sale.image} alt={sale.name} onError={() => setBroken(true)} className="absolute inset-0 h-full w-full object-cover transition duration-500 group-hover:scale-105" loading="lazy" referrerPolicy="no-referrer" />
       ) : (
-        <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_30%_20%,rgba(94,234,212,.26),transparent_35%),linear-gradient(135deg,rgba(6,78,59,.7),rgba(3,29,27,.95))]">
-          <div className="text-center text-cyan-100/80">
+        <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_30%_20%,rgba(94,234,212,.22),transparent_35%),linear-gradient(135deg,rgba(6,78,59,.7),rgba(3,29,27,.95))]">
+          <div className="max-w-[190px] px-4 text-center text-cyan-100/78">
             <ImageIcon className="mx-auto h-10 w-10 opacity-80" />
-            <div className="mt-3 text-xs uppercase tracking-[0.24em]">image loading</div>
+            <div className="mt-3 text-xs uppercase tracking-[0.22em]">No image returned</div>
+            {!compact && <div className="mt-2 text-[11px] normal-case tracking-normal text-white/45">Sale loaded, but OpenSea did not provide a usable media URL.</div>}
           </div>
         </div>
       )}
@@ -358,6 +353,19 @@ function NftThumb({ sale, compact = false }: { sale: NftSale; compact?: boolean 
       </div>
       {!compact && <div className="absolute right-3 top-3 rounded-full border border-white/10 bg-black/40 p-2 text-white/75 opacity-0 backdrop-blur transition group-hover:opacity-100"><ExternalLink className="h-4 w-4" /></div>}
     </a>
+  );
+}
+
+function NftEmptyState({ message, compact = false }: { message: string; compact?: boolean }) {
+  return (
+    <div className={cn("rounded-[1.45rem] border border-amber-200/15 bg-amber-300/[0.06] p-5 text-amber-50/80", compact ? "col-span-full min-h-[210px]" : "col-span-full min-h-[260px]")}> 
+      <div className="flex h-full min-h-[180px] flex-col items-center justify-center text-center">
+        <ImageIcon className="h-10 w-10 text-amber-100/70" />
+        <div className="mt-4 text-sm font-semibold text-white">No live NFT sales loaded</div>
+        <div className="mt-2 max-w-xl text-sm leading-6 text-white/55">{message}</div>
+        <a href={OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-4 py-2 text-xs text-white/70 hover:bg-white/10">Open collection <ExternalLink className="h-3.5 w-3.5" /></a>
+      </div>
+    </div>
   );
 }
 
@@ -466,8 +474,9 @@ export default function App() {
   const [buybacks, setBuybacks] = useState<BuybackData>(fallbackBuyback);
   const [buybackStatus, setBuybackStatus] = useState<ApiStatus>("loading");
   const [nftStats, setNftStats] = useState<NftStats>(fallbackNftStats);
-  const [nftSales, setNftSales] = useState<NftSale[]>(fallbackNftSales);
+  const [nftSales, setNftSales] = useState<NftSale[]>([]);
   const [nftStatus, setNftStatus] = useState<ApiStatus>("loading");
+  const [nftMessage, setNftMessage] = useState("Loading real Hypurr sales from OpenSea. No placeholder sales are shown.");
   const [vaults, setVaults] = useState<VaultRow[]>(fallbackVaults);
   const [vaultStatus, setVaultStatus] = useState<ApiStatus>("loading");
   const [flows, setFlows] = useState<FlowRow[]>(fallbackFlows);
@@ -539,23 +548,38 @@ export default function App() {
 
   async function loadNfts() {
     try {
+      setNftStatus((prev) => (prev === "live" ? "live" : "loading"));
       const [statsResponse, eventsResponse] = await Promise.all([
         fetch("/api/opensea/stats", { cache: "no-store" }),
         fetch("/api/opensea/events", { cache: "no-store" }),
       ]);
+
       if (statsResponse.ok) {
         const statsPayload = await statsResponse.json();
         setNftStats(parseNftStats(statsPayload));
       }
-      if (eventsResponse.ok) {
-        const eventsPayload = await eventsResponse.json();
-        const rawSales = Array.isArray(eventsPayload?.sales) ? eventsPayload.sales : Array.isArray(eventsPayload?.events) ? eventsPayload.events : [];
-        const rows = rawSales.map(normalizeNftSale).slice(0, 12);
-        if (rows.length) setNftSales(rows);
+
+      if (!eventsResponse.ok) {
+        setNftSales([]);
+        setNftStatus("error");
+        setNftMessage("The NFT sales endpoint failed. Add OPENSEA_API_KEY in Vercel, then redeploy, or open the OpenSea collection directly.");
+        return;
       }
-      setNftStatus("live");
+
+      const eventsPayload = await eventsResponse.json();
+      const rawSales = Array.isArray(eventsPayload?.sales) ? eventsPayload.sales : Array.isArray(eventsPayload?.events) ? eventsPayload.events : [];
+      const rows = rawSales.map(normalizeNftSale).filter((sale: NftSale) => sale.id !== "?" || sale.price !== "-- HYPE").slice(0, 12);
+      setNftSales(rows);
+
+      const imageCount = rows.filter((sale: NftSale) => Boolean(sale.image)).length;
+      const configured = eventsPayload?.apiKeyConfigured;
+      const baseMessage = eventsPayload?.message || (configured === false ? "OpenSea API key is not configured. HTML fallback was attempted, but API metadata may be limited." : "OpenSea returned no recent sale rows.");
+      setNftMessage(rows.length ? `${rows.length} real sales loaded · ${imageCount} with images.` : baseMessage);
+      setNftStatus(rows.length ? "live" : "error");
     } catch (error) {
-      setNftStatus("fallback");
+      setNftSales([]);
+      setNftStatus("error");
+      setNftMessage("The NFT module could not load real OpenSea sales. No fake placeholder NFTs are displayed anymore.");
     }
   }
 
@@ -645,7 +669,7 @@ export default function App() {
   const hlpVault = useMemo(() => vaults.find((v) => /(^|\b)HLP($|\b)|Hyperliquidity/i.test(v.name)) || vaults[0] || fallbackVaults[0], [vaults]);
   const marketLeaders = useMemo(() => markets.slice(0, 12), [markets]);
   const highRisk = useMemo(() => [...markets].sort((a, b) => b.risk - a.risk).slice(0, 5), [markets]);
-  const nftGrid = nftSales.length >= 9 ? nftSales.slice(0, 9) : [...nftSales, ...fallbackNftSales].slice(0, 9);
+  const nftGrid = nftSales.slice(0, 12);
   const buyPressurePct = hype.rawVolume > 0 && buybacks.estimatedBuybackUsd24h > 0 ? (buybacks.estimatedBuybackUsd24h / hype.rawVolume) * 100 : 0;
 
   return (
@@ -731,7 +755,7 @@ export default function App() {
                     <a href={OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer"><Pill>OpenSea <ExternalLink className="h-3 w-3" /></Pill></a>
                   </div>
                   <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
-                    {nftGrid.slice(0, 6).map((sale, index) => <NftThumb key={`${sale.id}-${index}`} sale={sale} compact />)}
+                    {nftGrid.length ? nftGrid.slice(0, 6).map((sale, index) => <NftThumb key={`${sale.id}-${index}`} sale={sale} compact />) : <NftEmptyState message={nftMessage} compact />}
                   </div>
                 </DataCard>
               </div>
@@ -855,7 +879,7 @@ export default function App() {
 
           {activeView === "nfts" && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-              <ViewHeader icon={ImageIcon} eyebrow="Hypurr NFT tape" title="Hypurr NFT sales, floor and images" description="Latest sales render as image cards with price, time and token id. If OpenSea does not return media, the card still fills visually instead of leaving an empty box." right={<div className="flex gap-2"><StatusPill status={nftStatus} /><a href={OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer"><Pill>OpenSea <ExternalLink className="h-3 w-3" /></Pill></a></div>} />
+              <ViewHeader icon={ImageIcon} eyebrow="Hypurr NFT tape" title="Hypurr NFT sales, floor and images" description="Real Hypurr sale cards only: token, price, time and image when OpenSea or item metadata provides a usable media URL. No fake placeholder sales." right={<div className="flex gap-2"><StatusPill status={nftStatus} /><a href={OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer"><Pill>OpenSea <ExternalLink className="h-3 w-3" /></Pill></a></div>} />
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
                 <BigMetric icon={Coins} label="Floor" value={nftStats.floor} sub="OpenSea collection" tone="cyan" />
                 <BigMetric icon={Activity} label="24h Volume" value={nftStats.volume24h} sub="collection volume" tone="green" />
