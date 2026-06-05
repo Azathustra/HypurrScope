@@ -136,17 +136,19 @@ function getIdentifier(event: any) {
 
 function getEventImage(event: any) {
   const nft = getNft(event);
+  // Important: avoid OpenSea display_image_url / og:image because it can be a generated
+  // marketplace card containing the name and sale price inside the image. We want the
+  // raw NFT artwork only; the UI already renders name and price separately.
   return normalizeImage(
-    nft.display_image_url ||
-      nft.image_url ||
+    nft.image_url ||
       nft.imageUrl ||
       nft.image_original_url ||
       nft.image ||
-      event?.display_image_url ||
       event?.image_url ||
       event?.asset?.image_url ||
       event?.asset?.image_original_url ||
       event?.asset?.imageUrl ||
+      event?.asset?.image ||
       ""
   );
 }
@@ -227,7 +229,7 @@ async function fetchNftImage(identifier: string, headers: Record<string, string>
     try {
       const payload = await fetchJson(url, headers, 3_500);
       const nft = payload?.nft || payload;
-      const image = normalizeImage(nft?.display_image_url || nft?.image_url || nft?.imageUrl || nft?.image_original_url || nft?.image || "");
+      const image = normalizeImage(nft?.image_url || nft?.imageUrl || nft?.image_original_url || nft?.image || "");
       if (image) return image;
     } catch {
       // Try next format.
@@ -243,7 +245,7 @@ async function fetchCollectionImageMap(headers: Record<string, string>) {
     const nfts = Array.isArray(payload?.nfts) ? payload.nfts : [];
     for (const nft of nfts) {
       const id = String(nft.identifier || nft.token_id || nft.tokenId || "");
-      const image = normalizeImage(nft.display_image_url || nft.image_url || nft.imageUrl || nft.image_original_url || nft.image || "");
+      const image = normalizeImage(nft.image_url || nft.imageUrl || nft.image_original_url || nft.image || "");
       if (id && image) map.set(id, image);
     }
   } catch {
@@ -264,11 +266,13 @@ async function buildSaleFromApiEvent(event: any, imageMap: Map<string, string>, 
   if (!imageFromEvent && !imageFromMap) {
     imageFromApi = await fetchNftImage(identifier, headers);
   }
-  if (!imageFromEvent && !imageFromMap && !imageFromApi) {
+  // Fetch the item page only for a title fallback. Do not use og:image as media, because
+  // OpenSea often returns a generated sale card that already contains “Hypurr” and price.
+  if (!nft.name) {
     itemMeta = await fetchOpenSeaItemMeta(identifier);
   }
 
-  const image = imageFromEvent || imageFromMap || imageFromApi || itemMeta.image || "";
+  const image = imageFromEvent || imageFromMap || imageFromApi || "";
   const timestamp = event.event_timestamp || event.created_date || event.transaction?.timestamp || event.timestamp || event.closing_date;
 
   return {
@@ -328,20 +332,23 @@ function extractIdsFromActivityHtml(html: string) {
   return { ids: Array.from(ids).slice(0, 12), text };
 }
 
-async function fetchSalesViaActivityPage() {
+async function fetchSalesViaActivityPage(headers: Record<string, string>) {
   const html = await fetchText(OPENSEA_ACTIVITY_URL, 4_500);
   const { ids, text } = extractIdsFromActivityHtml(html);
   const rows = await Promise.all(
     ids.map(async (identifier) => {
-      const meta = await fetchOpenSeaItemMeta(identifier);
+      const [meta, rawImage] = await Promise.all([
+        fetchOpenSeaItemMeta(identifier),
+        fetchNftImage(identifier, headers),
+      ]);
       return {
         id: identifier,
         name: meta.title?.split(" - ")?.[0] || `Hypurr #${identifier}`,
         price: findPriceNearToken(text, identifier),
         time: "recent",
-        image: meta.image,
+        image: rawImage,
         url: buildOpenSeaUrl(identifier),
-        imageStatus: meta.image ? "item_page" : "missing",
+        imageStatus: rawImage ? "nft_api" : "missing",
       } satisfies SaleRow;
     })
   );
@@ -385,7 +392,7 @@ export async function GET() {
   }
 
   try {
-    const htmlSales = await fetchSalesViaActivityPage();
+    const htmlSales = await fetchSalesViaActivityPage(headers);
     const imageCount = htmlSales.filter((sale) => Boolean(sale.image)).length;
     return json(
       remember({
