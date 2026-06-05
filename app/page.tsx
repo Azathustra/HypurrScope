@@ -422,9 +422,17 @@ function NftSaleCard({ sale, compact = false }: { sale: NftSale; compact?: boole
   const hasImage = Boolean(sale.image && !broken);
   return (
     <a href={sale.url || OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer" className="group block overflow-hidden rounded-2xl border border-white/15 bg-[#071f1d]/90 transition hover:-translate-y-0.5 hover:border-cyan-200/35 hover:bg-white/[0.06]">
-      <div className={cn("relative flex items-center justify-center overflow-hidden bg-gradient-to-br from-[#0b3a35] via-[#082b28] to-[#061716]", compact ? "aspect-[4/3]" : "aspect-[4/3]")}> 
+      <div className={cn("relative flex aspect-square items-start justify-start overflow-hidden bg-gradient-to-br from-[#0b3a35] via-[#082b28] to-[#061716]")}> 
         {hasImage ? (
-          <img src={sale.image} alt={sale.name} onError={() => setBroken(true)} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-full w-full object-cover object-left transition duration-500 group-hover:scale-[1.04]" />
+          <img
+            src={sale.image}
+            alt={sale.name}
+            onError={() => setBroken(true)}
+            loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer"
+            className="h-full w-auto max-w-none origin-left object-left-top transition duration-500 group-hover:scale-[1.025]"
+          />
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-cyan-100/45">
             <ImageIcon className="h-8 w-8" />
