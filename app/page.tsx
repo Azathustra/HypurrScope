@@ -255,10 +255,13 @@ function Sparkline({ points, height = 220, stroke = "#fda4af", fill = true }: { 
     {fill ? <path d={area} fill="url(#hypeArea)" /> : null}
     <path d={path} fill="none" stroke={stroke} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3"/>
     {hoverX !== null && hoverY !== null && hoverValue !== null ? (<g>
-      <line x1={hoverX} y1={0} x2={hoverX} y2={height} stroke={stroke} strokeOpacity={0.3} strokeWidth={1}/>
-      <circle cx={hoverX} cy={hoverY} r={5} fill="#0f172a" stroke={stroke} strokeWidth={2}/>
-      <rect x={Math.min(Math.max(hoverX - 48, 8), width - 96)} y={hoverY - 40} rx={8} ry={8} width={96} height={32} fill="#020617" opacity={0.95}/>
-      <text x={Math.min(Math.max(hoverX - 40, 16), width - 88)} y={hoverY - 20} fill="#e5e7eb" fontSize={11}>{hoverValue.toFixed(2)}</text>
+      <line x1={hoverX} y1={0} x2={hoverX} y2={height} stroke={stroke} strokeOpacity={0.18} strokeWidth={1}/>
+      <circle cx={hoverX} cy={hoverY} r={4.5} fill="#0b0b12" stroke={stroke} strokeWidth={2}/>
+      <circle cx={hoverX} cy={hoverY} r={9} fill={stroke} opacity={0.10}/>
+      <g transform={`translate(${Math.min(Math.max(hoverX - 42, 10), width - 94)}, ${Math.max(hoverY - 52, 10)})`}>
+        <rect rx={10} ry={10} width={84} height={30} fill="#0b0b12" fillOpacity={0.96} stroke="#ffffff" strokeOpacity={0.08}/>
+        <text x={42} y={19} textAnchor="middle" fill="#f8fafc" fontSize={12} fontWeight={700} letterSpacing="0.01em">${hoverValue.toFixed(2)}</text>
+      </g>
     </g>) : null}
   </svg>;
 }
