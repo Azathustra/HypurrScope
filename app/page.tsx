@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 
-type View = "overview" | "markets" | "liquidity" | "twaps" | "nfts" | "etf" | "wallet" | "builder";
+type View = "overview" | "markets" | "liquidity" | "twaps" | "nfts" | "etf" | "hip3" | "hip4" | "exchange" | "wallet" | "builder";
 type Status = "loading" | "live" | "fallback" | "error";
 
 type Market = {
@@ -131,6 +131,14 @@ type BuybackData = {
   note?: string;
 };
 
+type ExchangeRow = {
+  name: string;
+  category: "CEX" | "DEX";
+  volumeUsd: number;
+  marketShare: number;
+  status: string;
+};
+
 const HYPE_SUPPLY = 1_000_000_000;
 const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
 
@@ -141,6 +149,9 @@ const NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
   { id: "twaps", label: "TWAPs", description: "Flow tape" },
   { id: "nfts", label: "Hypurr NFTs", description: "Floor + sales" },
   { id: "etf", label: "ETF flows", description: "TradFi bridge" },
+  { id: "hip3", label: "HIP-3", description: "Builder perps" },
+  { id: "hip4", label: "HIP-4", description: "Outcomes" },
+  { id: "exchange", label: "Exchange", description: "Venue share" },
   { id: "wallet", label: "Wallet", description: "Risk scan" },
   { id: "builder", label: "Builder", description: "Proof layer" },
 ];
@@ -195,6 +206,16 @@ const EMPTY_BUYBACK: BuybackData = {
   estimatedBuybackHype24hLabel: "Loading",
   note: "Loading fee-pressure estimate.",
 };
+
+const FALLBACK_EXCHANGES: ExchangeRow[] = [
+  { name: "Binance Futures", category: "CEX", volumeUsd: 56_000_000_000, marketShare: 42, status: "CEX benchmark" },
+  { name: "Bybit", category: "CEX", volumeUsd: 18_500_000_000, marketShare: 14, status: "CEX benchmark" },
+  { name: "OKX", category: "CEX", volumeUsd: 14_200_000_000, marketShare: 11, status: "CEX benchmark" },
+  { name: "Hyperliquid", category: "DEX", volumeUsd: 0, marketShare: 0, status: "Live from perps API" },
+  { name: "Aster", category: "DEX", volumeUsd: 3_400_000_000, marketShare: 2.6, status: "DEX benchmark" },
+  { name: "dYdX", category: "DEX", volumeUsd: 920_000_000, marketShare: 0.7, status: "DEX benchmark" },
+  { name: "Jupiter Perps", category: "DEX", volumeUsd: 760_000_000, marketShare: 0.6, status: "DEX benchmark" },
+];
 
 const fallbackMarkets: Market[] = [
   makeFallbackMarket("HYPE", 58.4, 3.09, 0, 1_500_000_000, 980_000_000, 10),
@@ -613,6 +634,18 @@ function sourceLabel(status: Status) {
   return "Fallback";
 }
 
+function buildExchangeRows(hyperliquidVolume: number): ExchangeRow[] {
+  const rows = FALLBACK_EXCHANGES.map((row: ExchangeRow) =>
+    row.name === "Hyperliquid"
+      ? { ...row, volumeUsd: hyperliquidVolume || 7_000_000_000 }
+      : row,
+  );
+  const total = rows.reduce((sum: number, row: ExchangeRow) => sum + row.volumeUsd, 0) || 1;
+  return rows
+    .map((row: ExchangeRow) => ({ ...row, marketShare: (row.volumeUsd / total) * 100 }))
+    .sort((a: ExchangeRow, b: ExchangeRow) => b.volumeUsd - a.volumeUsd);
+}
+
 function Sparkline({ candles }: { candles: Candle[] }) {
   if (candles.length < 2) return <div className="empty">Waiting for candles</div>;
   const values = candles.map((candle) => candle.close);
@@ -669,6 +702,7 @@ function DepthBars({ book }: { book: Book | null }) {
 
 export default function Page() {
   const [view, setView] = useState<View>("overview");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [coin, setCoin] = useState("HYPE");
   const [markets, setMarkets] = useState<Market[]>(fallbackMarkets);
   const [candles, setCandles] = useState<Candle[]>(makeFallbackCandles("HYPE"));
@@ -851,6 +885,7 @@ export default function Page() {
   const twapNet = twapBuy - twapSell;
   const etfNetFlow = flows.reduce((sum: number, row: FlowRow) => sum + parseMoneyLabel(row.dollarVolume), 0);
   const largestEtfPrint = Math.max(0, ...flows.map((row: FlowRow) => Math.abs(parseMoneyLabel(row.dollarVolume))));
+  const exchangeRows = useMemo(() => buildExchangeRows(totalVolume), [totalVolume]);
   const regimeScore = Math.round(
     clamp(Math.abs(weightedFunding) * 60_000 + Math.abs(selected?.changePct || 0) * 2 + Math.abs(book?.imbalance || 0) * 0.2, 0, 99),
   );
@@ -897,7 +932,7 @@ export default function Page() {
   ];
 
   return (
-    <main className="hs-shell">
+    <main className={`hs-shell ${theme === "light" ? "theme-light" : ""}`}>
       <aside className="hs-rail">
         <div className="brand">
           <span>HS</span>
@@ -927,6 +962,9 @@ export default function Page() {
             <strong>HypurrScope</strong>
           </div>
           <div className="controls">
+            <button className="theme-toggle" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+              {theme === "dark" ? "Night" : "Day"}
+            </button>
             <label>
               Asset
               <select value={coin} onChange={(event) => setCoin(event.target.value)}>
@@ -1133,6 +1171,82 @@ export default function Page() {
           </>
         )}
 
+        {view === "hip3" && (
+          <>
+            <ViewHeader eyebrow="Builder-deployed markets" title="HIP-3 deployment monitor" />
+            <section className="kpi-grid">
+              <Kpi label="Tracked markets" value={String(markets.length)} detail="Live perps universe used as current market map" />
+              <Kpi label="Builder stake" value="500K HYPE" detail="HIP-3 deployer requirement" />
+              <Kpi label="Top OI market" value={sortedMarkets[0]?.symbol || "--"} detail={formatUsd(sortedMarkets[0]?.oiUsd || 0)} />
+              <Kpi label="Risk leader" value={`${topRisk?.symbol || "--"} ${topRisk?.risk || "--"}`} detail="Stress score from live market data" />
+            </section>
+            <section className="two-col">
+              <Panel title="Builder market radar" subtitle="HIP-3 is about deployable perps. This view highlights which markets look mature enough for builder-operated venues.">
+                <div className="hip-market-grid">
+                  {markets.slice(0, 18).map((market: Market) => <HipMarketCard market={market} key={market.symbol} />)}
+                </div>
+              </Panel>
+              <Panel title="Deployment checklist" subtitle="A practical read for builder grant reviewers.">
+                <ul className="proof-list">
+                  <li><strong>Liquidity first</strong><span>Prioritize assets with durable OI, consistent volume, and tight spreads.</span></li>
+                  <li><strong>Risk controls</strong><span>Funding, leverage cap, and stress score must be visible before listing.</span></li>
+                  <li><strong>Operator layer</strong><span>HIP-3 lets builders create market venues; analytics should explain why a venue deserves attention.</span></li>
+                  <li><strong>Next build</strong><span>Add deployer-level market share once the endpoint is exposed in the repo API.</span></li>
+                </ul>
+              </Panel>
+            </section>
+          </>
+        )}
+
+        {view === "hip4" && (
+          <>
+            <ViewHeader eyebrow="Outcome markets" title="HIP-4 probability desk" />
+            <section className="kpi-grid">
+              <Kpi label="Primitive" value="Outcome" detail="Binary YES/NO style contracts" />
+              <Kpi label="Payoff" value="0 / 1" detail="Bounded settlement profile" />
+              <Kpi label="Rail" value="HyperCore" detail="Same matching engine family" />
+              <Kpi label="Use case" value="Events" detail="Hedge or trade defined outcomes" />
+            </section>
+            <section className="two-col">
+              <Panel title="Outcome market board" subtitle="A professional placeholder for HIP-4 outcome data, structured like a probability terminal.">
+                <OutcomeBoard />
+              </Panel>
+              <Panel title="What to track" subtitle="HIP-4 needs different analytics than perps. Price is not just beta; it is implied probability.">
+                <div className="signals">
+                  <Signal label="Probability" value="YES / NO" body="Display both sides so users do not confuse outcome price with a perp mark." tone="good" />
+                  <Signal label="Expiry" value="Required" body="Outcome markets lose meaning if expiry, target, or settlement source is hidden." tone="watch" />
+                  <Signal label="Risk" value="Bounded" body="Loss is bounded by contract payoff, but liquidity and settlement risk still matter." tone="good" />
+                  <Signal label="Next build" value="outcomeMeta" body="Wire Hyperliquid outcome metadata once your backend route exposes it." tone="watch" />
+                </div>
+              </Panel>
+            </section>
+          </>
+        )}
+
+        {view === "exchange" && (
+          <>
+            <ViewHeader eyebrow="Venue comparison" title="Hyperliquid vs exchange volume" />
+            <section className="kpi-grid">
+              <Kpi label="Hyperliquid volume" value={formatUsd(totalVolume)} detail="Live sum of Hyperliquid perp volume" />
+              <Kpi label="Ranked venues" value={String(exchangeRows.length)} detail="CEX and DEX comparison set" />
+              <Kpi label="DEX share signal" value={formatPct(exchangeRows.find((row: ExchangeRow) => row.name === "Hyperliquid")?.marketShare || 0, 1, false)} detail="Hyperliquid share in this comparison basket" />
+              <Kpi label="Source state" value={sourceLabel(marketStatus)} detail="Hyperliquid leg is live, peers are benchmark rows" />
+            </section>
+            <section className="two-col">
+              <Panel title="24h perp volume comparison" subtitle="Inspired by ASXN/Hyperscreener style: horizontal bars make venue share readable immediately.">
+                <ExchangeComparison rows={exchangeRows} />
+              </Panel>
+              <Panel title="How to read it" subtitle="This is built to become a live multi-source comparison module.">
+                <div className="signals">
+                  <Signal label="Live leg" value="Hyperliquid" body="The Hyperliquid row uses the current perps volume from the app market API." tone="good" />
+                  <Signal label="Peer rows" value="Benchmarks" body="Binance, Bybit, OKX and DEX peers are benchmark rows until an exchange-volume API is wired." tone="watch" />
+                  <Signal label="Builder value" value="Context" body="Grant reviewers can see HypurrScope is not just a token page; it tracks Hyperliquid against the wider market." tone="good" />
+                </div>
+              </Panel>
+            </section>
+          </>
+        )}
+
         {view === "wallet" && (
           <>
             <ViewHeader eyebrow="Read-only account scan" title="Wallet risk desk" />
@@ -1266,7 +1380,7 @@ function MarketTable({ rows }: { rows: Market[] }) {
             <tr><th>Coin</th><th>Price</th><th>24h</th><th>OI</th><th>Volume</th><th>Funding</th><th>Risk</th></tr>
           </thead>
           <tbody>
-            {rows.map((market) => (
+            {rows.map((market: Market) => (
               <tr key={market.symbol}>
                 <td><strong>{market.symbol}</strong></td>
                 <td>{formatUsd(market.price)}</td>
@@ -1367,6 +1481,73 @@ function FlowBarChart({ days }: { days: FlowDay[] }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function HipMarketCard({ market }: { market: Market }) {
+  const maturity = Math.round(clamp((Math.log10(market.oiUsd / 10_000_000 + 1) * 24) + (Math.log10(market.volumeUsd / 10_000_000 + 1) * 18) - Math.abs(market.funding) * 8000, 1, 99));
+  return (
+    <article className="hip-card">
+      <div>
+        <strong>{market.symbol}</strong>
+        <span>{maturity} maturity</span>
+      </div>
+      <p>{formatUsd(market.volumeUsd)} 24h volume</p>
+      <div className="riskbar"><i style={{ width: `${maturity}%`, background: riskColor(maturity) }} /></div>
+      <small>OI {formatUsd(market.oiUsd)} / funding {formatPct(market.funding * 100, 4)}</small>
+    </article>
+  );
+}
+
+function OutcomeBoard() {
+  const rows = [
+    { market: "BTC above daily mark", yes: 58, no: 42, expiry: "Daily 06:00 UTC", liquidity: "$420K" },
+    { market: "ETH above weekly range", yes: 46, no: 54, expiry: "Weekly", liquidity: "$180K" },
+    { market: "HYPE closes green", yes: 63, no: 37, expiry: "Daily", liquidity: "$260K" },
+  ];
+  return (
+    <div className="outcome-board">
+      {rows.map((row: { market: string; yes: number; no: number; expiry: string; liquidity: string }) => (
+        <article className="outcome-card" key={row.market}>
+          <div>
+            <strong>{row.market}</strong>
+            <span>{row.expiry}</span>
+          </div>
+          <div className="prob-track">
+            <i className="yes" style={{ width: `${row.yes}%` }} />
+            <i className="no" style={{ width: `${row.no}%` }} />
+          </div>
+          <div className="prob-labels">
+            <span>YES {row.yes}%</span>
+            <span>NO {row.no}%</span>
+          </div>
+          <small>Visible liquidity {row.liquidity}</small>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function ExchangeComparison({ rows }: { rows: ExchangeRow[] }) {
+  const maxVolume = Math.max(1, ...rows.map((row: ExchangeRow) => row.volumeUsd));
+  return (
+    <div className="exchange-bars">
+      {rows.map((row: ExchangeRow) => (
+        <article className={row.name === "Hyperliquid" ? "exchange-row highlight" : "exchange-row"} key={row.name}>
+          <div>
+            <strong>{row.name}</strong>
+            <span>{row.category} / {row.status}</span>
+          </div>
+          <div className="exchange-track">
+            <i style={{ width: `${Math.max(2, (row.volumeUsd / maxVolume) * 100)}%` }} />
+          </div>
+          <div className="exchange-values">
+            <strong>{formatUsd(row.volumeUsd)}</strong>
+            <span>{formatPct(row.marketShare, 1, false)} share</span>
+          </div>
+        </article>
+      ))}
     </div>
   );
 }

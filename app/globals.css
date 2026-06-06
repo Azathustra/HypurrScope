@@ -53,6 +53,34 @@ button {
   min-height: 100vh;
 }
 
+.hs-shell.theme-light {
+  --bg: #f5f7f4;
+  --panel: #ffffff;
+  --panel-2: #f0f4f1;
+  --panel-3: #e8eee9;
+  --line: #d3ded7;
+  --text: #111816;
+  --muted: #637168;
+  --mint: #0f9f67;
+  --amber: #a66f00;
+  --green: #07884f;
+  --red: #ce2946;
+  background: #f5f7f4;
+  color: var(--text);
+}
+
+.theme-light .hs-rail,
+.theme-light .topbar {
+  background: rgba(245, 247, 244, 0.9);
+}
+
+.theme-light .chart,
+.theme-light .depth-row,
+.theme-light .flow-chart,
+.theme-light .twap-balance {
+  background: #f8fbf8;
+}
+
 .hs-rail {
   position: sticky;
   top: 0;
@@ -224,6 +252,7 @@ input:focus {
 }
 
 .icon-btn,
+.theme-toggle,
 .primary,
 .secondary {
   min-height: 40px;
@@ -238,6 +267,13 @@ input:focus {
   place-items: center;
   background: var(--panel);
   font-weight: 800;
+}
+
+.theme-toggle {
+  padding: 0 12px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-weight: 760;
 }
 
 .primary {
@@ -1122,6 +1158,98 @@ td {
   font-size: 0.68rem;
 }
 
+.hip-market-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.hip-card,
+.outcome-card,
+.exchange-row {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.hip-card > div:first-child,
+.outcome-card > div:first-child,
+.exchange-row > div:first-child,
+.exchange-values,
+.prob-labels {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hip-card span,
+.hip-card small,
+.outcome-card span,
+.outcome-card small,
+.exchange-row span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.hip-card p {
+  margin: 0;
+  color: var(--text);
+  font-weight: 760;
+}
+
+.outcome-board,
+.exchange-bars {
+  display: grid;
+  gap: 12px;
+}
+
+.prob-track,
+.exchange-track {
+  position: relative;
+  display: flex;
+  height: 16px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #252c28;
+}
+
+.prob-track i,
+.exchange-track i {
+  display: block;
+  min-width: 2px;
+}
+
+.prob-track .yes {
+  background: var(--mint);
+}
+
+.prob-track .no {
+  background: var(--red);
+}
+
+.exchange-row {
+  grid-template-columns: 190px minmax(0, 1fr) 130px;
+  align-items: center;
+}
+
+.exchange-row.highlight {
+  border-color: rgba(124, 247, 199, 0.5);
+  background: linear-gradient(90deg, rgba(124, 247, 199, 0.12), var(--panel-2));
+}
+
+.exchange-track i {
+  background: linear-gradient(90deg, var(--mint), rgba(137, 217, 255, 0.72));
+}
+
+.exchange-values {
+  align-items: flex-end;
+  flex-direction: column;
+}
+
 .stats-list,
 .proof-list,
 .roadmap {
@@ -1301,7 +1429,8 @@ td {
   .twap-grid,
   .twap-columns,
   .nft-grid,
-  .flow-summary {
+  .flow-summary,
+  .hip-market-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1317,6 +1446,14 @@ td {
     grid-template-columns: repeat(7, minmax(18px, 1fr));
     gap: 6px;
     overflow-x: auto;
+  }
+
+  .exchange-row {
+    grid-template-columns: 1fr;
+  }
+
+  .exchange-values {
+    align-items: flex-start;
   }
 
   .trade-line {
