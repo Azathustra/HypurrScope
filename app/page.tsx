@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 
-type View = "overview" | "markets" | "liquidity" | "twaps" | "nfts" | "etf" | "hip3" | "hip4" | "exchange" | "wallet" | "builder";
+type View = "overview" | "statistics" | "markets" | "liquidity" | "twaps" | "nfts" | "etf" | "hip3" | "hip4" | "exchange" | "wallet" | "builder";
 type Status = "loading" | "live" | "fallback" | "error";
 
 type Market = {
@@ -144,6 +144,7 @@ const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
 
 const NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
   { id: "overview", label: "Overview", description: "HYPE pulse" },
+  { id: "statistics", label: "Statistics", description: "Charts lab" },
   { id: "markets", label: "Markets", description: "Perps radar" },
   { id: "liquidity", label: "Liquidity", description: "Order book" },
   { id: "twaps", label: "TWAPs", description: "Flow tape" },
@@ -286,6 +287,39 @@ function makeFallbackCandles(coin: string): Candle[] {
       volume: 520_000 + Math.abs(Math.sin(index / 3)) * 1_600_000,
     };
   });
+}
+
+function makeFallbackDailyCandles(coin: string): Candle[] {
+  const base = coin === "BTC" ? 104_800 : coin === "ETH" ? 5_930 : coin === "SOL" ? 238 : 58.4;
+  return Array.from({ length: 30 }, (_, index) => {
+    const trend = coin === "HYPE" ? index * 0.018 : index * 0.006;
+    const wave = Math.sin(index / 2.8) * (coin === "BTC" ? 1800 : 1.4) + Math.cos(index / 5.2) * (coin === "BTC" ? 900 : 0.8);
+    const close = base * (1 + trend / 10) + wave;
+    return {
+      time: Date.now() - (29 - index) * 24 * 60 * 60_000,
+      close,
+      volume: (coin === "BTC" ? 1_800_000_000 : 620_000_000) * (0.76 + Math.abs(Math.sin(index / 3)) * 0.52),
+    };
+  });
+}
+
+function buildRevenueSeries(hypeDaily: Candle[], totalVolume: number, feeRate = 0.0002) {
+  const currentDailyVolume = Math.max(1, hypeDaily[hypeDaily.length - 1]?.volume || 1);
+  const scale = Math.max(0.25, totalVolume / currentDailyVolume);
+  return hypeDaily.map((candle: Candle, index: number) => {
+    const seasonal = 0.9 + Math.abs(Math.sin(index / 3.4)) * 0.28;
+    const revenue = candle.volume * scale * feeRate * seasonal;
+    return {
+      time: candle.time,
+      close: revenue,
+      volume: candle.volume,
+    } satisfies Candle;
+  });
+}
+
+function dailyLabel(time: number) {
+  const date = new Date(time);
+  return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 function makeFallbackBook(coin: string): Book {
@@ -706,6 +740,9 @@ export default function Page() {
   const [coin, setCoin] = useState("HYPE");
   const [markets, setMarkets] = useState<Market[]>(fallbackMarkets);
   const [candles, setCandles] = useState<Candle[]>(makeFallbackCandles("HYPE"));
+  const [hypeDaily, setHypeDaily] = useState<Candle[]>(makeFallbackDailyCandles("HYPE"));
+  const [btcDaily, setBtcDaily] = useState<Candle[]>(makeFallbackDailyCandles("BTC"));
+  const [statsStatus, setStatsStatus] = useState<Status>("fallback");
   const [book, setBook] = useState<Book | null>(makeFallbackBook("HYPE"));
   const [marketStatus, setMarketStatus] = useState<Status>("fallback");
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
@@ -733,6 +770,12 @@ export default function Page() {
     const timer = window.setInterval(loadMarketData, 25_000);
     return () => window.clearInterval(timer);
   }, [coin]);
+
+  useEffect(() => {
+    loadStatistics();
+    const timer = window.setInterval(loadStatistics, 120_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     loadNfts();
@@ -774,6 +817,27 @@ export default function Page() {
       setBook(makeFallbackBook(coin));
       setMarketStatus("fallback");
       setLastUpdate(new Date());
+    }
+  }
+
+  async function loadStatistics() {
+    try {
+      setStatsStatus((current) => (current === "live" ? "live" : "loading"));
+      const now = Date.now();
+      const startTime = now - 32 * 24 * 60 * 60 * 1000;
+      const [hypePayload, btcPayload] = await Promise.all([
+        postInfo({ type: "candleSnapshot", req: { coin: "HYPE", interval: "1d", startTime, endTime: now } }),
+        postInfo({ type: "candleSnapshot", req: { coin: "BTC", interval: "1d", startTime, endTime: now } }),
+      ]);
+      const nextHype = normalizeCandles(hypePayload);
+      const nextBtc = normalizeCandles(btcPayload);
+      if (nextHype.length) setHypeDaily(nextHype.slice(-30));
+      if (nextBtc.length) setBtcDaily(nextBtc.slice(-30));
+      setStatsStatus("live");
+    } catch {
+      setHypeDaily(makeFallbackDailyCandles("HYPE"));
+      setBtcDaily(makeFallbackDailyCandles("BTC"));
+      setStatsStatus("fallback");
     }
   }
 
@@ -886,6 +950,12 @@ export default function Page() {
   const etfNetFlow = flows.reduce((sum: number, row: FlowRow) => sum + parseMoneyLabel(row.dollarVolume), 0);
   const largestEtfPrint = Math.max(0, ...flows.map((row: FlowRow) => Math.abs(parseMoneyLabel(row.dollarVolume))));
   const exchangeRows = useMemo(() => buildExchangeRows(totalVolume), [totalVolume]);
+  const revenueSeries = useMemo(() => buildRevenueSeries(hypeDaily, totalVolume), [hypeDaily, totalVolume]);
+  const hypeReturn30d = hypeDaily.length > 1 ? ((hypeDaily[hypeDaily.length - 1].close - hypeDaily[0].close) / hypeDaily[0].close) * 100 : 0;
+  const btcReturn30d = btcDaily.length > 1 ? ((btcDaily[btcDaily.length - 1].close - btcDaily[0].close) / btcDaily[0].close) * 100 : 0;
+  const relativeStrength = hypeReturn30d - btcReturn30d;
+  const estimatedRevenue30d = revenueSeries.reduce((sum: number, item: Candle) => sum + item.close, 0);
+  const avgDailyRevenue = revenueSeries.length ? estimatedRevenue30d / revenueSeries.length : 0;
   const regimeScore = Math.round(
     clamp(Math.abs(weightedFunding) * 60_000 + Math.abs(selected?.changePct || 0) * 2 + Math.abs(book?.imbalance || 0) * 0.2, 0, 99),
   );
@@ -1041,6 +1111,37 @@ export default function Page() {
                   <span>{sourceLabel(buybackStatus)} buyback endpoint</span>
                   <strong>{buyback.estimatedBuybackUsd24hLabel || formatUsd(feePressure)}</strong>
                   <p>{buyback.note || "The fallback model uses 2 bps on HYPE volume."}</p>
+                </div>
+              </Panel>
+            </section>
+          </>
+        )}
+
+        {view === "statistics" && (
+          <>
+            <ViewHeader eyebrow="Analytics lab" title="HYPE statistics dashboard" />
+            <section className="kpi-grid">
+              <Kpi label="HYPE 30d" value={formatPct(hypeReturn30d, 2)} detail="Daily candle return" tone={hypeReturn30d >= 0 ? "positive" : "negative"} />
+              <Kpi label="BTC 30d" value={formatPct(btcReturn30d, 2)} detail="Benchmark return" tone={btcReturn30d >= 0 ? "positive" : "negative"} />
+              <Kpi label="Relative strength" value={formatPct(relativeStrength, 2)} detail="HYPE return minus BTC return" tone={relativeStrength >= 0 ? "positive" : "negative"} />
+              <Kpi label="Revenue proxy 30d" value={formatUsd(estimatedRevenue30d)} detail={`${sourceLabel(statsStatus)} candles, fee-pressure model`} />
+            </section>
+            <section className="stats-grid">
+              <Panel title="HYPE vs BTC normalized performance" subtitle="Both assets start at 100. This makes relative strength readable immediately.">
+                <DualLineChart primary={hypeDaily} secondary={btcDaily} primaryLabel="HYPE" secondaryLabel="BTC" />
+              </Panel>
+              <Panel title="HYPE revenue / fee-pressure proxy" subtitle="Estimated from Hyperliquid volume and a transparent fee-rate model.">
+                <RevenueChart series={revenueSeries} />
+              </Panel>
+              <Panel title="Volume and OI structure" subtitle="A market-quality read inspired by exchange screener dashboards.">
+                <StructureChart markets={markets} />
+              </Panel>
+              <Panel title="Statistics read" subtitle="A compact interpretation layer so the page feels like a product, not a raw chart dump.">
+                <div className="signals">
+                  <Signal label="Relative trend" value={formatPct(relativeStrength, 2)} body={relativeStrength >= 0 ? "HYPE has outperformed BTC over the sampled daily window." : "HYPE is underperforming BTC over the sampled daily window."} tone={relativeStrength >= 0 ? "good" : "watch"} />
+                  <Signal label="Revenue run-rate" value={formatUsd(avgDailyRevenue)} body="This is a fee-pressure proxy, not audited protocol revenue. It is useful as a directional dashboard metric." tone="good" />
+                  <Signal label="Market depth context" value={formatUsd(totalOi)} body="OI and volume structure help explain whether moves are spot-like, perp-driven, or liquidity-driven." tone="watch" />
+                  <Signal label="Next upgrade" value="Historical API" body="A backend archive would turn these charts from rolling snapshots into a full time-series terminal." tone="good" />
                 </div>
               </Panel>
             </section>
@@ -1481,6 +1582,99 @@ function FlowBarChart({ days }: { days: FlowDay[] }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function DualLineChart({
+  primary,
+  secondary,
+  primaryLabel,
+  secondaryLabel,
+}: {
+  primary: Candle[];
+  secondary: Candle[];
+  primaryLabel: string;
+  secondaryLabel: string;
+}) {
+  const length = Math.min(primary.length, secondary.length);
+  const primaryData = primary.slice(-length);
+  const secondaryData = secondary.slice(-length);
+  if (length < 2) return <div className="empty">Waiting for comparison candles</div>;
+  const primaryBase = primaryData[0].close || 1;
+  const secondaryBase = secondaryData[0].close || 1;
+  const pValues = primaryData.map((item: Candle) => (item.close / primaryBase) * 100);
+  const sValues = secondaryData.map((item: Candle) => (item.close / secondaryBase) * 100);
+  const values = pValues.concat(sValues);
+  const min = Math.min(...values) * 0.985;
+  const max = Math.max(...values) * 1.015;
+  const span = Math.max(0.0001, max - min);
+  const point = (value: number, index: number) => {
+    const x = 42 + (index / (length - 1)) * 894;
+    const y = 260 - ((value - min) / span) * 220;
+    return `${x},${y}`;
+  };
+  const primaryPoints = pValues.map(point).join(" ");
+  const secondaryPoints = sValues.map(point).join(" ");
+
+  return (
+    <div className="pro-chart-card">
+      <div className="chart-legend">
+        <span className="legend-mint">{primaryLabel}</span>
+        <span className="legend-amber">{secondaryLabel}</span>
+        <strong>{formatPct(pValues[pValues.length - 1] - sValues[sValues.length - 1], 2)} relative</strong>
+      </div>
+      <svg className="pro-chart" viewBox="0 0 1000 300" role="img" aria-label={`${primaryLabel} versus ${secondaryLabel}`}>
+        <line x1="42" x2="936" y1="60" y2="60" />
+        <line x1="42" x2="936" y1="150" y2="150" />
+        <line x1="42" x2="936" y1="240" y2="240" />
+        <polyline points={secondaryPoints} className="chart-line amber-line" />
+        <polyline points={primaryPoints} className="chart-line positive-line" />
+        <text x="42" y="34">{max.toFixed(1)}</text>
+        <text x="42" y="284">{min.toFixed(1)}</text>
+        <text x="820" y="284">{dailyLabel(primaryData[primaryData.length - 1].time)}</text>
+      </svg>
+    </div>
+  );
+}
+
+function RevenueChart({ series }: { series: Candle[] }) {
+  const values = series.map((item: Candle) => item.close);
+  const max = Math.max(1, ...values);
+  const total = values.reduce((sum: number, value: number) => sum + value, 0);
+  return (
+    <div className="revenue-chart">
+      <div className="flow-summary">
+        <div><span>30d proxy</span><strong>{formatUsd(total)}</strong></div>
+        <div><span>Average day</span><strong>{formatUsd(series.length ? total / series.length : 0)}</strong></div>
+      </div>
+      <div className="revenue-bars">
+        {series.slice(-24).map((item: Candle, index: number) => (
+          <div className="revenue-day" key={`${item.time}-${index}`}>
+            <i style={{ height: `${Math.max(5, (item.close / max) * 100)}%` }} />
+            <small>{index % 5 === 0 ? dailyLabel(item.time) : ""}</small>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StructureChart({ markets }: { markets: Market[] }) {
+  const rows = markets.slice(0, 10);
+  const max = Math.max(1, ...rows.map((market: Market) => Math.max(market.volumeUsd, market.oiUsd)));
+  return (
+    <div className="structure-chart">
+      {rows.map((market: Market) => (
+        <article className="structure-row" key={market.symbol}>
+          <strong>{market.symbol}</strong>
+          <div>
+            <span className="vol" style={{ width: `${Math.max(2, (market.volumeUsd / max) * 100)}%` }} />
+            <span className="oi" style={{ width: `${Math.max(2, (market.oiUsd / max) * 100)}%` }} />
+          </div>
+          <small>{formatUsd(market.volumeUsd)} vol / {formatUsd(market.oiUsd)} OI</small>
+        </article>
+      ))}
     </div>
   );
 }
