@@ -1,34 +1,33 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-const HYPERLIQUID_INFO_ENDPOINT = "https://api.hyperliquid.xyz/info";
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const coin = searchParams.get("coin") || "HYPE";
-  const interval = searchParams.get("interval") || "15m";
-  const hours = Math.min(Math.max(Number(searchParams.get("hours") || 24), 1), 168);
-  const endTime = Date.now();
-  const startTime = endTime - hours * 60 * 60 * 1000;
+const HL_INFO = "https://api.hyperliquid.xyz/info";
 
+export async function POST(request: Request) {
   try {
-    const response = await fetch(HYPERLIQUID_INFO_ENDPOINT, {
+    const body = await request.json();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const upstream = await fetch(HL_INFO, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "candleSnapshot",
-        req: { coin, interval, startTime, endTime },
-      }),
+      body: JSON.stringify(body),
+      signal: controller.signal,
       cache: "no-store",
     });
-
-    if (!response.ok) {
-      const text = await response.text();
-      return NextResponse.json({ candles: [], error: text || "Hyperliquid candles failed" }, { status: response.status });
-    }
-
-    const candles = await response.json();
-    return NextResponse.json({ candles, coin, interval, generatedAt: new Date().toISOString() }, { headers: { "Cache-Control": "no-store" } });
+    clearTimeout(timeout);
+    const text = await upstream.text();
+    return new NextResponse(text, {
+      status: upstream.status,
+      headers: {
+        "Content-Type": upstream.headers.get("content-type") || "application/json",
+        "Cache-Control": "no-store",
+      },
+    });
   } catch (error) {
-    return NextResponse.json({ candles: [], error: "Hyperliquid history route failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "unknown error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
