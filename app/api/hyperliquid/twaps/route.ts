@@ -87,7 +87,7 @@ export async function GET() {
       .sort((a, b) => b.time - a.time)
       .slice(0, 80);
 
-    const windowMs = 10 * 60 * 1000;
+    const windowMs = 20 * 60 * 1000;
     const cutoff = Date.now() - windowMs;
     const recent = normalized.filter((trade) => trade.time >= cutoff);
     const buyNotional = recent.filter((t) => t.side === "Buy").reduce((s, t) => s + t.notional, 0);
@@ -97,7 +97,7 @@ export async function GET() {
 
     const buckets = new Map<string, { side: "Buy" | "Sell"; notional: number; size: number; count: number; lastTime: number; priceSum: number }>();
     recent.forEach((trade) => {
-      const bucketTs = Math.floor(trade.time / 120_000) * 120_000;
+      const bucketTs = Math.floor(trade.time / 30_000) * 30_000;
       const key = `${trade.side}-${bucketTs}`;
       const current = buckets.get(key) || { side: trade.side as "Buy" | "Sell", notional: 0, size: 0, count: 0, lastTime: 0, priceSum: 0 };
       current.notional += trade.notional;
@@ -109,9 +109,9 @@ export async function GET() {
     });
 
     const twaps = Array.from(buckets.values())
-      .filter((bucket) => bucket.count >= 3 || bucket.notional >= 25_000)
+      .filter((bucket) => bucket.count >= 2 || bucket.notional >= 10_000)
       .sort((a, b) => b.notional - a.notional)
-      .slice(0, 10)
+      .slice(0, 16)
       .map((bucket) => ({
         side: bucket.side,
         notional: fmtUsd(bucket.notional),
@@ -120,7 +120,7 @@ export async function GET() {
         slices: bucket.count,
         avgPrice: fmtPx(bucket.priceSum / Math.max(bucket.count, 1)),
         lastTrade: ago(bucket.lastTime),
-        confidence: bucket.count >= 8 ? "High" : bucket.count >= 5 ? "Medium" : "Low",
+        confidence: bucket.count >= 6 ? "High" : bucket.count >= 3 ? "Medium" : "Low",
       }));
 
     return NextResponse.json(
@@ -128,7 +128,7 @@ export async function GET() {
         ok: true,
         updatedAt: new Date().toISOString(),
         coin: "HYPE",
-        window: "10m",
+        window: "20m",
         summary: {
           buyNotional,
           sellNotional,
@@ -141,7 +141,9 @@ export async function GET() {
           netSide: buyNotional >= sellNotional ? "Buy" : "Sell",
         },
         twaps,
-        trades: normalized.slice(0, 40),
+        buyTwaps: twaps.filter((row) => row.side === "Buy"),
+        sellTwaps: twaps.filter((row) => row.side === "Sell"),
+        trades: normalized.slice(0, 60),
       },
       { headers: { "Cache-Control": "s-maxage=10, stale-while-revalidate=20" } },
     );
