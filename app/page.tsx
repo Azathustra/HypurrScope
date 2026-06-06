@@ -411,7 +411,8 @@ export default function App() {
   const marketCapLabel = marketCapEstimate ? formatUsd(marketCapEstimate) : "$--";
   const fdvToMarketCap = marketCapEstimate > 0 && hype.rawFdv ? `${(hype.rawFdv / marketCapEstimate).toFixed(1)}x FDV / mcap` : "Est. circulating cap";
   const volumeToMarketCap = marketCapEstimate > 0 && hype.rawVolume > 0 ? `${((hype.rawVolume / marketCapEstimate) * 100).toFixed(1)}% vol/mcap` : "-- vol/mcap";
-  const annualizedBuybackUsd = buybacks.estimatedBuybackUsd24h > 0 ? buybacks.estimatedBuybackUsd24h * 365 : 0;
+  const buybackUsd24h = toNumber(String(buybacks.estimatedBuybackUsd24hLabel).replace(/[^0-9.]/g, ""));
+  const annualizedBuybackUsd = buybackUsd24h > 0 ? buybackUsd24h * 365 : 0;
   const valueCaptureRatio = annualizedBuybackUsd > 0 && marketCapEstimate > 0 ? marketCapEstimate / annualizedBuybackUsd : 0;
   const valueCaptureLabel = valueCaptureRatio > 0 ? `${valueCaptureRatio.toFixed(1)}x` : "--";
   const valueCaptureTone: "green" | "amber" | "red" = valueCaptureRatio > 0 && valueCaptureRatio < 12 ? "green" : valueCaptureRatio > 0 && valueCaptureRatio < 20 ? "amber" : "red";
