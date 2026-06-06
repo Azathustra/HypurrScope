@@ -1,0 +1,10 @@
+{
+  "name": "HypurrScope Pro",
+  "short_name": "HypurrScope",
+  "description": "Hyperliquid market intelligence console for HYPE, perps, liquidity, and wallet risk.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#080a0a",
+  "theme_color": "#080a0a",
+  "icons": []
+}

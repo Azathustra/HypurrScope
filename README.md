@@ -1,54 +1,34 @@
-# HypurrScope
+# HypurrScope Pro
 
-A read-only ecosystem intelligence dashboard for Hyperliquid markets, whales, vaults, Hypurr NFTs and TradFi flows.
+HypurrScope Pro is a read-only Hyperliquid market intelligence console. It turns the current HypurrScope idea into a more complete builder product: live perps radar, HYPE tape, funding and OI analytics, order-book depth, wallet risk scoring, local alert rules, and a transparent builder proof page.
 
-## Modules
+## What changed
 
-- Market Pulse: live Hyperliquid perps data via `/api/hyperliquid/info`
-- Whale Watch: manual wallet scanner via `clearinghouseState`
-- Vault Risk: vault screener via `/api/hyperliquid/vaults`
-- Hypurr NFT Pulse: OpenSea-ready NFT stats and recent sales
-- TradFi Flow: HYPE ETP / ETF watchlist
-- Methodology: scoring logic and builder identity section
+- Rebuilt the product as a multi-view analytics app instead of a static dashboard.
+- Uses the official Hyperliquid Info API directly for `metaAndAssetCtxs`, `candleSnapshot`, `l2Book`, `clearinghouseState`, `userFills`, `frontendOpenOrders`, and `userFunding`.
+- Adds computed models for market risk, wallet health, fee-pressure estimates, book imbalance, and regime classification.
+- Adds graceful fallback and local caching so the site still renders during API failures.
+- Adds professional SEO metadata, responsive layout, and deployment-ready static files.
 
-## Safety model
+## Files
 
-This V1 is read-only:
+- `index.html` - app shell and semantic UI structure.
+- `assets/styles.css` - responsive product UI.
+- `assets/js/hyperliquid.js` - official API adapter.
+- `assets/js/analytics.js` - normalizers and scoring models.
+- `assets/js/charts.js` - canvas charts and heatmap rendering.
+- `assets/js/app.js` - app state, navigation, rendering, wallet scan, and rules.
+- `manifest.webmanifest` - installable app metadata.
 
-- no wallet connect
-- no private keys
-- no order routing
-- no copy-trading execution
-- no smart contracts
+## Deploy
 
-## Local setup
+This build is static. You can deploy the full `hypurrscope-pro` folder on Vercel, Netlify, Cloudflare Pages, GitHub Pages, or any static host.
 
-```bash
-npm install
-npm run dev
-```
+For the next production step, add a thin server/API proxy with cache headers and rate limiting. The app works without it because Hyperliquid currently sends permissive CORS headers, but a proxy will look more professional and protect users from transient API issues.
 
-Open `http://localhost:3000`.
+## Suggested next grant-facing improvements
 
-## Optional environment variables
-
-Create `.env.local` if you want OpenSea data to work more reliably:
-
-```bash
-OPENSEA_API_KEY=your_opensea_api_key
-```
-
-The app will still run without this key and will show fallback NFT data.
-
-## Deploy on Vercel
-
-1. Create a GitHub repository.
-2. Upload this project.
-3. Go to Vercel → New Project → Import GitHub repo.
-4. Deploy.
-5. Add `OPENSEA_API_KEY` in Vercel environment variables if you have one.
-6. Replace `0x...soon` with your public builder wallet.
-
-## Important
-
-The scoring is heuristic and for information only. It is not financial advice and not an automated trading system.
+1. Publish the source code with a clear changelog and formula documentation.
+2. Add a serverless proxy for third-party modules such as OpenSea, ecosystem directories, and historical archives.
+3. Add sharable wallet reports with a stable URL and no private wallet permissions.
+4. Add a small test suite around scoring formulas and API normalizers.
