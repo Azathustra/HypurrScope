@@ -204,7 +204,7 @@ function buildWhaleRowsFromState(payload: unknown, markets: MarketRow[]): WhaleR
 function riskTone(value: number) { return value >= 80 ? "text-red-200 bg-red-400/15 border-red-300/20" : value >= 65 ? "text-amber-200 bg-amber-300/15 border-amber-200/20" : value >= 45 ? "text-cyan-100 bg-cyan-300/10 border-cyan-200/15" : "text-cyan-200 bg-cyan-300/10 border-cyan-200/20"; }
 
 function Panel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <section className={cn("rounded-[1.75rem] border border-white/12 bg-white/[0.055] shadow-2xl shadow-black/20 backdrop-blur-xl", className)}>{children}</section>;
+  return <section className={cn("rounded-[1.4rem] border border-white/10 bg-white/[0.07] shadow-[0_8px_30px_rgba(0,0,0,0.28)] backdrop-blur-md", className)}>{children}</section>;
 }
 function Pill({ children, className = "" }: { children: React.ReactNode; className?: string }) { return <span className={cn("inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.06] px-3 py-1 text-xs font-bold", className)}>{children}</span>; }
 function StatusPill({ status }: { status: ApiStatus }) {
