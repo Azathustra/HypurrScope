@@ -2,7 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 
-type View = "overview" | "markets" | "liquidity" | "wallet" | "builder";
+type View = "overview" | "markets" | "liquidity" | "twaps" | "nfts" | "etf" | "wallet" | "builder";
+type Status = "loading" | "live" | "fallback" | "error";
 
 type Market = {
   symbol: string;
@@ -50,10 +51,143 @@ type Position = {
   distancePct: number | null;
 };
 
-const API_URL = "https://api.hyperliquid.xyz/info";
+type NftStats = {
+  floor: string;
+  volume24h: string;
+  totalVolume: string;
+  listed: string;
+  owners: string;
+  sales24h: string;
+};
+
+type NftSale = {
+  id: string;
+  name: string;
+  price: string;
+  usd?: string;
+  time: string;
+  image?: string;
+  url?: string;
+  imageMode?: "artwork" | "preview";
+  priceSource?: string;
+};
+
+type TwapRow = {
+  side: "Buy" | "Sell";
+  notional: string;
+  rawNotional: number;
+  size: string;
+  slices: number;
+  avgPrice: string;
+  lastTrade: string;
+  confidence: string;
+};
+
+type TradeRow = {
+  id: string;
+  side: "Buy" | "Sell";
+  price: string;
+  size: string;
+  notionalLabel: string;
+  timeLabel: string;
+  rawNotional?: number;
+};
+
+type TwapSummary = {
+  buy10m?: string;
+  sell10m?: string;
+  netLabel?: string;
+  netSide?: string;
+  updatedAt?: string;
+};
+
+type FlowRow = {
+  name: string;
+  ticker: string;
+  venue: string;
+  status: string;
+  price?: string;
+  change?: string;
+  volume?: string;
+  dollarVolume?: string;
+  aum?: string;
+  fee?: string;
+  url?: string;
+  updatedAt?: string;
+};
+
+type BuybackData = {
+  live?: boolean;
+  estimatedBuybackUsd24hLabel?: string;
+  estimatedBuybackHype24hLabel?: string;
+  totalFeeUsd24hLabel?: string;
+  note?: string;
+};
+
 const HYPE_SUPPLY = 1_000_000_000;
+const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
+
+const NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
+  { id: "overview", label: "Overview", description: "HYPE pulse" },
+  { id: "markets", label: "Markets", description: "Perps radar" },
+  { id: "liquidity", label: "Liquidity", description: "Order book" },
+  { id: "twaps", label: "TWAPs", description: "Flow tape" },
+  { id: "nfts", label: "Hypurr NFTs", description: "Floor + sales" },
+  { id: "etf", label: "ETF flows", description: "TradFi bridge" },
+  { id: "wallet", label: "Wallet", description: "Risk scan" },
+  { id: "builder", label: "Builder", description: "Proof layer" },
+];
 
 const DEFAULT_COINS = ["HYPE", "BTC", "ETH", "SOL"];
+
+const EMPTY_NFT_STATS: NftStats = {
+  floor: "--",
+  volume24h: "--",
+  totalVolume: "--",
+  listed: "--",
+  owners: "--",
+  sales24h: "--",
+};
+
+const FALLBACK_FLOWS: FlowRow[] = [
+  {
+    name: "Bitwise Hyperliquid ETF",
+    ticker: "BHYP",
+    venue: "US",
+    status: "Waiting for live flow",
+    dollarVolume: "--",
+    url: "https://farside.co.uk/hyp/",
+  },
+  {
+    name: "21Shares Hyperliquid ETF",
+    ticker: "THYP",
+    venue: "US",
+    status: "Waiting for live flow",
+    dollarVolume: "--",
+    url: "https://farside.co.uk/hyp/",
+  },
+  {
+    name: "21Shares Hyperliquid ETP",
+    ticker: "HYPE.SW",
+    venue: "Switzerland",
+    status: "Waiting for quote",
+    dollarVolume: "--",
+  },
+  {
+    name: "CoinShares Hyperliquid Staking ETP",
+    ticker: "LIQD.DE",
+    venue: "Germany",
+    status: "Waiting for quote",
+    dollarVolume: "--",
+  },
+];
+
+const EMPTY_BUYBACK: BuybackData = {
+  live: false,
+  estimatedBuybackUsd24hLabel: "Loading",
+  estimatedBuybackHype24hLabel: "Loading",
+  note: "Loading fee-pressure estimate.",
+};
 
 const fallbackMarkets: Market[] = [
   makeFallbackMarket("HYPE", 58.4, 3.09, 0, 1_500_000_000, 980_000_000, 10),
@@ -66,6 +200,29 @@ const fallbackMarkets: Market[] = [
   makeFallbackMarket("AVAX", 31.2, 2.4, 0.000119, 360_000_000, 160_000_000, 10),
   makeFallbackMarket("SUI", 3.4, -2.2, -0.000118, 320_000_000, 140_000_000, 10),
   makeFallbackMarket("LINK", 18.6, 0.82, 0.000036, 290_000_000, 120_000_000, 10),
+];
+
+const fallbackTwaps: TwapRow[] = [
+  {
+    side: "Buy",
+    notional: "$2.42M",
+    rawNotional: 2_420_000,
+    size: "41.4K HYPE",
+    slices: 16,
+    avgPrice: "$58.45",
+    lastTrade: "recent",
+    confidence: "Fallback cluster",
+  },
+  {
+    side: "Sell",
+    notional: "$1.18M",
+    rawNotional: 1_180_000,
+    size: "20.1K HYPE",
+    slices: 9,
+    avgPrice: "$58.31",
+    lastTrade: "recent",
+    confidence: "Fallback cluster",
+  },
 ];
 
 function makeFallbackMarket(
@@ -115,20 +272,25 @@ function makeFallbackBook(coin: string): Book {
     const size = 14 + index * 6;
     return { price, size, usd: price * size };
   });
-  return normalizeBook({ levels: [bids.map(toRawLevel), asks.map(toRawLevel)] }) || {
-    bids,
-    asks,
-    bestBid: bids[0].price,
-    bestAsk: asks[0].price,
-    bidUsd: 0,
-    askUsd: 0,
-    spreadPct: 0,
-    imbalance: 0,
-  };
+  return buildBookFromSides(bids, asks);
 }
 
-function toRawLevel(level: BookLevel) {
-  return { px: String(level.price), sz: String(level.size) };
+function buildBookFromSides(bids: BookLevel[], asks: BookLevel[]): Book {
+  const bestBid = bids[0]?.price || 0;
+  const bestAsk = asks[0]?.price || 0;
+  const mid = (bestBid + bestAsk) / 2;
+  const bidUsd = bids.reduce((sum, level) => sum + level.usd, 0);
+  const askUsd = asks.reduce((sum, level) => sum + level.usd, 0);
+  return {
+    bids,
+    asks,
+    bestBid,
+    bestAsk,
+    bidUsd,
+    askUsd,
+    spreadPct: mid > 0 ? ((bestAsk - bestBid) / mid) * 100 : 0,
+    imbalance: bidUsd + askUsd > 0 ? ((bidUsd - askUsd) / (bidUsd + askUsd)) * 100 : 0,
+  };
 }
 
 function n(value: unknown) {
@@ -152,6 +314,15 @@ function formatUsd(value: number) {
   return `${sign}$${abs.toPrecision(3)}`;
 }
 
+function formatNative(value: number, suffix = "HYPE") {
+  if (!Number.isFinite(value) || value <= 0) return `-- ${suffix}`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M ${suffix}`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(2)}K ${suffix}`;
+  if (value >= 100) return `${value.toFixed(0)} ${suffix}`;
+  if (value >= 1) return `${value.toFixed(2)} ${suffix}`;
+  return `${value.toPrecision(3)} ${suffix}`;
+}
+
 function formatPct(value: number, digits = 2, signed = true) {
   if (!Number.isFinite(value)) return "--";
   const sign = signed && value > 0 ? "+" : "";
@@ -167,8 +338,31 @@ function scoreRisk(changePct: number, funding: number, oiUsd: number, volumeUsd:
   return Math.round(clamp(12 + move + fundingScore + oiScore + volumeScore + leverageScore, 1, 99));
 }
 
+function parseMoneyLabel(label?: string) {
+  if (!label) return 0;
+  const clean = label.replace(/,/g, "").trim();
+  const match = clean.match(/-?\$?(-?\d+(?:\.\d+)?)/);
+  if (!match) return 0;
+  const base = Number(match[1]);
+  if (!Number.isFinite(base)) return 0;
+  const sign = clean.includes("-") ? -1 : 1;
+  const multiplier = /B/i.test(clean) ? 1e9 : /M/i.test(clean) ? 1e6 : /K/i.test(clean) ? 1e3 : 1;
+  return sign * Math.abs(base) * multiplier;
+}
+
+function shortAddress(address: string) {
+  if (!address || address.length < 12) return address || "--";
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function riskColor(score: number) {
+  if (score >= 75) return "#ff7a8d";
+  if (score >= 55) return "#f2c66d";
+  return "#35d58a";
+}
+
 async function postInfo(body: unknown) {
-  const response = await fetch(API_URL, {
+  const response = await fetch("/api/hyperliquid/info", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -216,7 +410,11 @@ function normalizeMarkets(payload: unknown): Market[] {
 }
 
 function normalizeCandles(payload: unknown): Candle[] {
-  const rows = Array.isArray(payload) ? payload : [];
+  const rows = Array.isArray((payload as any)?.candles)
+    ? (payload as any).candles
+    : Array.isArray(payload)
+      ? payload
+      : [];
   return rows
     .map((row: any) => ({
       time: n(row.t || row.time || row.timestamp),
@@ -233,21 +431,7 @@ function normalizeBook(payload: any): Book | null {
   const bids = (payload.levels[0] || []).map(normalizeLevel).filter(Boolean) as BookLevel[];
   const asks = (payload.levels[1] || []).map(normalizeLevel).filter(Boolean) as BookLevel[];
   if (!bids.length || !asks.length) return null;
-  const bestBid = bids[0].price;
-  const bestAsk = asks[0].price;
-  const mid = (bestBid + bestAsk) / 2;
-  const bidUsd = bids.reduce((sum, level) => sum + level.usd, 0);
-  const askUsd = asks.reduce((sum, level) => sum + level.usd, 0);
-  return {
-    bids,
-    asks,
-    bestBid,
-    bestAsk,
-    bidUsd,
-    askUsd,
-    spreadPct: mid > 0 ? ((bestAsk - bestBid) / mid) * 100 : 0,
-    imbalance: bidUsd + askUsd > 0 ? ((bidUsd - askUsd) / (bidUsd + askUsd)) * 100 : 0,
-  };
+  return buildBookFromSides(bids, asks);
 }
 
 function normalizeLevel(level: any): BookLevel | null {
@@ -257,15 +441,121 @@ function normalizeLevel(level: any): BookLevel | null {
   return { price, size, usd: price * size };
 }
 
-function riskColor(score: number) {
-  if (score >= 75) return "#ff7a8d";
-  if (score >= 55) return "#f2c66d";
-  return "#35d58a";
+function parseNftStats(payload: unknown): NftStats {
+  const data = payload as any;
+  const total = data?.total || {};
+  const intervals = Array.isArray(data?.intervals) ? data.intervals : [];
+  const day = intervals.find((item: any) => ["one_day", "1d", "day"].includes(item.interval)) || {};
+  const floor = n(total.floor_price ?? total.floorPrice ?? data?.floor_price ?? data?.floorPrice);
+  const volume24 = n(day.volume ?? day.volume_diff ?? data?.one_day_volume);
+  const totalVolume = n(total.volume ?? data?.volume);
+  const listed = n(total.listed ?? data?.listed ?? data?.listing_count);
+  const owners = n(total.num_owners ?? data?.num_owners);
+  const sales24h = n(day.sales ?? day.sales_diff ?? data?.one_day_sales);
+  return {
+    floor: floor ? formatNative(floor, "HYPE") : EMPTY_NFT_STATS.floor,
+    volume24h: volume24 ? formatNative(volume24, "HYPE") : EMPTY_NFT_STATS.volume24h,
+    totalVolume: totalVolume ? formatNative(totalVolume, "HYPE") : EMPTY_NFT_STATS.totalVolume,
+    listed: listed ? `${listed.toLocaleString("en-US")}` : EMPTY_NFT_STATS.listed,
+    owners: owners ? owners.toLocaleString("en-US") : EMPTY_NFT_STATS.owners,
+    sales24h: sales24h ? String(Math.round(sales24h)) : EMPTY_NFT_STATS.sales24h,
+  };
 }
 
-function shortAddress(address: string) {
-  if (!address || address.length < 12) return address || "--";
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+function parseNftSales(payload: unknown): NftSale[] {
+  const data = payload as any;
+  const candidates = data?.sales || data?.items || data?.results || data?.asset_events || data?.events || [];
+  if (!Array.isArray(candidates)) return [];
+  return candidates
+    .map((raw: any, index: number) => {
+      const nft = raw.nft || raw.asset || raw.item || raw;
+      const id = String(raw.id || nft.identifier || nft.token_id || raw.tokenId || raw.token_id || index + 1);
+      const name = raw.name || nft.name || `Hypurr #${id}`;
+      const price = typeof raw.price === "string" ? raw.price : raw.priceLabel || raw.payment?.quantity || "Price n/a";
+      return {
+        id,
+        name,
+        price: String(price).replace(/WHYPE/g, "HYPE"),
+        usd: raw.usd || raw.usdPrice || raw.usd_price || "",
+        time: raw.time || raw.timeLabel || "recent",
+        image:
+          raw.image ||
+          raw.image_url ||
+          raw.display_image_url ||
+          nft.image_url ||
+          nft.image ||
+          nft.display_image_url ||
+          nft.metadata?.image ||
+          "",
+        url: raw.url || raw.permalink || nft.permalink || nft.opensea_url || OPENSEA_COLLECTION_URL,
+        imageMode: raw.imageMode || raw.image_mode || (raw.imageStatus === "item_page" ? "preview" : "artwork"),
+        priceSource: raw.priceSource || raw.price_source || "api",
+      } satisfies NftSale;
+    })
+    .filter((sale) => sale.name || sale.id)
+    .slice(0, 16);
+}
+
+function parseTwaps(payload: unknown) {
+  const data = payload as any;
+  const rawTwaps = Array.isArray(data?.twaps) ? data.twaps : [];
+  const rawTrades = Array.isArray(data?.trades) ? data.trades : [];
+  const twaps: TwapRow[] = rawTwaps.map((item: any, index: number) => ({
+    side: item.side === "Sell" ? "Sell" : "Buy",
+    notional: item.notional || item.notionalLabel || formatUsd(n(item.rawNotional || item.notionalUsd)),
+    rawNotional: n(item.rawNotional || item.notionalUsd || parseMoneyLabel(item.notional || item.notionalLabel)),
+    size: item.size || item.sizeLabel || "-- HYPE",
+    slices: n(item.slices || item.trades || item.count || index + 1),
+    avgPrice: item.avgPrice || item.averagePrice || "--",
+    lastTrade: item.lastTrade || item.timeLabel || item.lastTradeLabel || "recent",
+    confidence: item.confidence || item.source || "cluster",
+  }));
+  const trades: TradeRow[] = rawTrades.slice(0, 30).map((item: any, index: number) => ({
+    id: String(item.id || `${item.side || "trade"}-${index}`),
+    side: item.side === "Sell" ? "Sell" : "Buy",
+    price: item.price || item.px || "--",
+    size: item.size || item.sz || "--",
+    notionalLabel: item.notionalLabel || item.notional || formatUsd(n(item.rawNotional || item.notionalUsd)),
+    timeLabel: item.timeLabel || item.time || "recent",
+    rawNotional: n(item.rawNotional || item.notionalUsd || parseMoneyLabel(item.notionalLabel || item.notional)),
+  }));
+  return {
+    twaps,
+    trades,
+    summary: (data?.summary || null) as TwapSummary | null,
+    ok: data?.ok !== false,
+  };
+}
+
+function parseFlows(payload: unknown) {
+  const data = payload as any;
+  const rows = Array.isArray(data?.flows) ? data.flows : Array.isArray(data) ? data : FALLBACK_FLOWS;
+  return {
+    rows: rows.map((row: any) => ({
+      name: row.name || row.ticker || "Unnamed product",
+      ticker: row.ticker || "--",
+      venue: row.venue || row.region || "--",
+      status: row.status || row.note || "Tracked product",
+      price: row.price,
+      change: row.change,
+      volume: row.volume,
+      dollarVolume: row.dollarVolume || row.flow || row.netFlow || row.volumeUsd || "--",
+      aum: row.aum,
+      fee: row.fee,
+      url: row.url,
+      updatedAt: row.updatedAt,
+    })) as FlowRow[],
+    source: data?.source || "flow-feed",
+    latestDate: data?.latestDate || "",
+    note: data?.note || "",
+  };
+}
+
+function sourceLabel(status: Status) {
+  if (status === "live") return "Live";
+  if (status === "loading") return "Loading";
+  if (status === "error") return "Error";
+  return "Fallback";
 }
 
 function Sparkline({ candles }: { candles: Candle[] }) {
@@ -302,7 +592,7 @@ function DepthBars({ book }: { book: Book | null }) {
     <div className="depth-bars">
       <div>
         <strong>Bids</strong>
-        {book.bids.slice(0, 12).map((level, index) => (
+        {book.bids.slice(0, 14).map((level, index) => (
           <div className="depth-row" key={`bid-${index}`}>
             <span>{formatUsd(level.price)}</span>
             <i className="bid" style={{ width: `${Math.max(4, (level.usd / maxUsd) * 100)}%` }} />
@@ -311,7 +601,7 @@ function DepthBars({ book }: { book: Book | null }) {
       </div>
       <div>
         <strong>Asks</strong>
-        {book.asks.slice(0, 12).map((level, index) => (
+        {book.asks.slice(0, 14).map((level, index) => (
           <div className="depth-row" key={`ask-${index}`}>
             <span>{formatUsd(level.price)}</span>
             <i className="ask" style={{ width: `${Math.max(4, (level.usd / maxUsd) * 100)}%` }} />
@@ -328,13 +618,25 @@ export default function Page() {
   const [markets, setMarkets] = useState<Market[]>(fallbackMarkets);
   const [candles, setCandles] = useState<Candle[]>(makeFallbackCandles("HYPE"));
   const [book, setBook] = useState<Book | null>(makeFallbackBook("HYPE"));
-  const [source, setSource] = useState("Fallback model");
+  const [marketStatus, setMarketStatus] = useState<Status>("fallback");
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [marketSort, setMarketSort] = useState("oi");
   const [search, setSearch] = useState("");
   const [walletAddress, setWalletAddress] = useState("");
   const [walletStatus, setWalletStatus] = useState("Paste an address to analyze perp exposure.");
   const [positions, setPositions] = useState<Position[]>([]);
+  const [nftStats, setNftStats] = useState<NftStats>(EMPTY_NFT_STATS);
+  const [nftSales, setNftSales] = useState<NftSale[]>([]);
+  const [nftStatus, setNftStatus] = useState<Status>("loading");
+  const [twaps, setTwaps] = useState<TwapRow[]>(fallbackTwaps);
+  const [trades, setTrades] = useState<TradeRow[]>([]);
+  const [twapSummary, setTwapSummary] = useState<TwapSummary | null>(null);
+  const [twapStatus, setTwapStatus] = useState<Status>("fallback");
+  const [flows, setFlows] = useState<FlowRow[]>(FALLBACK_FLOWS);
+  const [flowStatus, setFlowStatus] = useState<Status>("fallback");
+  const [flowMeta, setFlowMeta] = useState({ source: "fallback", latestDate: "", note: "" });
+  const [buyback, setBuyback] = useState<BuybackData>(EMPTY_BUYBACK);
+  const [buybackStatus, setBuybackStatus] = useState<Status>("loading");
 
   useEffect(() => {
     loadMarketData();
@@ -342,9 +644,27 @@ export default function Page() {
     return () => window.clearInterval(timer);
   }, [coin]);
 
+  useEffect(() => {
+    loadNfts();
+    const timer = window.setInterval(loadNfts, 120_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    loadTwaps();
+    const timer = window.setInterval(loadTwaps, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    loadFlowsAndBuybacks();
+    const timer = window.setInterval(loadFlowsAndBuybacks, 90_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   async function loadMarketData() {
     try {
-      setSource("Refreshing");
+      setMarketStatus((current) => (current === "live" ? "live" : "loading"));
       const now = Date.now();
       const [marketPayload, candlePayload, bookPayload] = await Promise.all([
         postInfo({ type: "metaAndAssetCtxs" }),
@@ -358,12 +678,67 @@ export default function Page() {
       if (nextCandles.length) setCandles(nextCandles);
       if (nextBook) setBook(nextBook);
       setLastUpdate(new Date());
-      setSource("Hyperliquid live");
+      setMarketStatus("live");
     } catch {
       setCandles(makeFallbackCandles(coin));
       setBook(makeFallbackBook(coin));
-      setSource("Fallback model");
+      setMarketStatus("fallback");
       setLastUpdate(new Date());
+    }
+  }
+
+  async function loadNfts() {
+    try {
+      setNftStatus((current) => (current === "live" ? "live" : "loading"));
+      const [statsRes, eventsRes] = await Promise.allSettled([fetch("/api/opensea/stats"), fetch("/api/opensea/events")]);
+      if (statsRes.status === "fulfilled" && statsRes.value.ok) {
+        setNftStats(parseNftStats(await statsRes.value.json()));
+      }
+      if (eventsRes.status !== "fulfilled" || !eventsRes.value.ok) throw new Error("NFT events failed");
+      const sales = parseNftSales(await eventsRes.value.json());
+      setNftSales(sales);
+      setNftStatus(sales.length ? "live" : "fallback");
+    } catch {
+      setNftStatus("error");
+    }
+  }
+
+  async function loadTwaps() {
+    try {
+      setTwapStatus((current) => (current === "live" ? "live" : "loading"));
+      const response = await fetch("/api/hyperliquid/twaps");
+      if (!response.ok) throw new Error("TWAP API failed");
+      const parsed = parseTwaps(await response.json());
+      setTwaps(parsed.twaps.length ? parsed.twaps : fallbackTwaps);
+      setTrades(parsed.trades);
+      setTwapSummary(parsed.summary);
+      setTwapStatus(parsed.ok ? "live" : "fallback");
+    } catch {
+      setTwaps(fallbackTwaps);
+      setTwapStatus("fallback");
+    }
+  }
+
+  async function loadFlowsAndBuybacks() {
+    try {
+      const response = await fetch("/api/tradfi/flows");
+      if (!response.ok) throw new Error("Flow API failed");
+      const parsed = parseFlows(await response.json());
+      setFlows(parsed.rows.length ? parsed.rows : FALLBACK_FLOWS);
+      setFlowMeta({ source: parsed.source, latestDate: parsed.latestDate, note: parsed.note });
+      setFlowStatus("live");
+    } catch {
+      setFlows(FALLBACK_FLOWS);
+      setFlowStatus("fallback");
+    }
+
+    try {
+      const response = await fetch("/api/hyperliquid/buybacks");
+      if (!response.ok) throw new Error("Buyback API failed");
+      setBuyback(await response.json());
+      setBuybackStatus("live");
+    } catch {
+      setBuybackStatus("fallback");
     }
   }
 
@@ -411,8 +786,15 @@ export default function Page() {
   const totalOi = markets.reduce((sum, market) => sum + market.oiUsd, 0);
   const totalVolume = markets.reduce((sum, market) => sum + market.volumeUsd, 0);
   const weightedFunding = totalOi > 0 ? markets.reduce((sum, market) => sum + market.funding * market.oiUsd, 0) / totalOi : 0;
-  const feePressure = (hype?.volumeUsd || 0) * 0.0002;
-  const regimeScore = Math.round(clamp(Math.abs(weightedFunding) * 60_000 + Math.abs(selected?.changePct || 0) * 2 + Math.abs(book?.imbalance || 0) * 0.2, 0, 99));
+  const feePressure = parseMoneyLabel(buyback.estimatedBuybackUsd24hLabel) || (hype?.volumeUsd || 0) * 0.0002;
+  const topRisk = [...markets].sort((a, b) => b.risk - a.risk)[0];
+  const twapBuy = twaps.filter((row) => row.side === "Buy").reduce((sum, row) => sum + row.rawNotional, 0);
+  const twapSell = twaps.filter((row) => row.side === "Sell").reduce((sum, row) => sum + row.rawNotional, 0);
+  const twapNet = twapBuy - twapSell;
+  const etfNetFlow = flows.reduce((sum, row) => sum + parseMoneyLabel(row.dollarVolume), 0);
+  const regimeScore = Math.round(
+    clamp(Math.abs(weightedFunding) * 60_000 + Math.abs(selected?.changePct || 0) * 2 + Math.abs(book?.imbalance || 0) * 0.2, 0, 99),
+  );
   const regime = regimeScore > 65 ? "Volatile" : regimeScore > 35 ? "Active" : "Balanced";
   const marketOptions = Array.from(new Set(DEFAULT_COINS.concat(markets.slice(0, 30).map((market) => market.symbol))));
 
@@ -428,7 +810,7 @@ export default function Page() {
     return rows.sort(sorters[marketSort] || sorters.oi).slice(0, 80);
   }, [markets, search, marketSort]);
 
-  const signals = [
+  const overviewSignals = [
     {
       label: `${coin} 24h move`,
       value: formatPct(selected?.changePct || 0, 2),
@@ -442,16 +824,16 @@ export default function Page() {
       tone: Math.abs(weightedFunding) > 0.00025 ? "watch" : "good",
     },
     {
-      label: "Book imbalance",
-      value: formatPct(book?.imbalance || 0, 1),
-      body: `${formatUsd(book?.bidUsd || 0)} bids versus ${formatUsd(book?.askUsd || 0)} asks in visible depth.`,
-      tone: Math.abs(book?.imbalance || 0) > 18 ? "watch" : "good",
+      label: "TWAP net",
+      value: `${twapNet >= 0 ? "Buy" : "Sell"} ${formatUsd(Math.abs(twapNet))}`,
+      body: `${formatUsd(twapBuy)} buy pressure versus ${formatUsd(twapSell)} sell pressure from detected HYPE flow clusters.`,
+      tone: Math.abs(twapNet) > 2_000_000 ? "watch" : "good",
     },
     {
-      label: "Highest stress",
-      value: `${[...markets].sort((a, b) => b.risk - a.risk)[0]?.symbol || "--"} ${[...markets].sort((a, b) => b.risk - a.risk)[0]?.risk || "--"}`,
-      body: "Computed from 24h move, funding, OI, volume, and leverage cap.",
-      tone: "watch",
+      label: "ETF bridge",
+      value: etfNetFlow ? formatUsd(etfNetFlow) : sourceLabel(flowStatus),
+      body: flowMeta.latestDate ? `Latest parsed date: ${flowMeta.latestDate}.` : "TradFi products and flow table tracked through the app proxy.",
+      tone: etfNetFlow < 0 ? "risk" : "good",
     },
   ];
 
@@ -466,15 +848,15 @@ export default function Page() {
           </div>
         </div>
         <nav>
-          {(["overview", "markets", "liquidity", "wallet", "builder"] as View[]).map((item) => (
-            <button className={view === item ? "active" : ""} key={item} onClick={() => setView(item)}>
-              <strong>{item[0].toUpperCase() + item.slice(1)}</strong>
-              <small>{item === "overview" ? "HYPE pulse" : item === "markets" ? "Perps radar" : item === "liquidity" ? "Order book" : item === "wallet" ? "Risk scan" : "Proof layer"}</small>
+          {NAV_ITEMS.map((item) => (
+            <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => setView(item.id)}>
+              <strong>{item.label}</strong>
+              <small>{item.description}</small>
             </button>
           ))}
         </nav>
         <div className="rail-footer">
-          <span className={source.includes("live") ? "status live" : "status"}>{source}</span>
+          <span className={marketStatus === "live" ? "status live" : "status"}>{sourceLabel(marketStatus)} market data</span>
           <p>Read-only. No wallet connection. Not affiliated with Hyperliquid.</p>
         </div>
       </aside>
@@ -494,11 +876,11 @@ export default function Page() {
                 ))}
               </select>
             </label>
-            <button className="icon-btn" onClick={loadMarketData} aria-label="Refresh">↻</button>
+            <button className="icon-btn" onClick={loadMarketData} aria-label="Refresh">R</button>
           </div>
           <nav className="mobile-tabs">
-            {(["overview", "markets", "liquidity", "wallet", "builder"] as View[]).map((item) => (
-              <button className={view === item ? "active" : ""} key={item} onClick={() => setView(item)}>{item}</button>
+            {NAV_ITEMS.map((item) => (
+              <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => setView(item.id)}>{item.label}</button>
             ))}
           </nav>
         </header>
@@ -507,12 +889,15 @@ export default function Page() {
           <>
             <section className="hero">
               <div>
-                <p className="eyebrow">Live Hyperliquid console</p>
-                <h1>HYPE market intelligence built for fast decisions.</h1>
-                <p>Price, open interest, funding, depth, volatility, wallet exposure, and transparent scoring in one read-only workspace.</p>
+                <p className="eyebrow">Live Hyperliquid intelligence</p>
+                <h1>HYPE market console with ecosystem flow coverage.</h1>
+                <p>
+                  Perps, liquidity, TWAP clusters, Hypurr NFT sales, ETF flows, wallet risk, and transparent
+                  builder methodology in one read-only workspace.
+                </p>
                 <div className="actions">
-                  <button className="primary" onClick={() => setView("wallet")}>Scan wallet</button>
-                  <button className="secondary" onClick={() => setView("markets")}>Open radar</button>
+                  <button className="primary" onClick={() => setView("twaps")}>Open TWAP tape</button>
+                  <button className="secondary" onClick={() => setView("nfts")}>View NFTs</button>
                 </div>
               </div>
               <div className="snapshot">
@@ -525,42 +910,40 @@ export default function Page() {
             <section className="kpi-grid">
               <Kpi label={`${coin} price`} value={formatUsd(selected?.price || 0)} detail={`24h ${formatPct(selected?.changePct || 0)}`} tone={(selected?.changePct || 0) >= 0 ? "positive" : "negative"} />
               <Kpi label="Open interest" value={formatUsd(selected?.oiUsd || 0)} detail={`${formatUsd(totalOi)} total perps OI`} />
-              <Kpi label="Funding" value={formatPct((selected?.funding || 0) * 100, 4)} detail={`Weighted ${formatPct(weightedFunding * 100, 4)}`} />
               <Kpi label="HYPE FDV" value={formatUsd(hype?.fdvUsd || 0)} detail={`${formatPct(totalOi ? ((hype?.oiUsd || 0) / totalOi) * 100 : 0, 1, false)} of total OI`} />
-              <Kpi label="24h volume" value={formatUsd(selected?.volumeUsd || 0)} detail={`${formatUsd(totalVolume)} total perps volume`} />
-              <Kpi label="Risk score" value={String(selected?.risk || "--")} detail="Move + funding + OI + volume + leverage" tone={(selected?.risk || 0) > 70 ? "negative" : "positive"} />
-              <Kpi label="Book spread" value={formatPct(book?.spreadPct || 0, 4, false)} detail={`${formatUsd(book?.bidUsd || 0)} bids visible`} />
-              <Kpi label="Fee pressure" value={formatUsd(feePressure)} detail="2.0 bps on HYPE volume" />
+              <Kpi label="Buyback pressure" value={buyback.estimatedBuybackUsd24hLabel || formatUsd(feePressure)} detail={buyback.estimatedBuybackHype24hLabel || "Estimated HYPE / 24h"} />
+              <Kpi label="TWAP net" value={`${twapNet >= 0 ? "Buy" : "Sell"} ${formatUsd(Math.abs(twapNet))}`} detail={`${sourceLabel(twapStatus)} HYPE flow tape`} tone={twapNet >= 0 ? "positive" : "negative"} />
+              <Kpi label="NFT floor" value={nftStats.floor} detail={`${nftStats.sales24h} 24h sales, ${nftStats.owners} owners`} />
+              <Kpi label="ETF net flow" value={etfNetFlow ? formatUsd(etfNetFlow) : "--"} detail={flowMeta.latestDate || sourceLabel(flowStatus)} tone={etfNetFlow >= 0 ? "positive" : "negative"} />
+              <Kpi label="Risk score" value={String(selected?.risk || "--")} detail={`Highest stress: ${topRisk?.symbol || "--"} ${topRisk?.risk || "--"}`} tone={(selected?.risk || 0) > 70 ? "negative" : "positive"} />
             </section>
 
             <section className="two-col">
               <Panel title={`${coin} 24h tape`} subtitle={`${formatUsd(selected?.volumeUsd || 0)} 24h volume, ${formatUsd(selected?.oiUsd || 0)} OI.`}>
                 <Sparkline candles={candles} />
               </Panel>
-              <Panel title="Signal stack" subtitle="Derived from funding, OI, volume, and book balance.">
+              <Panel title="Signal stack" subtitle="Derived from perps, liquidity, TWAPs, NFT demand, and TradFi flows.">
                 <div className="signals">
-                  {signals.map((signal) => <Signal key={signal.label} {...signal} />)}
+                  {overviewSignals.map((signal) => <Signal key={signal.label} {...signal} />)}
                 </div>
               </Panel>
             </section>
 
+            <section className="module-grid">
+              <MiniModule title="TWAP tape" value={`${twaps.length} clusters`} detail={`${formatUsd(twapBuy)} buys / ${formatUsd(twapSell)} sells`} onClick={() => setView("twaps")} />
+              <MiniModule title="Hypurr NFTs" value={nftStats.floor} detail={`${nftSales.length || "--"} latest sale cards loaded`} onClick={() => setView("nfts")} />
+              <MiniModule title="ETF flows" value={flowMeta.latestDate || sourceLabel(flowStatus)} detail={`${flows.length} products tracked`} onClick={() => setView("etf")} />
+            </section>
+
             <section className="two-col lower">
               <Panel title="Risk heat" subtitle="Top markets by computed stress score.">
-                <div className="heatmap">
-                  {[...markets].sort((a, b) => b.risk - a.risk).slice(0, 24).map((market) => (
-                    <div className="heat" key={market.symbol} style={{ borderColor: riskColor(market.risk) }}>
-                      <strong>{market.symbol}</strong>
-                      <span>{market.risk} risk</span>
-                      <span>{formatPct(market.funding * 100, 4)}</span>
-                    </div>
-                  ))}
-                </div>
+                <RiskHeatmap markets={markets} />
               </Panel>
-              <Panel title="Fee-pressure model" subtitle="Configurable estimate, transparent assumption.">
+              <Panel title="Fee-pressure model" subtitle="Assistance Fund estimate and fee-pressure proxy.">
                 <div className="model-box">
-                  <span>Fee rate assumption</span>
-                  <input type="range" min="0" max="100" defaultValue="25" />
-                  <div><strong>2.0 bps</strong><span>{formatUsd(feePressure)}</span></div>
+                  <span>{sourceLabel(buybackStatus)} buyback endpoint</span>
+                  <strong>{buyback.estimatedBuybackUsd24hLabel || formatUsd(feePressure)}</strong>
+                  <p>{buyback.note || "The fallback model uses 2 bps on HYPE volume."}</p>
                 </div>
               </Panel>
             </section>
@@ -594,7 +977,86 @@ export default function Page() {
                   <Stat label="Best bid" value={formatUsd(book?.bestBid || 0)} />
                   <Stat label="Best ask" value={formatUsd(book?.bestAsk || 0)} />
                   <Stat label="Spread" value={formatPct(book?.spreadPct || 0, 4, false)} />
+                  <Stat label="Bid depth" value={formatUsd(book?.bidUsd || 0)} />
+                  <Stat label="Ask depth" value={formatUsd(book?.askUsd || 0)} />
                   <Stat label="Imbalance" value={formatPct(book?.imbalance || 0, 1)} />
+                </div>
+              </Panel>
+            </section>
+          </>
+        )}
+
+        {view === "twaps" && (
+          <>
+            <ViewHeader eyebrow="HYPE flow tape" title="TWAP cluster monitor" />
+            <section className="kpi-grid">
+              <Kpi label="Buy pressure" value={twapSummary?.buy10m || formatUsd(twapBuy)} detail="Detected clustered buy notional" tone="positive" />
+              <Kpi label="Sell pressure" value={twapSummary?.sell10m || formatUsd(twapSell)} detail="Detected clustered sell notional" tone="negative" />
+              <Kpi label="Net pressure" value={twapSummary?.netLabel || formatUsd(Math.abs(twapNet))} detail={twapSummary?.netSide || (twapNet >= 0 ? "Buy side" : "Sell side")} tone={twapNet >= 0 ? "positive" : "negative"} />
+              <Kpi label="Source" value={sourceLabel(twapStatus)} detail="Refreshes every 30 seconds" />
+            </section>
+            <section className="two-col">
+              <Panel title="Detected HYPE TWAPs" subtitle="Clusters are grouped to reveal larger execution programs, not one-off prints.">
+                <div className="twap-grid">
+                  {twaps.map((row, index) => <TwapCard row={row} key={`${row.side}-${index}`} />)}
+                </div>
+              </Panel>
+              <Panel title="Recent tape" subtitle="Latest HYPE trades surfaced by the TWAP monitor.">
+                <div className="trade-list">
+                  {trades.length ? trades.slice(0, 14).map((trade) => <TradeLine trade={trade} key={trade.id} />) : <div className="empty compact">No live trades returned yet.</div>}
+                </div>
+              </Panel>
+            </section>
+          </>
+        )}
+
+        {view === "nfts" && (
+          <>
+            <ViewHeader eyebrow="Hypurr NFTs" title="Collection pulse" />
+            <section className="kpi-grid">
+              <Kpi label="Floor" value={nftStats.floor} detail="OpenSea reported floor" />
+              <Kpi label="24h volume" value={nftStats.volume24h} detail="Collection activity" />
+              <Kpi label="Total volume" value={nftStats.totalVolume} detail="Lifetime reported volume" />
+              <Kpi label="Owners" value={nftStats.owners} detail={`${nftStats.sales24h} sales in the last day`} />
+            </section>
+            <section className="two-col nfts-layout">
+              <Panel title="Latest Hypurr sales" subtitle={`${sourceLabel(nftStatus)} OpenSea feed with direct item links.`}>
+                <div className="nft-grid">
+                  {nftSales.length ? nftSales.map((sale) => <NftSaleCard sale={sale} key={`${sale.id}-${sale.price}`} />) : <div className="empty">No live sales returned. Add/refresh OpenSea API key if needed.</div>}
+                </div>
+              </Panel>
+              <Panel title="Collection read" subtitle="Why this module matters for Hyperliquid ecosystem tracking.">
+                <div className="signals">
+                  <Signal label="Demand proxy" value={nftStats.floor} body="Hypurr floor and sales are a visible community demand layer around Hyperliquid." tone="good" />
+                  <Signal label="Liquidity check" value={nftStats.volume24h} body="Volume and recent sale cadence help separate actual bid activity from static floor listings." tone="watch" />
+                  <Signal label="Builder note" value="OpenSea proxy" body="The app uses backend API routes, so API keys and scrape fallbacks stay out of the browser." tone="good" />
+                  <a className="external-card" href={OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer">Open collection on OpenSea -&gt;</a>
+                </div>
+              </Panel>
+            </section>
+          </>
+        )}
+
+        {view === "etf" && (
+          <>
+            <ViewHeader eyebrow="TradFi bridge" title="ETF and ETP flow monitor" />
+            <section className="kpi-grid">
+              <Kpi label="Net flow" value={etfNetFlow ? formatUsd(etfNetFlow) : "--"} detail={flowMeta.latestDate || "Latest parsed table date"} tone={etfNetFlow >= 0 ? "positive" : "negative"} />
+              <Kpi label="Products" value={String(flows.length)} detail="US and EU HYPE products tracked" />
+              <Kpi label="Source" value={sourceLabel(flowStatus)} detail={flowMeta.source || "Flow endpoint"} />
+              <Kpi label="Largest print" value={formatUsd(Math.max(0, ...flows.map((row) => Math.abs(parseMoneyLabel(row.dollarVolume)))))} detail="Largest absolute product flow" />
+            </section>
+            <section className="two-col">
+              <Panel title="Tracked products" subtitle={flowMeta.note || "Net ETF flow, volume, or status from the app flow proxy."}>
+                <div className="flow-list">
+                  {flows.map((row) => <FlowCard row={row} key={`${row.ticker}-${row.name}`} />)}
+                </div>
+              </Panel>
+              <Panel title="Why it matters" subtitle="TradFi demand can become a second-order signal for HYPE liquidity.">
+                <div className="signals">
+                  <Signal label="Bridge signal" value={etfNetFlow ? formatUsd(etfNetFlow) : "--"} body="ETF/ETP flow gives a separate read on demand outside native perps." tone={etfNetFlow < 0 ? "risk" : "good"} />
+                  <Signal label="Freshness" value={flowMeta.latestDate || sourceLabel(flowStatus)} body="The module exposes the parsed date and source state so users can judge freshness." tone="watch" />
+                  <Signal label="Builder note" value="Proxy layer" body="The current repo already contains a TradFi flow API route, which is used instead of hardcoding values." tone="good" />
                 </div>
               </Panel>
             </section>
@@ -636,22 +1098,25 @@ export default function Page() {
               <Panel title="Data sources" subtitle="Every live metric is read-only and reproducible.">
                 <ul className="proof-list">
                   <li><strong>Hyperliquid Info API</strong><span>metaAndAssetCtxs, candleSnapshot, l2Book, clearinghouseState.</span></li>
-                  <li><strong>Client-side scoring</strong><span>Risk, fee pressure, liquidity imbalance, and wallet health computed in browser.</span></li>
-                  <li><strong>Graceful fallback</strong><span>The interface remains useful during API or network issues.</span></li>
+                  <li><strong>Hyperliquid TWAP route</strong><span>Uses the repo backend endpoint to surface HYPE flow clusters and recent trade tape.</span></li>
+                  <li><strong>OpenSea proxy</strong><span>Collection stats and sale cards flow through server routes, keeping keys out of the browser.</span></li>
+                  <li><strong>TradFi flow proxy</strong><span>ETF and ETP flow products tracked as an external demand layer.</span></li>
                 </ul>
               </Panel>
               <Panel title="Computed models" subtitle="Designed to be inspected and improved.">
                 <ul className="proof-list">
                   <li><strong>Market risk</strong><span>24h move + funding + OI + volume + leverage cap.</span></li>
-                  <li><strong>Wallet health</strong><span>Leverage, margin use, concentration, and liquidation distance.</span></li>
+                  <li><strong>TWAP pressure</strong><span>Buy/sell cluster notional and net flow used as execution pressure signal.</span></li>
                   <li><strong>Book pressure</strong><span>Near-touch bid/ask USD depth and spread.</span></li>
+                  <li><strong>Ecosystem demand</strong><span>NFT floor, recent sales, and ETF flows shown beside native market structure.</span></li>
                 </ul>
               </Panel>
               <Panel title="Roadmap" subtitle="Next grant-facing layers.">
                 <ol className="roadmap">
-                  <li>Server API proxy with rate limiting and cache headers.</li>
-                  <li>Historical signal archive and public wallet reports.</li>
-                  <li>Open-source formulas and changelog for community review.</li>
+                  <li>Historical archive for TWAP clusters, NFT sales, and ETF flows.</li>
+                  <li>Public sharable wallet reports with no private permissions.</li>
+                  <li>Open-source formula docs and changelog for community review.</li>
+                  <li>Rate-limited API proxy cache with freshness badges per module.</li>
                 </ol>
               </Panel>
             </section>
@@ -706,9 +1171,19 @@ function ViewHeader({ eyebrow, title }: { eyebrow: string; title: string }) {
   );
 }
 
+function MiniModule({ title, value, detail, onClick }: { title: string; value: string; detail: string; onClick: () => void }) {
+  return (
+    <button className="mini-module" onClick={onClick}>
+      <span>{title}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </button>
+  );
+}
+
 function MarketTable({ rows }: { rows: Market[] }) {
   return (
-    <article className="panel">
+    <article className="panel table-panel">
       <div className="panel-head">
         <div>
           <h2>Live perps</h2>
@@ -737,6 +1212,92 @@ function MarketTable({ rows }: { rows: Market[] }) {
       </div>
     </article>
   );
+}
+
+function RiskHeatmap({ markets }: { markets: Market[] }) {
+  return (
+    <div className="heatmap">
+      {[...markets].sort((a, b) => b.risk - a.risk).slice(0, 24).map((market) => (
+        <div className="heat" key={market.symbol} style={{ borderColor: riskColor(market.risk) }}>
+          <strong>{market.symbol}</strong>
+          <span>{market.risk} risk</span>
+          <span>{formatPct(market.funding * 100, 4)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TwapCard({ row }: { row: TwapRow }) {
+  return (
+    <article className={`twap-card ${row.side === "Buy" ? "buy" : "sell"}`}>
+      <div>
+        <span>{row.side}</span>
+        <strong>{row.notional}</strong>
+      </div>
+      <dl>
+        <div><dt>Size</dt><dd>{row.size}</dd></div>
+        <div><dt>Slices</dt><dd>{row.slices || "--"}</dd></div>
+        <div><dt>Avg</dt><dd>{row.avgPrice}</dd></div>
+        <div><dt>Last</dt><dd>{row.lastTrade}</dd></div>
+      </dl>
+      <small>{row.confidence}</small>
+    </article>
+  );
+}
+
+function TradeLine({ trade }: { trade: TradeRow }) {
+  return (
+    <div className="trade-line">
+      <span className={trade.side === "Buy" ? "positive" : "negative"}>{trade.side}</span>
+      <strong>{trade.notionalLabel}</strong>
+      <span>{trade.price}</span>
+      <span>{trade.timeLabel}</span>
+    </div>
+  );
+}
+
+function NftSaleCard({ sale }: { sale: NftSale }) {
+  const [broken, setBroken] = useState(false);
+  const hasImage = Boolean(sale.image && !broken);
+  return (
+    <a className="nft-card" href={sale.url || OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer">
+      <div className="nft-media">
+        {hasImage ? (
+          <img
+            src={sale.image}
+            alt={sale.name}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={() => setBroken(true)}
+            className={sale.imageMode === "preview" ? "preview" : ""}
+          />
+        ) : (
+          <span>No image</span>
+        )}
+      </div>
+      <div>
+        <strong>{sale.name}</strong>
+        <span>{sale.time}</span>
+      </div>
+      <p>{sale.price}</p>
+    </a>
+  );
+}
+
+function FlowCard({ row }: { row: FlowRow }) {
+  const card = (
+    <article className="flow-card">
+      <div>
+        <span>{row.ticker}</span>
+        <strong>{row.dollarVolume || row.volume || "--"}</strong>
+      </div>
+      <h3>{row.name}</h3>
+      <p>{row.venue} / {row.status}</p>
+      {row.price || row.change ? <small>{row.price || "--"} {row.change || ""}</small> : null}
+    </article>
+  );
+  return row.url ? <a className="flow-link" href={row.url} target="_blank" rel="noreferrer">{card}</a> : card;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

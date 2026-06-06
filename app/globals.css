@@ -270,6 +270,11 @@ input:focus {
   margin: 28px 28px 0;
 }
 
+.hs-page > .panel {
+  width: auto;
+  margin: 16px 28px 0;
+}
+
 .hero {
   display: flex;
   align-items: stretch;
@@ -423,9 +428,20 @@ h2 {
   gap: 16px;
 }
 
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 16px 28px 0;
+}
+
 .panel {
   min-width: 0;
   padding: 18px;
+}
+
+.table-panel {
+  margin: 16px 28px 0;
 }
 
 .panel-head {
@@ -548,6 +564,39 @@ h2 {
   display: flex;
   justify-content: space-between;
   gap: 16px;
+}
+
+.model-box p {
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.mini-module {
+  display: grid;
+  gap: 8px;
+  min-height: 132px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(16, 19, 18, 0.88);
+  color: var(--text);
+  text-align: left;
+}
+
+.mini-module:hover {
+  border-color: rgba(124, 247, 199, 0.42);
+  background: var(--panel-2);
+}
+
+.mini-module span,
+.mini-module small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.mini-module strong {
+  font-size: 1.35rem;
 }
 
 .view-head {
@@ -676,6 +725,205 @@ td {
   background: rgba(255, 122, 141, 0.42);
 }
 
+.twap-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.twap-card {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.twap-card.buy {
+  border-color: rgba(53, 213, 138, 0.38);
+}
+
+.twap-card.sell {
+  border-color: rgba(255, 122, 141, 0.38);
+}
+
+.twap-card > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.twap-card span,
+.twap-card small,
+.twap-card dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.twap-card strong {
+  font-size: 1.25rem;
+}
+
+.twap-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.twap-card dl div {
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(8, 10, 10, 0.32);
+}
+
+.twap-card dd {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-weight: 760;
+}
+
+.trade-list,
+.flow-list {
+  display: grid;
+  gap: 10px;
+}
+
+.trade-line {
+  display: grid;
+  grid-template-columns: 66px minmax(0, 1fr) 92px 84px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.trade-line strong {
+  color: var(--text);
+}
+
+.nft-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.nft-card,
+.flow-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.nft-card {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.nft-card:hover,
+.flow-card:hover,
+.external-card:hover {
+  border-color: rgba(124, 247, 199, 0.42);
+}
+
+.nft-media {
+  display: grid;
+  aspect-ratio: 1;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: #0a0d0c;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.nft-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nft-media img.preview {
+  width: 190%;
+  max-width: none;
+  object-position: left center;
+}
+
+.nft-card div:last-of-type {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nft-card strong,
+.nft-card p {
+  color: var(--text);
+}
+
+.nft-card span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.nft-card p {
+  margin: 0;
+  font-weight: 820;
+}
+
+.external-card {
+  display: block;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--mint);
+  font-weight: 760;
+  text-decoration: none;
+}
+
+.flow-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.flow-card > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.flow-card span,
+.flow-card p,
+.flow-card small {
+  color: var(--muted);
+}
+
+.flow-card h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.flow-card strong {
+  color: var(--text);
+  font-size: 1.15rem;
+}
+
 .stats-list,
 .proof-list,
 .roadmap {
@@ -736,6 +984,10 @@ td {
   color: var(--muted);
 }
 
+.empty.compact {
+  min-height: 120px;
+}
+
 @media (max-width: 1180px) {
   .hs-shell {
     grid-template-columns: 1fr;
@@ -780,7 +1032,8 @@ td {
 
   .two-col,
   .two-col.lower,
-  .builder-grid {
+  .builder-grid,
+  .module-grid {
     grid-template-columns: 1fr;
   }
 
@@ -809,6 +1062,7 @@ td {
   .toolbar,
   .two-col,
   .builder-grid,
+  .module-grid,
   .kpi-grid,
   .wallet-form {
     margin: 18px;
@@ -842,6 +1096,20 @@ td {
 
   .depth-bars {
     grid-template-columns: 1fr;
+  }
+
+  .twap-grid,
+  .nft-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .trade-line {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .trade-line span:nth-child(3),
+  .trade-line span:nth-child(4) {
+    display: none;
   }
 
   .wallet-form {
