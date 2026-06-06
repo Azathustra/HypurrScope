@@ -731,6 +731,106 @@ td {
   gap: 12px;
 }
 
+.twap-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  align-items: start;
+  gap: 16px;
+  margin: 28px 28px 0;
+}
+
+.twap-board {
+  display: grid;
+  gap: 16px;
+}
+
+.twap-balance {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 150px;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0a0d0c;
+}
+
+.twap-balance div:first-child {
+  text-align: left;
+}
+
+.twap-balance div:last-child {
+  text-align: right;
+}
+
+.twap-balance span,
+.side-head span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.twap-balance strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 1.05rem;
+}
+
+.balance-track {
+  position: relative;
+  display: flex;
+  height: 18px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #252c28;
+}
+
+.balance-track i {
+  display: block;
+  min-width: 2px;
+}
+
+.balance-track .buy {
+  background: linear-gradient(90deg, rgba(53, 213, 138, 0.95), rgba(124, 247, 199, 0.72));
+}
+
+.balance-track .sell {
+  background: linear-gradient(90deg, rgba(255, 122, 141, 0.72), rgba(255, 88, 110, 0.95));
+}
+
+.twap-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.twap-side {
+  display: grid;
+  gap: 10px;
+  min-height: 260px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(8, 10, 10, 0.34);
+}
+
+.buy-side {
+  border-color: rgba(53, 213, 138, 0.3);
+}
+
+.sell-side {
+  border-color: rgba(255, 122, 141, 0.3);
+}
+
+.side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
 .twap-card {
   display: grid;
   gap: 14px;
@@ -854,9 +954,8 @@ td {
 }
 
 .nft-media img.preview {
-  width: 190%;
-  max-width: none;
-  object-position: left center;
+  transform: scale(1.9);
+  transform-origin: 9% center;
 }
 
 .nft-card div:last-of-type {
@@ -877,8 +976,24 @@ td {
 }
 
 .nft-card p {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(124, 247, 199, 0.28);
+  border-radius: 8px;
+  background: rgba(8, 10, 10, 0.42);
+  color: var(--mint);
   font-weight: 820;
+}
+
+.nft-card p::before {
+  color: var(--muted);
+  content: "Reported sale";
+  font-size: 0.72rem;
+  font-weight: 650;
 }
 
 .external-card {
@@ -922,6 +1037,89 @@ td {
 .flow-card strong {
   color: var(--text);
   font-size: 1.15rem;
+}
+
+.flow-chart-wrap {
+  display: grid;
+  gap: 16px;
+}
+
+.flow-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.flow-summary div {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.flow-summary span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.flow-summary strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 1.25rem;
+}
+
+.flow-chart {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(14, minmax(16px, 1fr));
+  align-items: center;
+  min-height: 330px;
+  gap: 8px;
+  padding: 22px 14px 34px;
+  border: 1px solid rgba(40, 48, 44, 0.72);
+  border-radius: 8px;
+  background: #0a0d0c;
+}
+
+.zero-line {
+  position: absolute;
+  right: 14px;
+  left: 14px;
+  top: 50%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.flow-day {
+  position: relative;
+  display: grid;
+  height: 250px;
+  align-items: center;
+  justify-items: center;
+}
+
+.flow-day .bar {
+  position: absolute;
+  width: min(24px, 72%);
+  border-radius: 6px;
+}
+
+.positive-bar {
+  bottom: 50%;
+  background: linear-gradient(180deg, var(--mint), rgba(53, 213, 138, 0.62));
+}
+
+.negative-bar {
+  top: 50%;
+  background: linear-gradient(180deg, rgba(255, 122, 141, 0.64), var(--red));
+}
+
+.flow-day small {
+  position: absolute;
+  bottom: -24px;
+  color: var(--muted);
+  font-size: 0.68rem;
 }
 
 .stats-list,
@@ -1032,6 +1230,7 @@ td {
 
   .two-col,
   .two-col.lower,
+  .twap-layout,
   .builder-grid,
   .module-grid {
     grid-template-columns: 1fr;
@@ -1061,6 +1260,7 @@ td {
   .view-head,
   .toolbar,
   .two-col,
+  .twap-layout,
   .builder-grid,
   .module-grid,
   .kpi-grid,
@@ -1099,8 +1299,24 @@ td {
   }
 
   .twap-grid,
-  .nft-grid {
+  .twap-columns,
+  .nft-grid,
+  .flow-summary {
     grid-template-columns: 1fr;
+  }
+
+  .twap-balance {
+    grid-template-columns: 1fr;
+  }
+
+  .twap-balance div:last-child {
+    text-align: left;
+  }
+
+  .flow-chart {
+    grid-template-columns: repeat(7, minmax(18px, 1fr));
+    gap: 6px;
+    overflow-x: auto;
   }
 
   .trade-line {
