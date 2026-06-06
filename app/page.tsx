@@ -227,7 +227,40 @@ function Sparkline({ points, height = 220, stroke = "#fda4af", fill = true }: { 
   const coords = values.map((value, index) => { const x = (index / Math.max(values.length - 1, 1)) * width; const y = height - ((value - min) / range) * (height - 28) - 14; return [x, y] as const; });
   const path = coords.map(([x, y], index) => `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
   const area = `${path} L${width},${height} L0,${height} Z`;
-  return <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full overflow-visible"><defs><linearGradient id="hypeArea" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={stroke} stopOpacity="0.36"/><stop offset="100%" stopColor={stroke} stopOpacity="0"/></linearGradient></defs>{fill ? <path d={area} fill="url(#hypeArea)" /> : null}<path d={path} fill="none" stroke={stroke} strokeLinecap="round" strokeLinejoin="round" strokeWidth="6"/></svg>;
+
+  const [hoverX, setHoverX] = useState<number | null>(null);
+  const [hoverY, setHoverY] = useState<number | null>(null);
+  const [hoverValue, setHoverValue] = useState<number | null>(null);
+
+  function handleMove(event: React.MouseEvent<SVGSVGElement>) {
+    const rect = (event.currentTarget as SVGSVGElement).getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * width;
+    const idx = Math.round((x / width) * Math.max(values.length - 1, 1));
+    const clampedIdx = Math.min(Math.max(idx, 0), values.length - 1);
+    const value = values[clampedIdx];
+    const [, y] = coords[clampedIdx];
+    setHoverX((clampedIdx / Math.max(values.length - 1, 1)) * width);
+    setHoverY(y);
+    setHoverValue(value);
+  }
+
+  function handleLeave() {
+    setHoverX(null);
+    setHoverY(null);
+    setHoverValue(null);
+  }
+
+  return <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full overflow-visible" onMouseMove={handleMove} onMouseLeave={handleLeave}>
+    <defs><linearGradient id="hypeArea" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={stroke} stopOpacity="0.36"/><stop offset="100%" stopColor={stroke} stopOpacity="0"/></linearGradient></defs>
+    {fill ? <path d={area} fill="url(#hypeArea)" /> : null}
+    <path d={path} fill="none" stroke={stroke} strokeLinecap="round" strokeLinejoin="round" strokeWidth="6"/>
+    {hoverX !== null && hoverY !== null && hoverValue !== null ? (<g>
+      <line x1={hoverX} y1={0} x2={hoverX} y2={height} stroke={stroke} strokeOpacity={0.3} strokeWidth={1}/>
+      <circle cx={hoverX} cy={hoverY} r={5} fill="#0f172a" stroke={stroke} strokeWidth={2}/>
+      <rect x={Math.min(Math.max(hoverX - 48, 8), width - 96)} y={hoverY - 40} rx={8} ry={8} width={96} height={32} fill="#020617" opacity={0.95}/>
+      <text x={Math.min(Math.max(hoverX - 40, 16), width - 88)} y={hoverY - 20} fill="#e5e7eb" fontSize={11}>{hoverValue.toFixed(2)}</text>
+    </g>) : null}
+  </svg>;
 }
 function BarMiniChart({ values }: { values: number[] }) {
   const clean = values.filter(Number.isFinite);
