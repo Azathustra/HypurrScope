@@ -410,20 +410,21 @@ function normalizeMarkets(payload: unknown): Market[] {
 }
 
 function normalizeCandles(payload: unknown): Candle[] {
-  const rows = Array.isArray((payload as any)?.candles)
+  const rows: any[] = Array.isArray((payload as any)?.candles)
     ? (payload as any).candles
     : Array.isArray(payload)
       ? payload
       : [];
-  return rows
+  const candles: Candle[] = rows
     .map((row: any) => ({
       time: n(row.t || row.time || row.timestamp),
       close: n(row.c || row.close),
       volume: n(row.v || row.volume),
     }))
-    .filter((row) => row.time > 0 && row.close > 0)
-    .sort((a, b) => a.time - b.time)
+    .filter((row: Candle) => row.time > 0 && row.close > 0)
+    .sort((a: Candle, b: Candle) => a.time - b.time)
     .slice(-96);
+  return candles;
 }
 
 function normalizeBook(payload: any): Book | null {
