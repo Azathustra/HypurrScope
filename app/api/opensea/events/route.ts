@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
 
 const OPENSEA_COLLECTION_SLUG = "hypurr-hyperevm";
 const OPENSEA_BASE_URL = "https://api.opensea.io/api/v2";
@@ -10,21 +9,21 @@ const OPENSEA_ACTIVITY_URL = "https://opensea.io/collection/hypurr-hyperevm/acti
 const HYPURR_CONTRACT = "0x9125E2d6827a00B0F8330D6ef7BEF07730Bac685";
 const HYPURR_CONTRACT_LOWER = HYPURR_CONTRACT.toLowerCase();
 const HYPURR_CHAIN = "hyperevm";
-const CACHE_MS = 45_000;
+const CACHE_MS = 60_000;
 
 type SaleRow = {
   id: string;
   name: string;
   price: string;
-  priceVerified: boolean;
-  priceSource: "opensea-sale-event" | "unavailable";
   time: string;
   timestamp?: string | number;
   image: string;
   url: string;
   buyer?: string;
   seller?: string;
-  imageStatus: "collection_map" | "nft_api" | "event" | "item_page" | "missing";
+  imageStatus: "event" | "collection_map" | "nft_api" | "item_page" | "missing";
+  imageMode: "artwork" | "preview";
+  priceSource: "api" | "html" | "missing";
 };
 
 type ResponsePayload = {
@@ -33,7 +32,6 @@ type ResponsePayload = {
   source: string;
   apiKeyConfigured: boolean;
   imageCount: number;
-  verifiedPriceCount: number;
   message: string;
   generatedAt: string;
   errors?: string[];
@@ -43,7 +41,9 @@ let memoryCache: { expiresAt: number; payload: ResponsePayload } | null = null;
 
 function json(payload: ResponsePayload) {
   return NextResponse.json(payload, {
-    headers: { "Cache-Control": "public, max-age=0, s-maxage=45, stale-while-revalidate=120" },
+    headers: {
+      "Cache-Control": "public, max-age=0, s-maxage=45, stale-while-revalidate=120",
+    },
   });
 }
 
@@ -65,7 +65,7 @@ function getHtmlHeaders() {
   };
 }
 
-function normalizeImage(url: unknown) {
+function normalizeImage(url: string | undefined | null) {
   if (!url) return "";
   const trimmed = String(url).trim();
   if (!trimmed) return "";
@@ -77,37 +77,33 @@ function normalizeImage(url: unknown) {
   return trimmed;
 }
 
-function num(value: unknown) {
+function toNumber(value: unknown) {
   if (typeof value === "string") {
     const cleaned = value.replace(/,/g, "").trim();
-    const parsed = Number(cleaned);
-    return Number.isFinite(parsed) ? parsed : 0;
+    const number = Number(cleaned);
+    return Number.isFinite(number) ? number : 0;
   }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function normalizeSymbol(symbol: unknown) {
-  const raw = String(symbol || "HYPE").toUpperCase();
-  return raw === "WHYPE" ? "HYPE" : raw;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 }
 
 function formatNative(value: number, symbol = "HYPE") {
-  if (!Number.isFinite(value) || value <= 0) return "Sale price unavailable";
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M ${symbol}`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(2)}K ${symbol}`;
-  if (value >= 100) return `${value.toFixed(0)} ${symbol}`;
-  if (value >= 10) return `${value.toFixed(1)} ${symbol}`;
-  if (value >= 1) return `${value.toFixed(2)} ${symbol}`;
-  return `${value.toPrecision(3)} ${symbol}`;
+  const cleanSymbol = String(symbol || "HYPE").toUpperCase() === "WHYPE" ? "HYPE" : String(symbol || "HYPE").toUpperCase();
+  if (!Number.isFinite(value) || value <= 0) return `-- ${cleanSymbol}`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M ${cleanSymbol}`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(2)}K ${cleanSymbol}`;
+  if (value >= 100) return `${value.toFixed(0)} ${cleanSymbol}`;
+  if (value >= 1) return `${value.toFixed(2)} ${cleanSymbol}`;
+  return `${value.toPrecision(3)} ${cleanSymbol}`;
 }
 
-function relativeTime(timestamp: string | number | undefined) {
+function formatRelativeTime(timestamp: string | number | undefined) {
   if (!timestamp) return "recent";
   const date = typeof timestamp === "number" ? new Date(timestamp > 10_000_000_000 ? timestamp : timestamp * 1000) : new Date(timestamp);
   const time = date.getTime();
   if (!Number.isFinite(time)) return "recent";
-  const minutes = Math.max(0, Math.floor((Date.now() - time) / 60_000));
+  const diff = Date.now() - time;
+  const minutes = Math.max(0, Math.floor(diff / 60_000));
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
@@ -123,56 +119,63 @@ function getNft(event: any) {
   return event?.nft || event?.asset || event?.item || event?.asset_bundle?.assets?.[0] || {};
 }
 
-function identifierFrom(event: any) {
+function getIdentifier(event: any) {
   const nft = getNft(event);
-  const raw = String(nft.identifier || nft.token_id || nft.tokenId || nft.id || event?.token_id || event?.tokenId || event?.nft_id || "");
+  const raw = String(
+    nft.identifier ||
+      nft.token_id ||
+      nft.tokenId ||
+      nft.id ||
+      event?.token_id ||
+      event?.tokenId ||
+      event?.nft_id ||
+      ""
+  );
   const contractTokenMatch = raw.match(/(?:^|\/)0x[a-fA-F0-9]{40}\/(\d+)$/);
   if (contractTokenMatch) return contractTokenMatch[1];
   const trailingNumber = raw.match(/(\d+)$/);
   return trailingNumber ? trailingNumber[1] : raw;
 }
 
-function eventImage(event: any) {
+function getEventImage(event: any) {
   const nft = getNft(event);
   return normalizeImage(
     nft.display_image_url ||
       nft.image_url ||
+      nft.imageUrl ||
       nft.image_original_url ||
       nft.image ||
+      event?.display_image_url ||
+      event?.image_url ||
       event?.asset?.image_url ||
       event?.asset?.image_original_url ||
-      event?.image_url ||
-      "",
+      event?.asset?.imageUrl ||
+      ""
   );
 }
 
-function salePriceFromEvent(event: any) {
+function getPrice(event: any) {
   const candidates = [
-    { raw: event?.payment?.quantity, decimals: event?.payment?.decimals, symbol: event?.payment?.symbol },
-    { raw: event?.price?.quantity, decimals: event?.price?.currency?.decimals, symbol: event?.price?.currency?.symbol },
-    { raw: event?.total_price, decimals: event?.payment_token?.decimals, symbol: event?.payment_token?.symbol },
-    { raw: event?.closing_price, decimals: event?.payment_token?.decimals, symbol: event?.payment_token?.symbol },
-    { raw: event?.sale_price, decimals: event?.payment_token?.decimals, symbol: event?.payment_token?.symbol },
+    { raw: event?.payment?.quantity, symbol: event?.payment?.symbol, decimals: event?.payment?.decimals },
+    { raw: event?.price?.quantity, symbol: event?.price?.currency?.symbol, decimals: event?.price?.currency?.decimals },
+    { raw: event?.closing_price, symbol: event?.payment_token?.symbol, decimals: event?.payment_token?.decimals },
+    { raw: event?.total_price, symbol: event?.payment_token?.symbol, decimals: event?.payment_token?.decimals },
+    { raw: event?.sale_price, symbol: event?.payment_token?.symbol, decimals: event?.payment_token?.decimals },
   ];
 
   for (const candidate of candidates) {
-    if (candidate.raw === undefined || candidate.raw === null || typeof candidate.raw === "object") continue;
-    const value = num(candidate.raw);
+    const value = toNumber(candidate.raw);
     if (!value) continue;
+    const symbol = candidate.symbol || "HYPE";
     const decimals = Number.isFinite(Number(candidate.decimals)) ? Number(candidate.decimals) : 18;
-    const normalized = value > 1_000_000 ? value / 10 ** decimals : value;
-    if (normalized > 0 && normalized < 100_000) {
-      return {
-        label: formatNative(normalized, normalizeSymbol(candidate.symbol)),
-        verified: true,
-      };
-    }
+    const normalized = value > 1_000_000_000 ? value / 10 ** decimals : value;
+    if (normalized > 0) return { label: formatNative(normalized, symbol), source: "api" as const };
   }
 
-  return { label: "Sale price unavailable", verified: false };
+  return { label: "Price n/a", source: "missing" as const };
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 4_000) {
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 4_500) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -182,13 +185,13 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 4_00
   }
 }
 
-async function fetchJson(url: string, headers: Record<string, string>, timeoutMs = 4_000) {
+async function fetchJson(url: string, headers: Record<string, string>, timeoutMs = 4_500) {
   const response = await fetchWithTimeout(url, { method: "GET", headers }, timeoutMs);
   if (!response.ok) throw new Error(`${url} failed ${response.status}`);
   return response.json();
 }
 
-async function fetchText(url: string, timeoutMs = 4_000) {
+async function fetchText(url: string, timeoutMs = 4_500) {
   const response = await fetchWithTimeout(url, { method: "GET", headers: getHtmlHeaders() }, timeoutMs);
   if (!response.ok) throw new Error(`${url} failed ${response.status}`);
   return response.text();
@@ -204,24 +207,23 @@ function extractMetaContent(html: string, names: string[]) {
   return "";
 }
 
-function openSeaItemUrl(identifier: string) {
+function buildOpenSeaUrl(identifier: string) {
   return identifier ? `https://opensea.io/item/${HYPURR_CHAIN}/${HYPURR_CONTRACT_LOWER}/${identifier}` : OPENSEA_COLLECTION_URL;
 }
 
-async function fetchItemMeta(identifier: string) {
+async function fetchOpenSeaItemMeta(identifier: string) {
   if (!identifier) return { image: "", title: "" };
   try {
-    const html = await fetchText(openSeaItemUrl(identifier), 3_500);
-    return {
-      image: normalizeImage(extractMetaContent(html, ["og:image", "twitter:image", "twitter:image:src"])),
-      title: extractMetaContent(html, ["og:title", "twitter:title"]),
-    };
+    const html = await fetchText(buildOpenSeaUrl(identifier), 3_500);
+    const image = normalizeImage(extractMetaContent(html, ["og:image", "twitter:image", "twitter:image:src"]));
+    const title = extractMetaContent(html, ["og:title", "twitter:title"]);
+    return { image, title };
   } catch {
     return { image: "", title: "" };
   }
 }
 
-async function fetchNftApiImage(identifier: string, headers: Record<string, string>) {
+async function fetchNftImage(identifier: string, headers: Record<string, string>) {
   if (!identifier) return "";
   const urls = [
     `${OPENSEA_BASE_URL}/chain/${HYPURR_CHAIN}/contract/${HYPURR_CONTRACT}/nfts/${identifier}`,
@@ -229,103 +231,134 @@ async function fetchNftApiImage(identifier: string, headers: Record<string, stri
   ];
   for (const url of urls) {
     try {
-      const payload = await fetchJson(url, headers, 3_000);
+      const payload = await fetchJson(url, headers, 3_500);
       const nft = payload?.nft || payload;
-      const image = normalizeImage(nft?.display_image_url || nft?.image_url || nft?.image_original_url || nft?.image || "");
+      const image = normalizeImage(nft?.display_image_url || nft?.image_url || nft?.imageUrl || nft?.image_original_url || nft?.image || "");
       if (image) return image;
     } catch {
-      // continue
+      // Try next format.
     }
   }
   return "";
 }
 
-async function collectionImageMap(headers: Record<string, string>) {
+async function fetchCollectionImageMap(headers: Record<string, string>) {
   const map = new Map<string, string>();
   try {
-    const payload = await fetchJson(`${OPENSEA_BASE_URL}/collection/${OPENSEA_COLLECTION_SLUG}/nfts?limit=200`, headers, 4_000);
+    const payload = await fetchJson(`${OPENSEA_BASE_URL}/collection/${OPENSEA_COLLECTION_SLUG}/nfts?limit=200`, headers, 4_500);
     const nfts = Array.isArray(payload?.nfts) ? payload.nfts : [];
     for (const nft of nfts) {
       const id = String(nft.identifier || nft.token_id || nft.tokenId || "");
-      const image = normalizeImage(nft.display_image_url || nft.image_url || nft.image_original_url || nft.image || "");
+      const image = normalizeImage(nft.display_image_url || nft.image_url || nft.imageUrl || nft.image_original_url || nft.image || "");
       if (id && image) map.set(id, image);
     }
   } catch {
-    // optional
+    // Optional enrichment only.
   }
   return map;
 }
 
-async function saleFromApiEvent(event: any, images: Map<string, string>, headers: Record<string, string>): Promise<SaleRow | null> {
+async function buildSaleFromApiEvent(event: any, imageMap: Map<string, string>, headers: Record<string, string>): Promise<SaleRow | null> {
   const nft = getNft(event);
-  const id = identifierFrom(event);
-  if (!id) return null;
-  const apiImage = images.get(id) || (await fetchNftApiImage(id, headers));
-  const fallbackImage = eventImage(event);
-  const itemMeta = apiImage || fallbackImage ? { image: "", title: "" } : await fetchItemMeta(id);
+  const identifier = getIdentifier(event);
+  if (!identifier) return null;
+
+  const imageFromMap = imageMap.get(identifier) || "";
+  let imageFromApi = "";
+  if (!imageFromMap) {
+    imageFromApi = await fetchNftImage(identifier, headers);
+  }
+
+  const imageFromEvent = getEventImage(event);
+  let itemMeta = { image: "", title: "" };
+  if (!imageFromMap && !imageFromApi && !imageFromEvent) {
+    itemMeta = await fetchOpenSeaItemMeta(identifier);
+  }
+
+  // Prefer raw artwork sources. OpenSea item-page meta often returns a marketplace preview
+  // image containing duplicate text and stale/listing prices, so it is only a last resort.
+  const image = imageFromMap || imageFromApi || imageFromEvent || itemMeta.image || "";
+  const imageMode: SaleRow["imageMode"] = imageFromMap || imageFromApi ? "artwork" : "preview";
   const timestamp = event.event_timestamp || event.created_date || event.transaction?.timestamp || event.timestamp || event.closing_date;
-  const price = salePriceFromEvent(event);
-  const image = apiImage || fallbackImage || itemMeta.image || "";
+  const price = getPrice(event);
 
   return {
-    id,
-    name: nft.name || itemMeta.title?.split(" - ")?.[0] || `Hypurr #${id}`,
+    id: identifier,
+    name: nft.name || itemMeta.title?.split(" - ")?.[0] || `Hypurr #${identifier}`,
     price: price.label,
-    priceVerified: price.verified,
-    priceSource: price.verified ? "opensea-sale-event" : "unavailable",
-    time: relativeTime(timestamp),
+    priceSource: price.source,
+    time: formatRelativeTime(timestamp),
     timestamp,
     image,
-    url: nft.opensea_url || nft.permalink || openSeaItemUrl(id),
-    buyer: event.buyer || event.to_account?.address || event.taker?.address || "",
-    seller: event.seller || event.from_account?.address || event.maker?.address || "",
-    imageStatus: apiImage ? "nft_api" : fallbackImage ? "event" : itemMeta.image ? "item_page" : "missing",
+    url: nft.permalink || buildOpenSeaUrl(identifier),
+    buyer: event.buyer || event.to_account?.address || event.taker?.address || event.winner_account?.address || "",
+    seller: event.seller || event.from_account?.address || event.maker?.address || event.seller_account?.address || "",
+    imageStatus: imageFromMap ? "collection_map" : imageFromApi ? "nft_api" : imageFromEvent ? "event" : itemMeta.image ? "item_page" : "missing",
+    imageMode,
   };
 }
 
 async function fetchSalesViaApi(headers: Record<string, string>) {
-  const [eventsPayload, images] = await Promise.all([
-    fetchJson(`${OPENSEA_BASE_URL}/events/collection/${OPENSEA_COLLECTION_SLUG}?event_type=sale&limit=24`, headers, 4_000),
-    collectionImageMap(headers),
+  const [eventsPayload, imageMap] = await Promise.all([
+    fetchJson(`${OPENSEA_BASE_URL}/events/collection/${OPENSEA_COLLECTION_SLUG}?event_type=sale&limit=24`, headers, 4_500),
+    fetchCollectionImageMap(headers),
   ]);
   const events = getEvents(eventsPayload).slice(0, 12);
-  const rows = await Promise.all(events.map((event: any) => saleFromApiEvent(event, images, headers)));
+  const rows = await Promise.all(events.map((event: any) => buildSaleFromApiEvent(event, imageMap, headers)));
   return rows.filter(Boolean) as SaleRow[];
 }
 
-function idsFromActivityHtml(html: string) {
+function findPriceNearToken(plainText: string, identifier: string) {
+  const index = plainText.indexOf(`Hypurr #${identifier}`);
+  if (index === -1) return "-- HYPE";
+  const windowText = plainText.slice(index, index + 260);
+  const match = windowText.match(/([0-9][0-9,.]*(?:\.\d+)?)\s*(W?HYPE)/i);
+  if (!match) return "-- HYPE";
+  const amount = toNumber(match[1]);
+  return amount ? formatNative(amount, match[2].toUpperCase()) : "-- HYPE";
+}
+
+function extractIdsFromActivityHtml(html: string) {
   const ids = new Set<string>();
   const itemRegex = new RegExp(`/item/${HYPURR_CHAIN}/${HYPURR_CONTRACT_LOWER}/(\\d+)`, "gi");
-  let match: RegExpExecArray | null;
-  while ((match = itemRegex.exec(html)) !== null) {
-    if (match[1]) ids.add(match[1]);
+  let itemMatch: RegExpExecArray | null;
+  while ((itemMatch = itemRegex.exec(html)) !== null) {
+    if (itemMatch[1]) ids.add(itemMatch[1]);
   }
-  const text = html.replace(/<script[\s\S]*?<\/script>/g, " ").replace(/<style[\s\S]*?<\/style>/g, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/g, " ")
+    .replace(/<style[\s\S]*?<\/style>/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ");
+
   const textRegex = /Hypurr\s*#\s*(\d+)/gi;
-  while ((match = textRegex.exec(text)) !== null) {
-    if (match[1]) ids.add(match[1]);
+  let textMatch: RegExpExecArray | null;
+  while ((textMatch = textRegex.exec(text)) !== null) {
+    if (textMatch[1]) ids.add(textMatch[1]);
   }
-  return Array.from(ids).slice(0, 12);
+
+  return { ids: Array.from(ids).slice(0, 12), text };
 }
 
 async function fetchSalesViaActivityPage() {
-  const html = await fetchText(OPENSEA_ACTIVITY_URL, 4_000);
-  const ids = idsFromActivityHtml(html);
+  const html = await fetchText(OPENSEA_ACTIVITY_URL, 4_500);
+  const { ids, text } = extractIdsFromActivityHtml(html);
   const rows = await Promise.all(
-    ids.map(async (id) => {
-      const meta = await fetchItemMeta(id);
+    ids.map(async (identifier) => {
+      const meta = await fetchOpenSeaItemMeta(identifier);
       return {
-        id,
-        name: meta.title?.split(" - ")?.[0] || `Hypurr #${id}`,
-        price: "Sale price unavailable",
-        priceVerified: false,
-        priceSource: "unavailable" as const,
+        id: identifier,
+        name: meta.title?.split(" - ")?.[0] || `Hypurr #${identifier}`,
+        price: findPriceNearToken(text, identifier),
+        priceSource: findPriceNearToken(text, identifier).startsWith("--") ? "missing" : "html",
         time: "recent",
         image: meta.image,
-        url: openSeaItemUrl(id),
-        imageStatus: meta.image ? ("item_page" as const) : ("missing" as const),
-      };
-    }),
+        url: buildOpenSeaUrl(identifier),
+        imageStatus: meta.image ? "item_page" : "missing",
+        imageMode: "preview",
+      } satisfies SaleRow;
+    })
   );
   return rows.filter((row) => row.id).slice(0, 12);
 }
@@ -337,27 +370,28 @@ function remember(payload: ResponsePayload) {
 
 export async function GET() {
   const apiKeyConfigured = Boolean(process.env.OPENSEA_API_KEY);
-  if (memoryCache && memoryCache.expiresAt > Date.now()) return json({ ...memoryCache.payload, source: `${memoryCache.payload.source}-cache` });
+
+  if (memoryCache && memoryCache.expiresAt > Date.now()) {
+    return json({ ...memoryCache.payload, source: `${memoryCache.payload.source}-cache` });
+  }
 
   const headers = getHeaders();
   const errors: string[] = [];
 
   try {
-    const sales = await fetchSalesViaApi(headers);
-    if (sales.length) {
-      const imageCount = sales.filter((sale) => Boolean(sale.image)).length;
-      const verifiedPriceCount = sales.filter((sale) => sale.priceVerified).length;
+    const apiSales = await fetchSalesViaApi(headers);
+    if (apiSales.length) {
+      const imageCount = apiSales.filter((sale) => Boolean(sale.image)).length;
       return json(
         remember({
-          sales,
-          events: sales,
-          source: "opensea-sale-events",
+          sales: apiSales,
+          events: apiSales,
+          source: "opensea-api-enriched",
           apiKeyConfigured,
           imageCount,
-          verifiedPriceCount,
-          message: `${sales.length} OpenSea sale events loaded; ${verifiedPriceCount} verified sale prices.`,
+          message: `${apiSales.length} OpenSea sales loaded; ${imageCount} with images.`,
           generatedAt: new Date().toISOString(),
-        }),
+        })
       );
     }
     errors.push("OpenSea API returned no sale events.");
@@ -366,22 +400,23 @@ export async function GET() {
   }
 
   try {
-    const sales = await fetchSalesViaActivityPage();
-    const imageCount = sales.filter((sale) => Boolean(sale.image)).length;
+    const htmlSales = await fetchSalesViaActivityPage();
+    const imageCount = htmlSales.filter((sale) => Boolean(sale.image)).length;
     return json(
       remember({
-        sales,
-        events: sales,
-        source: "opensea-html-artwork-fallback",
+        sales: htmlSales,
+        events: htmlSales,
+        source: "opensea-html-fallback",
         apiKeyConfigured,
         imageCount,
-        verifiedPriceCount: 0,
-        message: sales.length
-          ? `${sales.length} Hypurr items recovered from OpenSea pages. Prices hidden because this fallback cannot verify sale-event prices.`
-          : "No live OpenSea sales recovered.",
+        message: htmlSales.length
+          ? `${htmlSales.length} sale/item rows recovered from OpenSea pages; ${imageCount} with images.`
+          : apiKeyConfigured
+            ? "OpenSea returned no recent sale rows."
+            : "No live sales recovered. Add OPENSEA_API_KEY in Vercel for reliable sales and images.",
         errors,
         generatedAt: new Date().toISOString(),
-      }),
+      })
     );
   } catch (error: any) {
     errors.push(error?.message || "OpenSea HTML fallback failed.");
@@ -394,10 +429,11 @@ export async function GET() {
       source: "empty",
       apiKeyConfigured,
       imageCount: 0,
-      verifiedPriceCount: 0,
-      message: apiKeyConfigured ? "OpenSea did not return usable NFT sale data." : "OpenSea live sale data unavailable without API key.",
+      message: apiKeyConfigured
+        ? "OpenSea did not return usable NFT sale data."
+        : "OPENSEA_API_KEY is missing in Vercel, and the HTML fallback did not recover sales.",
       errors,
       generatedAt: new Date().toISOString(),
-    }),
+    })
   );
 }
