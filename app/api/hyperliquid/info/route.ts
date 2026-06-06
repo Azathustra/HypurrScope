@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 const HYPERLIQUID_INFO_ENDPOINT = "https://api.hyperliquid.xyz/info";
 
 export async function POST(request: NextRequest) {
@@ -11,6 +14,7 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify(body),
       cache: "no-store",
     });
+
     const text = await response.text();
     return new NextResponse(text, {
       status: response.status,
@@ -20,6 +24,9 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    return NextResponse.json({ error: "Hyperliquid info proxy failed" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "Hyperliquid info proxy failed" },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
+    );
   }
 }

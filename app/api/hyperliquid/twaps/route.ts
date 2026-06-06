@@ -1,95 +1,154 @@
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 const HYPERLIQUID_INFO_ENDPOINT = "https://api.hyperliquid.xyz/info";
 
-type NormalizedTrade = {
-  side: "Buy" | "Sell";
-  price: number;
-  size: number;
-  notional: number;
-  time: number;
+type Trade = {
+  coin?: string;
+  side?: string;
+  px?: string | number;
+  sz?: string | number;
+  time?: number;
+  tid?: number | string;
 };
 
-function toNumber(value: unknown) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
+function num(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
 }
 
-function formatUsd(value: number) {
+function fmtUsd(value: number) {
   if (!Number.isFinite(value) || value <= 0) return "$--";
-  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  if (value >= 1_000) return `$${Math.round(value).toLocaleString("en-US")}`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${value.toFixed(0)}`;
+}
+
+function fmtHype(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "-- HYPE";
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K HYPE`;
+  return `${value.toFixed(value >= 100 ? 0 : 2)} HYPE`;
+}
+
+function fmtPx(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "$--";
   return `$${value.toFixed(2)}`;
 }
 
-function formatNative(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return "-- HYPE";
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M HYPE`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(2)}K HYPE`;
-  if (value >= 1) return `${value.toFixed(2)} HYPE`;
-  return `${value.toPrecision(3)} HYPE`;
+function ago(ms: number) {
+  if (!Number.isFinite(ms) || ms <= 0) return "recent";
+  const delta = Math.max(0, Date.now() - ms);
+  const s = Math.floor(delta / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.floor(m / 60)}h ago`;
 }
 
-function formatRelativeTime(timestamp: number) {
-  const diff = Date.now() - timestamp;
-  const minutes = Math.max(0, Math.floor(diff / 60_000));
-  if (minutes < 60) return `${minutes}m ago`;
-  return `${Math.floor(minutes / 60)}h ago`;
-}
+async function fetchRecentTrades(): Promise<Trade[]> {
+  const response = await fetch(HYPERLIQUID_INFO_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "recentTrades", coin: "HYPE" }),
+    cache: "no-store",
+  });
 
-function normalizeTrade(trade: any): NormalizedTrade | null {
-  const price = toNumber(trade.px || trade.price);
-  const size = toNumber(trade.sz || trade.size);
-  const rawSide = String(trade.side || trade.dir || "").toLowerCase();
-  const time = toNumber(trade.time || trade.timestamp);
-  const side = rawSide === "b" || rawSide.includes("buy") ? "Buy" : rawSide === "a" || rawSide.includes("sell") ? "Sell" : "Buy";
-  if (!price || !size || !time) return null;
-  return { side, price, size, notional: price * size, time };
+  if (!response.ok) throw new Error(`Hyperliquid recentTrades failed ${response.status}`);
+  const payload = await response.json();
+  return Array.isArray(payload) ? payload : [];
 }
 
 export async function GET() {
   try {
-    const response = await fetch(HYPERLIQUID_INFO_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "recentTrades", coin: "HYPE" }),
-      cache: "no-store",
+    const trades = await fetchRecentTrades();
+    const normalized = trades
+      .map((trade) => {
+        const px = num(trade.px);
+        const sz = num(trade.sz);
+        const time = num(trade.time);
+        const notional = px * sz;
+        const side = String(trade.side || "").toUpperCase().startsWith("B") ? "Buy" : "Sell";
+        return {
+          id: String(trade.tid || `${time}-${px}-${sz}`),
+          side,
+          px,
+          sz,
+          time,
+          notional,
+          price: fmtPx(px),
+          size: fmtHype(sz),
+          notionalLabel: fmtUsd(notional),
+          timeLabel: ago(time),
+        };
+      })
+      .filter((trade) => trade.px > 0 && trade.sz > 0)
+      .sort((a, b) => b.time - a.time)
+      .slice(0, 80);
+
+    const windowMs = 10 * 60 * 1000;
+    const cutoff = Date.now() - windowMs;
+    const recent = normalized.filter((trade) => trade.time >= cutoff);
+    const buyNotional = recent.filter((t) => t.side === "Buy").reduce((s, t) => s + t.notional, 0);
+    const sellNotional = recent.filter((t) => t.side === "Sell").reduce((s, t) => s + t.notional, 0);
+    const buySize = recent.filter((t) => t.side === "Buy").reduce((s, t) => s + t.sz, 0);
+    const sellSize = recent.filter((t) => t.side === "Sell").reduce((s, t) => s + t.sz, 0);
+
+    const buckets = new Map<string, { side: "Buy" | "Sell"; notional: number; size: number; count: number; lastTime: number; priceSum: number }>();
+    recent.forEach((trade) => {
+      const bucketTs = Math.floor(trade.time / 120_000) * 120_000;
+      const key = `${trade.side}-${bucketTs}`;
+      const current = buckets.get(key) || { side: trade.side as "Buy" | "Sell", notional: 0, size: 0, count: 0, lastTime: 0, priceSum: 0 };
+      current.notional += trade.notional;
+      current.size += trade.sz;
+      current.count += 1;
+      current.lastTime = Math.max(current.lastTime, trade.time);
+      current.priceSum += trade.px;
+      buckets.set(key, current);
     });
 
-    if (!response.ok) {
-      const text = await response.text();
-      return NextResponse.json({ rows: [], error: text || "recentTrades failed" }, { status: response.status });
-    }
+    const twaps = Array.from(buckets.values())
+      .filter((bucket) => bucket.count >= 3 || bucket.notional >= 25_000)
+      .sort((a, b) => b.notional - a.notional)
+      .slice(0, 10)
+      .map((bucket) => ({
+        side: bucket.side,
+        notional: fmtUsd(bucket.notional),
+        rawNotional: bucket.notional,
+        size: fmtHype(bucket.size),
+        slices: bucket.count,
+        avgPrice: fmtPx(bucket.priceSum / Math.max(bucket.count, 1)),
+        lastTrade: ago(bucket.lastTime),
+        confidence: bucket.count >= 8 ? "High" : bucket.count >= 5 ? "Medium" : "Low",
+      }));
 
-    const payload = await response.json();
-    const trades = (Array.isArray(payload) ? payload : [])
-      .map(normalizeTrade)
-      .filter(Boolean) as NormalizedTrade[];
-
-    const recentCutoff = Date.now() - 30 * 60 * 1000;
-    const recentTrades = trades.filter((trade) => trade.time >= recentCutoff);
-    const grouped = ["Buy", "Sell"].map((side) => {
-      const sideTrades = recentTrades.filter((trade) => trade.side === side);
-      const notional = sideTrades.reduce((sum, trade) => sum + trade.notional, 0);
-      const size = sideTrades.reduce((sum, trade) => sum + trade.size, 0);
-      const avgPrice = size > 0 ? notional / size : 0;
-      const lastTrade = sideTrades.length ? Math.max(...sideTrades.map((trade) => trade.time)) : 0;
-      const confidence = sideTrades.length >= 20 && notional >= 1_000_000 ? "High" : sideTrades.length >= 10 && notional >= 250_000 ? "Medium" : "Low";
-      return {
-        side,
-        notional: formatUsd(notional),
-        rawNotional: notional,
-        slices: sideTrades.length,
-        avgSize: formatNative(sideTrades.length ? size / sideTrades.length : 0),
-        avgPrice: formatUsd(avgPrice),
-        lastTrade: lastTrade ? formatRelativeTime(lastTrade) : "--",
-        confidence,
-      };
-    }).filter((row) => row.rawNotional > 50_000 || row.slices >= 5);
-
-    return NextResponse.json({ rows: grouped, generatedAt: new Date().toISOString(), source: "hyperliquid-recentTrades" }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(
+      {
+        ok: true,
+        updatedAt: new Date().toISOString(),
+        coin: "HYPE",
+        window: "10m",
+        summary: {
+          buyNotional,
+          sellNotional,
+          buySize,
+          sellSize,
+          netNotional: buyNotional - sellNotional,
+          buyLabel: fmtUsd(buyNotional),
+          sellLabel: fmtUsd(sellNotional),
+          netLabel: fmtUsd(Math.abs(buyNotional - sellNotional)),
+          netSide: buyNotional >= sellNotional ? "Buy" : "Sell",
+        },
+        twaps,
+        trades: normalized.slice(0, 40),
+      },
+      { headers: { "Cache-Control": "s-maxage=10, stale-while-revalidate=20" } },
+    );
   } catch (error) {
-    return NextResponse.json({ rows: [], error: "HYPE TWAP detector failed" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "Could not load HYPE recentTrades", twaps: [], trades: [] },
+      { status: 200, headers: { "Cache-Control": "s-maxage=15, stale-while-revalidate=30" } },
+    );
   }
 }

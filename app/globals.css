@@ -4,6 +4,16 @@
 
 :root {
   color-scheme: dark;
+  --bg: #031815;
+  --panel: rgba(9, 42, 37, 0.78);
+  --panel-2: rgba(14, 62, 54, 0.64);
+  --line: rgba(169, 255, 236, 0.16);
+  --line-strong: rgba(202, 255, 244, 0.42);
+  --mint: #8fffe8;
+  --aqua: #63e6ff;
+  --good: #6ee7b7;
+  --bad: #fca5a5;
+  --warn: #fde68a;
 }
 
 * {
@@ -12,10 +22,40 @@
 
 html {
   scroll-behavior: smooth;
+  background: var(--bg);
 }
 
 body {
   margin: 0;
-  background: #071412;
-  color: white;
+  min-height: 100vh;
+  color: #f8fffd;
+  background:
+    radial-gradient(circle at 15% 10%, rgba(41, 223, 187, 0.16), transparent 32rem),
+    radial-gradient(circle at 95% 5%, rgba(103, 232, 249, 0.12), transparent 34rem),
+    linear-gradient(135deg, #02110f 0%, #041c18 42%, #05241f 100%);
+}
+
+button, input {
+  font: inherit;
+}
+
+::selection {
+  color: #00201b;
+  background: #8fffe8;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.03); }
+}
+
+.soft-pulse {
+  animation: pulse-soft 2.7s ease-in-out infinite;
 }
