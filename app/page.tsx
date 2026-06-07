@@ -254,6 +254,13 @@ type ChartHover = {
 
 type AlertChartRange = "5m" | "1h" | "1d" | "2d" | "7d" | "30d" | "90d" | "1y" | "all";
 type AlertChartStatus = "loading" | "live" | "fallback";
+type AssetPresetCalibration = {
+  family: string;
+  examples: string;
+  flow5m: number;
+  oi15m: number;
+  oi4h: number;
+};
 
 const HYPE_SUPPLY = 1_000_000_000;
 const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
@@ -301,6 +308,11 @@ const ALERT_METRICS: MetricMeta[] = [
 ];
 
 const DEFAULT_COINS = ["HYPE", "BTC", "ETH"];
+const ASSET_PRESET_CALIBRATIONS: Record<string, AssetPresetCalibration> = {
+  BTC: { family: "Majors", examples: "BTC", flow5m: 10_000_000, oi15m: 0.8, oi4h: 3 },
+  ETH: { family: "Large caps", examples: "ETH", flow5m: 6_000_000, oi15m: 1.25, oi4h: 4.5 },
+  HYPE: { family: "HYPE / large alts", examples: "HYPE", flow5m: 1_500_000, oi15m: 2.5, oi4h: 8 },
+};
 const ALERT_CHART_RANGES: AlertChartRange[] = ["5m", "1h", "1d", "2d", "7d", "30d", "90d", "1y", "all"];
 
 function initialView(): View {
@@ -1751,7 +1763,7 @@ export default function Page() {
     makeClause({ metric: "hypeVolume", condition: "gt", value: 25_000_000, join: "AND" }),
     makeClause({ metric: "assetVolumeRank", condition: "lt", value: 31, join: "AND" }),
   ];
-  const relativeTakerFlowThreshold = Math.max(500_000, (selected?.volumeUsd || 0) * 0.002);
+  const presetCalibration = ASSET_PRESET_CALIBRATIONS[coin] || ASSET_PRESET_CALIBRATIONS.HYPE;
   const regimeScore = Math.round(
     clamp(Math.abs(weightedFunding) * 60_000 + Math.abs(selected?.changePct || 0) * 2 + Math.abs(book?.imbalance || 0) * 0.2, 0, 99),
   );
@@ -1847,28 +1859,28 @@ export default function Page() {
       title: "Fresh longs detected",
       tag: "New leverage",
       body: "Detects when aggressive buyers are likely opening fresh leveraged long exposure, not just chasing a green candle.",
-      checks: ["Volume > $25M + top 30", "Buy flow > max($500K, 0.20% 24h vol)", "Buy ratio > 68% + OI/price confirms", "Cooldown 20m"],
+      checks: [`${presetCalibration.family}: ${presetCalibration.examples}`, `Buy flow 5m > ${formatUsd(presetCalibration.flow5m)}`, `OI 15m > ${formatPct(presetCalibration.oi15m, 2, false)} + price > +0.35%`, "Cooldown 20m"],
     },
     {
       kind: "freshShorts",
       title: "Fresh shorts detected",
       tag: "New leverage",
       body: "Detects aggressive sell flow with OI expansion and bearish price confirmation.",
-      checks: ["Volume > $25M + top 30", "Sell flow > max($500K, 0.20% 24h vol)", "Sell ratio > 68% + OI/price confirms", "Cooldown 20m"],
+      checks: [`${presetCalibration.family}: ${presetCalibration.examples}`, `Sell flow 5m > ${formatUsd(presetCalibration.flow5m)}`, `OI 15m > ${formatPct(presetCalibration.oi15m, 2, false)} + price < -0.35%`, "Cooldown 20m"],
     },
     {
       kind: "crowdedLongs",
       title: "Crowded longs risk",
       tag: "Squeeze setup",
       body: "Detects when longs are paying expensive funding while OI expands and price stops following.",
-      checks: ["Volume > $25M + top 30", "Funding > +0.010%", "OI 4h > 8% + price stalled", "Cooldown 2h"],
+      checks: [`${presetCalibration.family}: ${presetCalibration.examples}`, "Funding > +0.010%", `OI 4h > ${formatPct(presetCalibration.oi4h, 2, false)} + price stalled`, "Cooldown 2h"],
     },
     {
       kind: "crowdedShorts",
       title: "Crowded shorts risk",
       tag: "Squeeze setup",
       body: "Detects when shorts become crowded, funding is deeply negative, and downside momentum stalls.",
-      checks: ["Volume > $25M + top 30", "Funding < -0.010%", "OI 4h > 8% + price stalled", "Cooldown 2h"],
+      checks: [`${presetCalibration.family}: ${presetCalibration.examples}`, "Funding < -0.010%", `OI 4h > ${formatPct(presetCalibration.oi4h, 2, false)} + price stalled`, "Cooldown 2h"],
     },
   ];
 
@@ -1876,29 +1888,29 @@ export default function Page() {
     const presets: Record<AlertPresetKind, AlertRule> = {
       freshLongs: makePresetRule("Fresh longs detected", [
         ...liquidMarketClauses,
-        makeClause({ metric: "takerBuyUsd5m", condition: "gt", value: relativeTakerFlowThreshold, join: "AND" }),
+        makeClause({ metric: "takerBuyUsd5m", condition: "gt", value: presetCalibration.flow5m, join: "AND" }),
         makeClause({ metric: "takerBuyRatio5m", condition: "gt", value: 68, join: "AND" }),
-        makeClause({ metric: "oiChange15m", condition: "gt", value: 2.5, join: "AND" }),
+        makeClause({ metric: "oiChange15m", condition: "gt", value: presetCalibration.oi15m, join: "AND" }),
         makeClause({ metric: "priceChange15m", condition: "gt", value: 0.35, join: "AND" }),
       ], 20),
       freshShorts: makePresetRule("Fresh shorts detected", [
         ...liquidMarketClauses,
-        makeClause({ metric: "takerSellUsd5m", condition: "gt", value: relativeTakerFlowThreshold, join: "AND" }),
+        makeClause({ metric: "takerSellUsd5m", condition: "gt", value: presetCalibration.flow5m, join: "AND" }),
         makeClause({ metric: "takerSellRatio5m", condition: "gt", value: 68, join: "AND" }),
-        makeClause({ metric: "oiChange15m", condition: "gt", value: 2.5, join: "AND" }),
+        makeClause({ metric: "oiChange15m", condition: "gt", value: presetCalibration.oi15m, join: "AND" }),
         makeClause({ metric: "priceChange15m", condition: "lt", value: -0.35, join: "AND" }),
       ], 20),
       crowdedLongs: makePresetRule("Crowded longs risk", [
         ...liquidMarketClauses,
         makeClause({ metric: "hypeFunding", condition: "gt", value: 0.010, join: "AND" }),
-        makeClause({ metric: "oiChange4h", condition: "gt", value: 8, join: "AND" }),
+        makeClause({ metric: "oiChange4h", condition: "gt", value: presetCalibration.oi4h, join: "AND" }),
         makeClause({ metric: "priceChange4h", condition: "lt", value: 1.25, join: "AND" }),
         makeClause({ metric: "priceChange4h", condition: "gt", value: -0.75, join: "AND" }),
       ], 120),
       crowdedShorts: makePresetRule("Crowded shorts risk", [
         ...liquidMarketClauses,
         makeClause({ metric: "hypeFunding", condition: "lt", value: -0.010, join: "AND" }),
-        makeClause({ metric: "oiChange4h", condition: "gt", value: 8, join: "AND" }),
+        makeClause({ metric: "oiChange4h", condition: "gt", value: presetCalibration.oi4h, join: "AND" }),
         makeClause({ metric: "priceChange4h", condition: "gt", value: -1.25, join: "AND" }),
         makeClause({ metric: "priceChange4h", condition: "lt", value: 0.75, join: "AND" }),
       ], 120),
@@ -2050,6 +2062,7 @@ export default function Page() {
               <Kpi label="Saved rules" value={String(alertRules.length)} detail={isAccountReady ? `Local account: ${accountName}` : "Create an account below"} />
               <Kpi label="Triggered now" value={String(activeAlertCount)} detail="Evaluated against the current market snapshot" tone={activeAlertCount ? "negative" : "positive"} />
               <Kpi label="Metrics available" value={String(ALERT_METRICS.length)} detail="Taker flow, funding, OI, TWAP, liquidity, ETF, NFT, relative strength" />
+              <Kpi label="Preset family" value={presetCalibration.family} detail={`${presetCalibration.examples}: ${formatUsd(presetCalibration.flow5m)} flow / ${formatPct(presetCalibration.oi15m, 2, false)} OI 15m`} />
               <Kpi label="Historical P95" value={baselineStatus === "live" ? "Live" : sourceLabel(baselineStatus)} detail={baselineSampleLabel} tone={baselineStatus === "live" ? "positive" : "negative"} />
               <Kpi label="Delivery" value={telegramHandle ? "Telegram ready" : "Browser now"} detail={telegramHandle ? `@${telegramHandle} linked locally` : "Add Telegram below"} />
             </section>
