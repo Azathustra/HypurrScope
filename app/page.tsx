@@ -190,6 +190,8 @@ type MetricPoint = {
   label: string;
 };
 
+type AlertChartRange = "5m" | "1h" | "1d" | "2d" | "7d" | "30d";
+
 const HYPE_SUPPLY = 1_000_000_000;
 const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
 
@@ -225,6 +227,7 @@ const ALERT_METRICS: MetricMeta[] = [
 ];
 
 const DEFAULT_COINS = ["HYPE", "BTC", "ETH", "SOL"];
+const ALERT_CHART_RANGES: AlertChartRange[] = ["5m", "1h", "1d", "2d", "7d", "30d"];
 
 const EMPTY_NFT_STATS: NftStats = {
   floor: "--",
@@ -562,16 +565,54 @@ function metricPoint(time: number, value: number, label: string): MetricPoint {
   return { time, value: Number.isFinite(value) ? value : 0, label };
 }
 
-function syntheticMetricSeries(current: number, unit: MetricMeta["unit"], key: AlertMetricKey): MetricPoint[] {
+function rangeMs(range: AlertChartRange) {
+  if (range === "5m") return 5 * 60_000;
+  if (range === "1h") return 60 * 60_000;
+  if (range === "1d") return 24 * 60 * 60_000;
+  if (range === "2d") return 2 * 24 * 60 * 60_000;
+  if (range === "7d") return 7 * 24 * 60 * 60_000;
+  return 30 * 24 * 60 * 60_000;
+}
+
+function rangeLabel(range: AlertChartRange) {
+  if (range === "5m") return "5 minutes";
+  if (range === "1h") return "1 hour";
+  if (range === "1d") return "1 day";
+  if (range === "2d") return "2 days";
+  if (range === "7d") return "7 days";
+  return "30 days";
+}
+
+function timeAxisLabel(time: number, range: AlertChartRange) {
+  const date = new Date(time);
+  if (range === "5m" || range === "1h") {
+    return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  }
+  if (range === "1d" || range === "2d") {
+    return `${date.getMonth() + 1}/${date.getDate()} ${date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`;
+  }
+  return dailyLabel(time);
+}
+
+function filterSeriesByRange(series: MetricPoint[], range: AlertChartRange) {
+  const cutoff = Date.now() - rangeMs(range);
+  const filtered = series.filter((point: MetricPoint) => point.time >= cutoff);
+  return filtered.length >= 3 ? filtered : series.slice(-Math.min(series.length, 40));
+}
+
+function syntheticMetricSeries(current: number, unit: MetricMeta["unit"], key: AlertMetricKey, range: AlertChartRange): MetricPoint[] {
   const safeCurrent = Number.isFinite(current) ? current : 0;
   const floor = unit === "pct" ? 0.02 : unit === "usd" ? Math.max(50_000, Math.abs(safeCurrent) * 0.12) : 1;
   const amplitude = Math.max(Math.abs(safeCurrent) * 0.28, floor);
   const phase = ALERT_METRICS.findIndex((metric: MetricMeta) => metric.key === key) + 1;
-  return Array.from({ length: 36 }, (_, index: number) => {
+  const points = range === "5m" ? 30 : range === "1h" ? 36 : range === "1d" ? 48 : range === "2d" ? 56 : 60;
+  const duration = rangeMs(range);
+  return Array.from({ length: points }, (_, index: number) => {
     const wave = Math.sin(index / 3.2 + phase) * 0.68 + Math.cos(index / 6.5 + phase * 0.5) * 0.32;
-    const drift = (index - 35) * amplitude * 0.006;
-    const value = index === 35 ? safeCurrent : safeCurrent + wave * amplitude + drift;
-    return metricPoint(Date.now() - (35 - index) * 30 * 60_000, value, index === 35 ? "Now" : `T-${35 - index}`);
+    const drift = (index - (points - 1)) * amplitude * 0.006;
+    const value = index === points - 1 ? safeCurrent : safeCurrent + wave * amplitude + drift;
+    const time = Date.now() - (points - 1 - index) * (duration / Math.max(1, points - 1));
+    return metricPoint(time, value, index === points - 1 ? "Now" : timeAxisLabel(time, range));
   });
 }
 
@@ -582,19 +623,23 @@ function buildMetricSeries(
   hypeDaily: Candle[],
   btcDaily: Candle[],
   flowDays: FlowDay[],
+  range: AlertChartRange,
 ): MetricPoint[] {
   const meta = metricMeta(key);
   if (key === "hypePrice" && candles.length > 1) {
-    return candles.slice(-60).map((candle: Candle) => metricPoint(candle.time, candle.close, dailyLabel(candle.time)));
+    return filterSeriesByRange(candles.map((candle: Candle) => metricPoint(candle.time, candle.close, timeAxisLabel(candle.time, range))), range);
   }
   if (key === "hypeChange24h" && candles.length > 1) {
     const first = candles[0].close || 1;
-    return candles.slice(-60).map((candle: Candle) => metricPoint(candle.time, ((candle.close - first) / first) * 100, dailyLabel(candle.time)));
+    return filterSeriesByRange(
+      candles.map((candle: Candle) => metricPoint(candle.time, ((candle.close - first) / first) * 100, timeAxisLabel(candle.time, range))),
+      range,
+    );
   }
   if (key === "hypeVolume" && candles.length > 1) {
-    return candles.slice(-60).map((candle: Candle) => metricPoint(candle.time, candle.volume, dailyLabel(candle.time)));
+    return filterSeriesByRange(candles.map((candle: Candle) => metricPoint(candle.time, candle.volume, timeAxisLabel(candle.time, range))), range);
   }
-  if (key === "hypeVsBtc30d" && hypeDaily.length > 1 && btcDaily.length > 1) {
+  if (key === "hypeVsBtc30d" && (range === "7d" || range === "30d") && hypeDaily.length > 1 && btcDaily.length > 1) {
     const length = Math.min(hypeDaily.length, btcDaily.length);
     const hypeBase = hypeDaily[hypeDaily.length - length].close || 1;
     const btcBase = btcDaily[btcDaily.length - length].close || 1;
@@ -606,10 +651,13 @@ function buildMetricSeries(
       return metricPoint(hypeCandle.time, hypeReturn - btcReturn, dailyLabel(hypeCandle.time));
     });
   }
-  if (key === "etfNetFlow" && flowDays.length > 1) {
-    return flowDays.map((day: FlowDay, index: number) => metricPoint(Date.now() - (flowDays.length - 1 - index) * 24 * 60 * 60_000, day.net, day.date));
+  if (key === "etfNetFlow" && (range === "7d" || range === "30d") && flowDays.length > 1) {
+    return filterSeriesByRange(
+      flowDays.map((day: FlowDay, index: number) => metricPoint(Date.now() - (flowDays.length - 1 - index) * 24 * 60 * 60_000, day.net, day.date)),
+      range,
+    );
   }
-  return syntheticMetricSeries(snapshot[key], meta.unit, key);
+  return syntheticMetricSeries(snapshot[key], meta.unit, key, range);
 }
 
 function scoreRisk(changePct: number, funding: number, oiUsd: number, volumeUsd: number, maxLeverage = 10) {
@@ -2306,9 +2354,11 @@ function ThresholdPicker({
 }) {
   const chartRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [range, setRange] = useState<AlertChartRange>("1d");
+  const [zoomLevel, setZoomLevel] = useState(0);
   const meta = metricMeta(clause.metric);
   const currentValue = snapshot[clause.metric];
-  const series = buildMetricSeries(clause.metric, snapshot, candles, hypeDaily, btcDaily, flowDays);
+  const series = buildMetricSeries(clause.metric, snapshot, candles, hypeDaily, btcDaily, flowDays, range);
   const thresholdEnabled = clause.condition !== "isPositive" && clause.condition !== "isNegative";
   const thresholdValue = clause.condition === "absGt" ? Math.abs(clause.value) : clause.value;
   const values = series
@@ -2316,27 +2366,38 @@ function ThresholdPicker({
     .concat(currentValue, thresholdEnabled ? thresholdValue : currentValue, clause.condition === "absGt" ? -thresholdValue : currentValue);
   const rawMin = Math.min(...values);
   const rawMax = Math.max(...values);
-  const padding = Math.max(Math.abs(rawMax - rawMin) * 0.18, meta.unit === "pct" ? 0.02 : meta.unit === "usd" ? 10_000 : 1);
-  const min = rawMin - padding;
-  const max = rawMax + padding;
+  const rawSpan = Math.max(Math.abs(rawMax - rawMin), meta.unit === "pct" ? 0.04 : meta.unit === "usd" ? 20_000 : 2);
+  const zoomFactor = zoomLevel === 0 ? 1 : zoomLevel === 1 ? 0.62 : 0.38;
+  const center = thresholdEnabled ? (currentValue + thresholdValue) / 2 : currentValue;
+  const halfSpan = Math.max(rawSpan * (0.62 * zoomFactor), meta.unit === "pct" ? 0.015 : meta.unit === "usd" ? 5_000 : 0.75);
+  const min = Math.min(rawMin, center - halfSpan);
+  const max = Math.max(rawMax, center + halfSpan);
   const span = Math.max(0.000001, max - min);
+  const plot = { left: 76, right: 970, top: 24, bottom: 230 };
+  const plotWidth = plot.right - plot.left;
+  const plotHeight = plot.bottom - plot.top;
   const points = series
     .map((point: MetricPoint, index: number) => {
-      const x = series.length > 1 ? (index / (series.length - 1)) * 1000 : 0;
-      const y = ((max - point.value) / span) * 260;
-      return `${x},${clamp(y, 0, 260)}`;
+      const x = plot.left + (series.length > 1 ? (index / (series.length - 1)) * plotWidth : 0);
+      const y = plot.top + ((max - point.value) / span) * plotHeight;
+      return `${x},${clamp(y, plot.top, plot.bottom)}`;
     })
     .join(" ");
-  const thresholdY = clamp(((max - thresholdValue) / span) * 260, 0, 260);
-  const mirrorY = clamp(((max + thresholdValue) / span) * 260, 0, 260);
-  const currentY = clamp(((max - currentValue) / span) * 260, 0, 260);
+  const thresholdY = clamp(plot.top + ((max - thresholdValue) / span) * plotHeight, plot.top, plot.bottom);
+  const mirrorY = clamp(plot.top + ((max + thresholdValue) / span) * plotHeight, plot.top, plot.bottom);
+  const currentY = clamp(plot.top + ((max - currentValue) / span) * plotHeight, plot.top, plot.bottom);
+  const midValue = min + span / 2;
+  const firstPoint = series[0];
+  const middlePoint = series[Math.floor(series.length / 2)];
+  const lastPoint = series[series.length - 1];
   const hit = evaluateClause(clause, snapshot);
 
   function updateFromPointer(event: React.PointerEvent<HTMLDivElement>) {
     if (!thresholdEnabled || !chartRef.current) return;
     const rect = chartRef.current.getBoundingClientRect();
-    const y = clamp(event.clientY - rect.top, 0, rect.height);
-    const nextValue = max - (y / Math.max(1, rect.height)) * span;
+    const svgY = ((event.clientY - rect.top) / Math.max(1, rect.height)) * 260;
+    const y = clamp(svgY, plot.top, plot.bottom);
+    const nextValue = max - ((y - plot.top) / plotHeight) * span;
     const rounded = roundMetricThreshold(nextValue, meta.unit, span);
     onChange(clause.condition === "absGt" ? Math.abs(rounded) : rounded);
   }
@@ -2380,10 +2441,23 @@ function ThresholdPicker({
     <article className={dragging ? "threshold-picker dragging" : "threshold-picker"}>
       <div className="threshold-head">
         <div>
-          <span>Mouse threshold picker</span>
+          <span>Interactive threshold chart</span>
           <strong>{meta.label}</strong>
         </div>
         <em className={hit ? "triggered" : ""}>{hit ? "condition met" : "waiting"}</em>
+      </div>
+
+      <div className="threshold-tools" aria-label="Chart controls">
+        <div className="threshold-ranges">
+          {ALERT_CHART_RANGES.map((item: AlertChartRange) => (
+            <button className={range === item ? "active" : ""} key={item} onClick={() => setRange(item)}>{item}</button>
+          ))}
+        </div>
+        <div className="threshold-zoom">
+          <button onClick={() => setZoomLevel((current: number) => Math.max(0, current - 1))}>-</button>
+          <span>{zoomLevel === 0 ? "Fit" : `${zoomLevel + 1}x`}</span>
+          <button onClick={() => setZoomLevel((current: number) => Math.min(2, current + 1))}>+</button>
+        </div>
       </div>
 
       <div
@@ -2403,17 +2477,23 @@ function ThresholdPicker({
         aria-valuemax={max}
       >
         <svg viewBox="0 0 1000 260" preserveAspectRatio="none" aria-hidden="true">
-          <line x1="0" x2="1000" y1="40" y2="40" className="grid-line" />
-          <line x1="0" x2="1000" y1="130" y2="130" className="grid-line" />
-          <line x1="0" x2="1000" y1="220" y2="220" className="grid-line" />
+          <line x1={plot.left} x2={plot.right} y1={plot.top} y2={plot.top} className="grid-line" />
+          <line x1={plot.left} x2={plot.right} y1={plot.top + plotHeight / 2} y2={plot.top + plotHeight / 2} className="grid-line" />
+          <line x1={plot.left} x2={plot.right} y1={plot.bottom} y2={plot.bottom} className="grid-line" />
+          <line x1={plot.left} x2={plot.left} y1={plot.top} y2={plot.bottom} className="axis-line" />
+          <line x1={plot.left} x2={plot.right} y1={plot.bottom} y2={plot.bottom} className="axis-line" />
           <polyline points={points} className="threshold-series" />
-          {clause.condition === "absGt" ? <line x1="0" x2="1000" y1={mirrorY} y2={mirrorY} className="threshold-mirror" /> : null}
-          {thresholdEnabled ? <line x1="0" x2="1000" y1={thresholdY} y2={thresholdY} className="threshold-rule" /> : null}
-          <line x1="0" x2="1000" y1={currentY} y2={currentY} className="threshold-current" />
+          {clause.condition === "absGt" ? <line x1={plot.left} x2={plot.right} y1={mirrorY} y2={mirrorY} className="threshold-mirror" /> : null}
+          {thresholdEnabled ? <line x1={plot.left} x2={plot.right} y1={thresholdY} y2={thresholdY} className="threshold-rule" /> : null}
+          <line x1={plot.left} x2={plot.right} y1={currentY} y2={currentY} className="threshold-current" />
           {thresholdEnabled ? <circle cx="930" cy={thresholdY} r="13" className="threshold-handle" /> : null}
+          <text x="10" y={plot.top + 5} className="axis-text">{formatMetricValue(max, meta.unit)}</text>
+          <text x="10" y={plot.top + plotHeight / 2 + 5} className="axis-text">{formatMetricValue(midValue, meta.unit)}</text>
+          <text x="10" y={plot.bottom + 5} className="axis-text">{formatMetricValue(min, meta.unit)}</text>
+          <text x={plot.left} y="253" className="axis-text x-axis">{firstPoint?.label || "Start"}</text>
+          <text x={plot.left + plotWidth / 2} y="253" className="axis-text x-axis middle">{middlePoint?.label || rangeLabel(range)}</text>
+          <text x={plot.right} y="253" className="axis-text x-axis end">{lastPoint?.label || "Now"}</text>
         </svg>
-        <div className="threshold-scale top">{formatMetricValue(max, meta.unit)}</div>
-        <div className="threshold-scale bottom">{formatMetricValue(min, meta.unit)}</div>
         <div className="threshold-current-label" style={{ top: `${(currentY / 260) * 100}%` }}>
           live {formatMetricValue(currentValue, meta.unit)}
         </div>
@@ -2426,17 +2506,25 @@ function ThresholdPicker({
 
       <div className="threshold-footer">
         <div>
+          <span>Y axis</span>
+          <strong>{meta.label} / {meta.unit.toUpperCase()}</strong>
+        </div>
+        <div>
+          <span>X axis</span>
+          <strong>{rangeLabel(range)} / {series.length} points</strong>
+        </div>
+        <div>
           <span>Condition</span>
           <strong>{conditionLabel(clause.condition)}</strong>
         </div>
         <div>
-          <span>Threshold</span>
+          <span>Alert level</span>
           <strong>{thresholdEnabled ? formatMetricValue(thresholdValue, meta.unit) : "No number needed"}</strong>
         </div>
       </div>
       <p>
         {thresholdEnabled
-          ? "Drag the mint line on the chart to set the alert level. The numeric field on the left updates automatically."
+          ? "Drag the mint line to set the alert level. Use the range buttons for time and +/- to zoom the vertical scale."
           : "This condition only checks whether the metric is positive or negative, so it does not need a manual level."}
       </p>
     </article>

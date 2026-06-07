@@ -1572,6 +1572,61 @@ td {
   gap: 12px;
 }
 
+.threshold-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.threshold-ranges,
+.threshold-zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.threshold-ranges {
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.threshold-ranges button,
+.threshold-zoom button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 820;
+}
+
+.threshold-ranges button.active,
+.threshold-ranges button:hover,
+.threshold-zoom button:hover {
+  border-color: rgba(124, 247, 199, 0.44);
+  background: rgba(124, 247, 199, 0.1);
+  color: var(--text);
+}
+
+.threshold-zoom {
+  flex: 0 0 auto;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.threshold-zoom span {
+  min-width: 38px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 820;
+  text-align: center;
+}
+
 .threshold-head span,
 .threshold-footer span {
   display: block;
@@ -1627,6 +1682,28 @@ td {
   stroke: rgba(255, 255, 255, 0.07);
 }
 
+.threshold-chart .axis-line {
+  stroke: rgba(255, 255, 255, 0.2);
+}
+
+.threshold-chart .axis-text {
+  fill: rgba(223, 231, 226, 0.78);
+  font-size: 15px;
+  font-weight: 760;
+}
+
+.threshold-chart .x-axis {
+  text-anchor: start;
+}
+
+.threshold-chart .x-axis.middle {
+  text-anchor: middle;
+}
+
+.threshold-chart .x-axis.end {
+  text-anchor: end;
+}
+
 .threshold-series {
   fill: none;
   stroke: var(--amber);
@@ -1665,7 +1742,6 @@ td {
   filter: drop-shadow(0 0 18px rgba(124, 247, 199, 0.8));
 }
 
-.threshold-scale,
 .threshold-current-label,
 .threshold-target-label {
   position: absolute;
@@ -1676,16 +1752,6 @@ td {
   color: var(--muted);
   font-size: 0.72rem;
   pointer-events: none;
-}
-
-.threshold-scale.top {
-  top: 8px;
-  left: 8px;
-}
-
-.threshold-scale.bottom {
-  bottom: 8px;
-  left: 8px;
 }
 
 .threshold-current-label {
@@ -1704,7 +1770,7 @@ td {
 
 .threshold-footer {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .threshold-footer div {
@@ -1910,6 +1976,28 @@ td {
 
   .clause-row {
     grid-template-columns: 1fr;
+  }
+
+  .threshold-tools {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .threshold-ranges {
+    width: 100%;
+  }
+
+  .threshold-ranges button {
+    flex: 1 0 auto;
+  }
+
+  .threshold-zoom {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .threshold-footer {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .saved-rule-head {
