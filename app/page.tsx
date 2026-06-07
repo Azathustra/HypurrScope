@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 
-type View = "overview" | "statistics" | "markets" | "liquidity" | "twaps" | "nfts" | "etf" | "hip3" | "hip4" | "exchange" | "wallet" | "builder";
+type View = "overview" | "alerts" | "statistics" | "markets" | "liquidity" | "twaps" | "nfts" | "etf" | "hip3" | "hip4" | "exchange" | "wallet" | "builder";
 type Status = "loading" | "live" | "fallback" | "error";
 
 type Market = {
@@ -139,11 +139,57 @@ type ExchangeRow = {
   status: string;
 };
 
+type AlertMetricKey =
+  | "hypePrice"
+  | "hypeChange24h"
+  | "hypeFunding"
+  | "hypeOpenInterest"
+  | "hypeVolume"
+  | "twapNet"
+  | "twapSell"
+  | "bookSpread"
+  | "bookImbalance"
+  | "hypeVsBtc30d"
+  | "etfNetFlow"
+  | "nftSales24h";
+
+type AlertCondition = "gt" | "lt" | "absGt" | "isPositive" | "isNegative";
+type AlertJoin = "AND" | "OR";
+
+type AlertClause = {
+  id: string;
+  metric: AlertMetricKey;
+  condition: AlertCondition;
+  value: number;
+  join: AlertJoin;
+};
+
+type AlertRule = {
+  id: string;
+  name: string;
+  clauses: AlertClause[];
+  enabled: boolean;
+  cooldownMinutes: number;
+  createdAt: string;
+  lastTriggeredAt?: string;
+  delivery: "browser" | "telegram-ready";
+};
+
+type MetricSnapshot = Record<AlertMetricKey, number>;
+
+type MetricMeta = {
+  key: AlertMetricKey;
+  label: string;
+  unit: "usd" | "pct" | "number";
+  description: string;
+};
+
 const HYPE_SUPPLY = 1_000_000_000;
 const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
 
 const NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
   { id: "overview", label: "Overview", description: "HYPE pulse" },
+  { id: "alerts", label: "Alert Studio", description: "Rule engine" },
   { id: "statistics", label: "Statistics", description: "Charts lab" },
   { id: "markets", label: "Markets", description: "Perps radar" },
   { id: "liquidity", label: "Liquidity", description: "Order book" },
@@ -155,6 +201,21 @@ const NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
   { id: "exchange", label: "Exchange", description: "Venue share" },
   { id: "wallet", label: "Wallet", description: "Risk scan" },
   { id: "builder", label: "Builder", description: "Proof layer" },
+];
+
+const ALERT_METRICS: MetricMeta[] = [
+  { key: "hypePrice", label: "HYPE price", unit: "usd", description: "Current HYPE mark price." },
+  { key: "hypeChange24h", label: "HYPE 24h change", unit: "pct", description: "Daily price change." },
+  { key: "hypeFunding", label: "HYPE funding", unit: "pct", description: "Funding rate converted to percent." },
+  { key: "hypeOpenInterest", label: "HYPE open interest", unit: "usd", description: "HYPE perp OI in dollars." },
+  { key: "hypeVolume", label: "HYPE volume", unit: "usd", description: "HYPE 24h perp volume." },
+  { key: "twapNet", label: "TWAP net pressure", unit: "usd", description: "Buy TWAP notional minus sell TWAP notional." },
+  { key: "twapSell", label: "TWAP sell pressure", unit: "usd", description: "Detected sell-side TWAP notional." },
+  { key: "bookSpread", label: "Book spread", unit: "pct", description: "Visible best bid/ask spread." },
+  { key: "bookImbalance", label: "Book imbalance", unit: "pct", description: "Bid depth minus ask depth as percent." },
+  { key: "hypeVsBtc30d", label: "HYPE vs BTC 30d", unit: "pct", description: "HYPE return minus BTC return." },
+  { key: "etfNetFlow", label: "ETF net flow", unit: "usd", description: "Latest ETF/ETP flow proxy." },
+  { key: "nftSales24h", label: "Hypurr NFT sales", unit: "number", description: "Reported collection sales in 24h." },
 ];
 
 const DEFAULT_COINS = ["HYPE", "BTC", "ETH", "SOL"];
@@ -341,8 +402,8 @@ function buildBookFromSides(bids: BookLevel[], asks: BookLevel[]): Book {
   const bestBid = bids[0]?.price || 0;
   const bestAsk = asks[0]?.price || 0;
   const mid = (bestBid + bestAsk) / 2;
-  const bidUsd = bids.reduce((sum, level) => sum + level.usd, 0);
-  const askUsd = asks.reduce((sum, level) => sum + level.usd, 0);
+  const bidUsd = bids.reduce((sum: number, level: BookLevel) => sum + level.usd, 0);
+  const askUsd = asks.reduce((sum: number, level: BookLevel) => sum + level.usd, 0);
   return {
     bids,
     asks,
@@ -389,6 +450,79 @@ function formatPct(value: number, digits = 2, signed = true) {
   if (!Number.isFinite(value)) return "--";
   const sign = signed && value > 0 ? "+" : "";
   return `${sign}${value.toFixed(digits)}%`;
+}
+
+function formatMetricValue(value: number, unit: MetricMeta["unit"]) {
+  if (unit === "usd") return formatUsd(value);
+  if (unit === "pct") return formatPct(value, Math.abs(value) < 1 ? 4 : 2);
+  return Number.isFinite(value) ? value.toLocaleString("en-US", { maximumFractionDigits: 0 }) : "--";
+}
+
+function metricMeta(key: AlertMetricKey) {
+  return ALERT_METRICS.find((metric: MetricMeta) => metric.key === key) || ALERT_METRICS[0];
+}
+
+function conditionLabel(condition: AlertCondition) {
+  if (condition === "gt") return "greater than";
+  if (condition === "lt") return "less than";
+  if (condition === "absGt") return "absolute value greater than";
+  if (condition === "isPositive") return "is positive";
+  return "is negative";
+}
+
+function makeClause(overrides?: Partial<AlertClause>): AlertClause {
+  return {
+    id: `clause-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    metric: "hypeFunding",
+    condition: "gt",
+    value: 0.05,
+    join: "AND",
+    ...overrides,
+  };
+}
+
+function makePresetRule(name: string, clauses: AlertClause[]): AlertRule {
+  return {
+    id: `rule-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    name,
+    clauses,
+    enabled: true,
+    cooldownMinutes: 15,
+    createdAt: new Date().toISOString(),
+    delivery: "browser",
+  };
+}
+
+function evaluateClause(clause: AlertClause, snapshot: MetricSnapshot) {
+  const value = snapshot[clause.metric];
+  if (clause.condition === "gt") return value > clause.value;
+  if (clause.condition === "lt") return value < clause.value;
+  if (clause.condition === "absGt") return Math.abs(value) > clause.value;
+  if (clause.condition === "isPositive") return value > 0;
+  return value < 0;
+}
+
+function evaluateRule(rule: AlertRule, snapshot: MetricSnapshot) {
+  if (!rule.enabled || !rule.clauses.length) return false;
+  return rule.clauses.reduce((result: boolean, clause: AlertClause, index: number) => {
+    const clauseResult = evaluateClause(clause, snapshot);
+    if (index === 0) return clauseResult;
+    return clause.join === "AND" ? result && clauseResult : result || clauseResult;
+  }, true);
+}
+
+function explainClause(clause: AlertClause, snapshot: MetricSnapshot) {
+  const meta = metricMeta(clause.metric);
+  const current = formatMetricValue(snapshot[clause.metric], meta.unit);
+  const target =
+    clause.condition === "isPositive" || clause.condition === "isNegative"
+      ? ""
+      : ` ${formatMetricValue(clause.value, meta.unit)}`;
+  return `${meta.label}: ${current} / ${conditionLabel(clause.condition)}${target}`;
+}
+
+function alertSummary(rule: AlertRule, snapshot: MetricSnapshot) {
+  return rule.clauses.map((clause: AlertClause, index: number) => `${index ? `${clause.join} ` : ""}${explainClause(clause, snapshot)}`).join(" | ");
 }
 
 function scoreRisk(changePct: number, funding: number, oiUsd: number, volumeUsd: number, maxLeverage = 10) {
@@ -557,7 +691,7 @@ function parseNftSales(payload: unknown): NftSale[] {
         priceSource: raw.priceSource || raw.price_source || "api",
       } satisfies NftSale;
     })
-    .filter((sale) => sale.name || sale.id)
+    .filter((sale: NftSale) => sale.name || sale.id)
     .slice(0, 16);
 }
 
@@ -682,7 +816,7 @@ function buildExchangeRows(hyperliquidVolume: number): ExchangeRow[] {
 
 function Sparkline({ candles }: { candles: Candle[] }) {
   if (candles.length < 2) return <div className="empty">Waiting for candles</div>;
-  const values = candles.map((candle) => candle.close);
+  const values = candles.map((candle: Candle) => candle.close);
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = Math.max(0.0001, max - min);
@@ -709,7 +843,7 @@ function Sparkline({ candles }: { candles: Candle[] }) {
 
 function DepthBars({ book }: { book: Book | null }) {
   if (!book) return <div className="empty">Waiting for order book</div>;
-  const maxUsd = Math.max(1, ...book.bids.map((level) => level.usd), ...book.asks.map((level) => level.usd));
+  const maxUsd = Math.max(1, ...book.bids.map((level: BookLevel) => level.usd), ...book.asks.map((level: BookLevel) => level.usd));
   return (
     <div className="depth-bars">
       <div>
@@ -764,6 +898,20 @@ export default function Page() {
   const [flowMeta, setFlowMeta] = useState({ source: "fallback", latestDate: "", note: "" });
   const [buyback, setBuyback] = useState<BuybackData>(EMPTY_BUYBACK);
   const [buybackStatus, setBuybackStatus] = useState<Status>("loading");
+  const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
+  const [draftRule, setDraftRule] = useState<AlertRule>({
+    id: "draft",
+    name: "Crowded long unwind risk",
+    clauses: [
+      { id: "draft-1", metric: "hypeFunding", condition: "gt", value: 0.05, join: "AND" },
+      { id: "draft-2", metric: "twapNet", condition: "lt", value: -2_000_000, join: "AND" },
+      { id: "draft-3", metric: "hypeVsBtc30d", condition: "lt", value: 0, join: "AND" },
+    ],
+    enabled: true,
+    cooldownMinutes: 15,
+    createdAt: new Date(0).toISOString(),
+    delivery: "browser",
+  });
 
   useEffect(() => {
     loadMarketData();
@@ -772,10 +920,27 @@ export default function Page() {
   }, [coin]);
 
   useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("hypurrscope-alert-rules");
+      if (saved) setAlertRules(JSON.parse(saved));
+    } catch {
+      setAlertRules([]);
+    }
+  }, []);
+
+  useEffect(() => {
     loadStatistics();
     const timer = window.setInterval(loadStatistics, 120_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("hypurrscope-alert-rules", JSON.stringify(alertRules));
+    } catch {
+      return;
+    }
+  }, [alertRules]);
 
   useEffect(() => {
     loadNfts();
@@ -910,7 +1075,7 @@ export default function Page() {
     try {
       setWalletStatus("Scanning account...");
       const state = await postInfo({ type: "clearinghouseState", user: address });
-      const marketMap = new Map(markets.map((market) => [market.symbol, market]));
+      const marketMap = new Map(markets.map((market: Market) => [market.symbol, market]));
       const nextPositions = ((state as any).assetPositions || [])
         .map((entry: any) => entry.position || entry)
         .filter((position: any) => Math.abs(n(position.szi)) > 0)
@@ -939,9 +1104,9 @@ export default function Page() {
 
   const selected = markets.find((market) => market.symbol === coin) || markets[0];
   const hype = markets.find((market) => market.symbol === "HYPE") || selected;
-  const totalOi = markets.reduce((sum, market) => sum + market.oiUsd, 0);
-  const totalVolume = markets.reduce((sum, market) => sum + market.volumeUsd, 0);
-  const weightedFunding = totalOi > 0 ? markets.reduce((sum, market) => sum + market.funding * market.oiUsd, 0) / totalOi : 0;
+  const totalOi = markets.reduce((sum: number, market: Market) => sum + market.oiUsd, 0);
+  const totalVolume = markets.reduce((sum: number, market: Market) => sum + market.volumeUsd, 0);
+  const weightedFunding = totalOi > 0 ? markets.reduce((sum: number, market: Market) => sum + market.funding * market.oiUsd, 0) / totalOi : 0;
   const feePressure = parseMoneyLabel(buyback.estimatedBuybackUsd24hLabel) || (hype?.volumeUsd || 0) * 0.0002;
   const topRisk = [...markets].sort((a: Market, b: Market) => b.risk - a.risk)[0];
   const twapBuy = twaps.filter((row: TwapRow) => row.side === "Buy").reduce((sum: number, row: TwapRow) => sum + row.rawNotional, 0);
@@ -956,6 +1121,21 @@ export default function Page() {
   const relativeStrength = hypeReturn30d - btcReturn30d;
   const estimatedRevenue30d = revenueSeries.reduce((sum: number, item: Candle) => sum + item.close, 0);
   const avgDailyRevenue = revenueSeries.length ? estimatedRevenue30d / revenueSeries.length : 0;
+  const alertSnapshot: MetricSnapshot = {
+    hypePrice: hype?.price || selected?.price || 0,
+    hypeChange24h: hype?.changePct || 0,
+    hypeFunding: (hype?.funding || 0) * 100,
+    hypeOpenInterest: hype?.oiUsd || 0,
+    hypeVolume: hype?.volumeUsd || 0,
+    twapNet,
+    twapSell,
+    bookSpread: book?.spreadPct || 0,
+    bookImbalance: book?.imbalance || 0,
+    hypeVsBtc30d: relativeStrength,
+    etfNetFlow,
+    nftSales24h: Number(nftStats.sales24h.replace(/,/g, "")) || 0,
+  };
+  const activeAlertCount = alertRules.filter((rule: AlertRule) => evaluateRule(rule, alertSnapshot)).length;
   const regimeScore = Math.round(
     clamp(Math.abs(weightedFunding) * 60_000 + Math.abs(selected?.changePct || 0) * 2 + Math.abs(book?.imbalance || 0) * 0.2, 0, 99),
   );
@@ -1001,6 +1181,71 @@ export default function Page() {
     },
   ];
 
+  function updateDraftClause(clauseId: string, patch: Partial<AlertClause>) {
+    setDraftRule((current: AlertRule) => ({
+      ...current,
+      clauses: current.clauses.map((clause: AlertClause) => (clause.id === clauseId ? { ...clause, ...patch } : clause)),
+    }));
+  }
+
+  function removeDraftClause(clauseId: string) {
+    setDraftRule((current: AlertRule) => ({
+      ...current,
+      clauses: current.clauses.length > 1 ? current.clauses.filter((clause: AlertClause) => clause.id !== clauseId) : current.clauses,
+    }));
+  }
+
+  function addDraftClause() {
+    setDraftRule((current: AlertRule) => ({
+      ...current,
+      clauses: current.clauses.concat(makeClause({ metric: "hypeOpenInterest", condition: "gt", value: 1_000_000_000 })),
+    }));
+  }
+
+  function saveDraftRule() {
+    const rule: AlertRule = {
+      ...draftRule,
+      id: `rule-${Date.now()}`,
+      name: draftRule.name.trim() || "Untitled market structure alert",
+      createdAt: new Date().toISOString(),
+    };
+    setAlertRules((current: AlertRule[]) => [rule].concat(current).slice(0, 20));
+    setView("alerts");
+  }
+
+  function toggleRule(ruleId: string) {
+    setAlertRules((current: AlertRule[]) =>
+      current.map((rule: AlertRule) => (rule.id === ruleId ? { ...rule, enabled: !rule.enabled } : rule)),
+    );
+  }
+
+  function deleteRule(ruleId: string) {
+    setAlertRules((current: AlertRule[]) => current.filter((rule: AlertRule) => rule.id !== ruleId));
+  }
+
+  function loadPreset(kind: "crowdedLong" | "twapSell" | "relativeWeakness" | "thinMove") {
+    const presets: Record<typeof kind, AlertRule> = {
+      crowdedLong: makePresetRule("Crowded long unwind risk", [
+        makeClause({ metric: "hypeFunding", condition: "gt", value: 0.05, join: "AND" }),
+        makeClause({ metric: "twapNet", condition: "lt", value: -2_000_000, join: "AND" }),
+        makeClause({ metric: "hypeVsBtc30d", condition: "lt", value: 0, join: "AND" }),
+      ]),
+      twapSell: makePresetRule("TWAP sell pressure", [
+        makeClause({ metric: "twapSell", condition: "gt", value: 2_000_000, join: "AND" }),
+        makeClause({ metric: "hypeChange24h", condition: "lt", value: 0, join: "AND" }),
+      ]),
+      relativeWeakness: makePresetRule("HYPE relative weakness", [
+        makeClause({ metric: "hypeVsBtc30d", condition: "lt", value: -3, join: "AND" }),
+        makeClause({ metric: "hypeVolume", condition: "gt", value: 500_000_000, join: "AND" }),
+      ]),
+      thinMove: makePresetRule("Liquidity thin move", [
+        makeClause({ metric: "bookSpread", condition: "gt", value: 0.03, join: "AND" }),
+        makeClause({ metric: "bookImbalance", condition: "absGt", value: 20, join: "AND" }),
+      ]),
+    };
+    setDraftRule({ ...presets[kind], id: "draft" });
+  }
+
   return (
     <main className={`hs-shell ${theme === "light" ? "theme-light" : ""}`}>
       <aside className="hs-rail">
@@ -1012,7 +1257,7 @@ export default function Page() {
           </div>
         </div>
         <nav>
-          {NAV_ITEMS.map((item) => (
+          {NAV_ITEMS.map((item: { id: View; label: string; description: string }) => (
             <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => setView(item.id)}>
               <strong>{item.label}</strong>
               <small>{item.description}</small>
@@ -1038,7 +1283,7 @@ export default function Page() {
             <label>
               Asset
               <select value={coin} onChange={(event) => setCoin(event.target.value)}>
-                {marketOptions.map((symbol) => (
+                {marketOptions.map((symbol: string) => (
                   <option value={symbol} key={symbol}>{symbol}</option>
                 ))}
               </select>
@@ -1046,7 +1291,7 @@ export default function Page() {
             <button className="icon-btn" onClick={loadMarketData} aria-label="Refresh">R</button>
           </div>
           <nav className="mobile-tabs">
-            {NAV_ITEMS.map((item) => (
+            {NAV_ITEMS.map((item: { id: View; label: string; description: string }) => (
               <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => setView(item.id)}>{item.label}</button>
             ))}
           </nav>
@@ -1056,20 +1301,20 @@ export default function Page() {
           <>
             <section className="hero">
               <div>
-                <p className="eyebrow">Live Hyperliquid intelligence</p>
-                <h1>HYPE market console with ecosystem flow coverage.</h1>
+                <p className="eyebrow">No-code Hyperliquid rule engine</p>
+                <h1>Build market-structure alerts from Hyperliquid data.</h1>
                 <p>
-                  Perps, liquidity, TWAP clusters, Hypurr NFT sales, ETF flows, wallet risk, and transparent
-                  builder methodology in one read-only workspace.
+                  Combine funding, OI, TWAP pressure, liquidity, HYPE vs BTC, ETF flow, and NFT demand into
+                  custom rules. HypurrScope is becoming an alert studio, not another passive dashboard.
                 </p>
                 <div className="actions">
-                  <button className="primary" onClick={() => setView("twaps")}>Open TWAP tape</button>
-                  <button className="secondary" onClick={() => setView("nfts")}>View NFTs</button>
+                  <button className="primary" onClick={() => setView("alerts")}>Create alert rule</button>
+                  <button className="secondary" onClick={() => setView("statistics")}>Open statistics</button>
                 </div>
               </div>
               <div className="snapshot">
                 <div><span>Selected</span><strong>{coin}</strong></div>
-                <div><span>Last update</span><strong>{lastUpdate ? lastUpdate.toLocaleTimeString("en-GB") : "--"}</strong></div>
+                <div><span>Active rules</span><strong>{activeAlertCount}/{alertRules.length}</strong></div>
                 <div><span>Market state</span><strong>{regime} {regimeScore}</strong></div>
               </div>
             </section>
@@ -1091,7 +1336,7 @@ export default function Page() {
               </Panel>
               <Panel title="Signal stack" subtitle="Derived from perps, liquidity, TWAPs, NFT demand, and TradFi flows.">
                 <div className="signals">
-                  {overviewSignals.map((signal) => <Signal key={signal.label} {...signal} />)}
+                  {overviewSignals.map((signal: { label: string; value: string; body: string; tone: string }) => <Signal key={signal.label} {...signal} />)}
                 </div>
               </Panel>
             </section>
@@ -1111,6 +1356,109 @@ export default function Page() {
                   <span>{sourceLabel(buybackStatus)} buyback endpoint</span>
                   <strong>{buyback.estimatedBuybackUsd24hLabel || formatUsd(feePressure)}</strong>
                   <p>{buyback.note || "The fallback model uses 2 bps on HYPE volume."}</p>
+                </div>
+              </Panel>
+            </section>
+          </>
+        )}
+
+        {view === "alerts" && (
+          <>
+            <ViewHeader eyebrow="No-code alert engine" title="HypurrScope Alert Studio" />
+            <section className="kpi-grid">
+              <Kpi label="Saved rules" value={String(alertRules.length)} detail="Stored in this browser for the MVP" />
+              <Kpi label="Triggered now" value={String(activeAlertCount)} detail="Evaluated against the current market snapshot" tone={activeAlertCount ? "negative" : "positive"} />
+              <Kpi label="Metrics available" value={String(ALERT_METRICS.length)} detail="Funding, OI, TWAP, liquidity, ETF, NFT, relative strength" />
+              <Kpi label="Delivery" value="Browser now" detail="Telegram-ready architecture panel included" />
+            </section>
+
+            <section className="alert-layout">
+              <Panel title="Rule builder" subtitle="Create a Hyperliquid market-structure rule without code. Combine conditions with AND / OR.">
+                <div className="preset-row">
+                  <button onClick={() => loadPreset("crowdedLong")}>Crowded long risk</button>
+                  <button onClick={() => loadPreset("twapSell")}>TWAP sell pressure</button>
+                  <button onClick={() => loadPreset("relativeWeakness")}>Relative weakness</button>
+                  <button onClick={() => loadPreset("thinMove")}>Thin liquidity move</button>
+                </div>
+
+                <label className="rule-name">
+                  Rule name
+                  <input value={draftRule.name} onChange={(event) => setDraftRule((current: AlertRule) => ({ ...current, name: event.target.value }))} />
+                </label>
+
+                <div className="clause-list">
+                  {draftRule.clauses.map((clause: AlertClause, index: number) => (
+                    <div className="clause-row" key={clause.id}>
+                      {index > 0 ? (
+                        <select value={clause.join} onChange={(event) => updateDraftClause(clause.id, { join: event.target.value as AlertJoin })}>
+                          <option value="AND">AND</option>
+                          <option value="OR">OR</option>
+                        </select>
+                      ) : (
+                        <span className="clause-start">WHEN</span>
+                      )}
+                      <select value={clause.metric} onChange={(event) => updateDraftClause(clause.id, { metric: event.target.value as AlertMetricKey })}>
+                        {ALERT_METRICS.map((metric: MetricMeta) => <option value={metric.key} key={metric.key}>{metric.label}</option>)}
+                      </select>
+                      <select value={clause.condition} onChange={(event) => updateDraftClause(clause.id, { condition: event.target.value as AlertCondition })}>
+                        <option value="gt">greater than</option>
+                        <option value="lt">less than</option>
+                        <option value="absGt">abs greater than</option>
+                        <option value="isPositive">is positive</option>
+                        <option value="isNegative">is negative</option>
+                      </select>
+                      <input
+                        type="number"
+                        value={clause.value}
+                        disabled={clause.condition === "isPositive" || clause.condition === "isNegative"}
+                        onChange={(event) => updateDraftClause(clause.id, { value: Number(event.target.value) })}
+                      />
+                      <button className="small-danger" onClick={() => removeDraftClause(clause.id)}>Remove</button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="builder-actions">
+                  <button className="secondary" onClick={addDraftClause}>Add condition</button>
+                  <button className="primary" onClick={saveDraftRule}>Save rule</button>
+                </div>
+              </Panel>
+
+              <Panel title="Live preview" subtitle="The rule is evaluated immediately against the current Hyperliquid snapshot.">
+                <AlertPreview rule={draftRule} snapshot={alertSnapshot} />
+                <div className="metric-grid">
+                  {ALERT_METRICS.map((metric: MetricMeta) => (
+                    <div className="metric-tile" key={metric.key}>
+                      <span>{metric.label}</span>
+                      <strong>{formatMetricValue(alertSnapshot[metric.key], metric.unit)}</strong>
+                      <small>{metric.description}</small>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            </section>
+
+            <section className="alert-layout lower">
+              <Panel title="Saved rules" subtitle="This MVP runs locally. The next backend step stores these in Supabase and checks them every minute.">
+                <div className="saved-rules">
+                  {alertRules.length ? alertRules.map((rule: AlertRule) => (
+                    <SavedRuleCard
+                      rule={rule}
+                      snapshot={alertSnapshot}
+                      key={rule.id}
+                      onToggle={() => toggleRule(rule.id)}
+                      onDelete={() => deleteRule(rule.id)}
+                    />
+                  )) : <div className="empty compact">No saved rules yet. Build one above or load a preset.</div>}
+                </div>
+              </Panel>
+
+              <Panel title="Telegram delivery architecture" subtitle="Not connected yet in the static MVP, but designed as the next production step.">
+                <div className="telegram-flow">
+                  <div><strong>1. Connect Telegram</strong><span>User opens t.me/HypurrScopeBot?start=code</span></div>
+                  <div><strong>2. Store rule</strong><span>Supabase saves chat_id, rule JSON, cooldown, enabled state</span></div>
+                  <div><strong>3. Cron evaluates</strong><span>Worker checks live metrics once per minute</span></div>
+                  <div><strong>4. Send explainable alert</strong><span>Telegram message includes triggered metrics and interpretation</span></div>
                 </div>
               </Panel>
             </section>
@@ -1154,7 +1502,7 @@ export default function Page() {
             <div className="toolbar">
               <input placeholder="Search coin" value={search} onChange={(event) => setSearch(event.target.value)} />
               <div className="segments">
-                {["oi", "risk", "funding", "volume"].map((sort) => (
+                {["oi", "risk", "funding", "volume"].map((sort: string) => (
                   <button className={marketSort === sort ? "active" : ""} key={sort} onClick={() => setMarketSort(sort)}>{sort}</button>
                 ))}
               </div>
@@ -1359,7 +1707,7 @@ export default function Page() {
               <table>
                 <thead><tr><th>Coin</th><th>Side</th><th>Notional</th><th>Entry</th><th>Mark</th><th>PnL</th><th>Liq distance</th></tr></thead>
                 <tbody>
-                  {positions.length ? positions.map((position) => (
+                  {positions.length ? positions.map((position: Position) => (
                     <tr key={`${position.coin}-${position.side}`}>
                       <td><strong>{position.coin}</strong></td>
                       <td className={position.side === "Long" ? "positive" : "negative"}>{position.side}</td>
@@ -1820,4 +2168,52 @@ function FlowCard({ row }: { row: FlowRow }) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function AlertPreview({ rule, snapshot }: { rule: AlertRule; snapshot: MetricSnapshot }) {
+  const triggered = evaluateRule(rule, snapshot);
+  return (
+    <article className={triggered ? "alert-preview triggered" : "alert-preview"}>
+      <div>
+        <span>{triggered ? "Triggered now" : "Waiting"}</span>
+        <strong>{rule.name || "Untitled rule"}</strong>
+      </div>
+      <p>{alertSummary(rule, snapshot)}</p>
+      <small>
+        Interpretation: {triggered
+          ? "All required market-structure conditions are active. This would send a Telegram alert in the production version."
+          : "The rule is valid, but current market data does not satisfy the full condition set."}
+      </small>
+    </article>
+  );
+}
+
+function SavedRuleCard({
+  rule,
+  snapshot,
+  onToggle,
+  onDelete,
+}: {
+  rule: AlertRule;
+  snapshot: MetricSnapshot;
+  onToggle: () => void;
+  onDelete: () => void;
+}) {
+  const triggered = evaluateRule(rule, snapshot);
+  return (
+    <article className={triggered ? "saved-rule triggered" : "saved-rule"}>
+      <div className="saved-rule-head">
+        <div>
+          <span>{rule.enabled ? "Enabled" : "Paused"} / {triggered ? "Triggered" : "Waiting"}</span>
+          <strong>{rule.name}</strong>
+        </div>
+        <div className="saved-rule-actions">
+          <button onClick={onToggle}>{rule.enabled ? "Pause" : "Enable"}</button>
+          <button className="small-danger" onClick={onDelete}>Delete</button>
+        </div>
+      </div>
+      <p>{alertSummary(rule, snapshot)}</p>
+      <small>Cooldown {rule.cooldownMinutes} min / delivery {rule.delivery === "browser" ? "browser MVP" : "Telegram-ready"}</small>
+    </article>
+  );
 }
