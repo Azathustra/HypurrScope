@@ -164,6 +164,7 @@ type AlertMetricKey =
   | "hypeFunding"
   | "hypeOpenInterest"
   | "hypeVolume"
+  | "assetVolumeRank"
   | "takerBuyUsd5m"
   | "takerSellUsd5m"
   | "takerBuyRatio5m"
@@ -279,6 +280,7 @@ const ALERT_METRICS: MetricMeta[] = [
   { key: "hypeFunding", label: "Asset funding", unit: "pct", description: "Funding rate converted to percent." },
   { key: "hypeOpenInterest", label: "Asset open interest", unit: "usd", description: "Selected asset perp OI in dollars." },
   { key: "hypeVolume", label: "Asset volume", unit: "usd", description: "Selected asset 24h perp volume." },
+  { key: "assetVolumeRank", label: "Asset volume rank", unit: "number", description: "Rank by 24h perp volume across loaded Hyperliquid markets." },
   { key: "takerBuyUsd5m", label: "Taker buy flow 5m", unit: "usd", description: "Aggressive buy-flow proxy from the latest execution tape." },
   { key: "takerSellUsd5m", label: "Taker sell flow 5m", unit: "usd", description: "Aggressive sell-flow proxy from the latest execution tape." },
   { key: "takerBuyRatio5m", label: "Taker buy ratio 5m", unit: "pct", description: "Share of recent aggressive notional that is buy-side." },
@@ -680,13 +682,13 @@ function makeClause(overrides?: Partial<AlertClause>): AlertClause {
   };
 }
 
-function makePresetRule(name: string, clauses: AlertClause[]): AlertRule {
+function makePresetRule(name: string, clauses: AlertClause[], cooldownMinutes = 15): AlertRule {
   return {
     id: `rule-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     name,
     clauses,
     enabled: true,
-    cooldownMinutes: 15,
+    cooldownMinutes,
     createdAt: new Date().toISOString(),
     delivery: "browser",
   };
@@ -1703,6 +1705,7 @@ export default function Page() {
   const oiChange15m = estimateOiChangePct(selected?.oiUsd || 0, takerTotalUsd5m, 3);
   const oiChange4h = estimateOiChangePct(selected?.oiUsd || 0, takerTotalUsd5m + Math.abs(twapNet), 10);
   const fundingExtreme = fundingExtremeScore((selected?.funding || 0) * 100);
+  const assetVolumeRank = [...markets].sort((a: Market, b: Market) => b.volumeUsd - a.volumeUsd).findIndex((market: Market) => market.symbol === coin) + 1 || 999;
   const crowdingScore = buildCrowdingScore({
     fundingPct: (selected?.funding || 0) * 100,
     oiChangePct: oiChange4h,
@@ -1716,6 +1719,7 @@ export default function Page() {
     hypeFunding: (selected?.funding || 0) * 100,
     hypeOpenInterest: selected?.oiUsd || 0,
     hypeVolume: selected?.volumeUsd || 0,
+    assetVolumeRank,
     takerBuyUsd5m,
     takerSellUsd5m,
     takerBuyRatio5m,
@@ -1740,15 +1744,14 @@ export default function Page() {
   const telegramHandle = userProfile.telegram.trim().replace(/^@/, "");
   const isAccountReady = Boolean(userProfile.displayName.trim() || userProfile.email.trim());
   const selectedDraftClause = draftRule.clauses.find((clause: AlertClause) => clause.id === selectedClauseId) || draftRule.clauses[0];
-  const baselineP = historicalBaselines.percentiles;
-  const historicalVolumeP95 = baselineP.volumeUsd5mP95 || 1_000_000;
-  const historicalPrice15mP85 = baselineP.priceChange15mAbsP85 || 0.25;
-  const historicalPrice4hP85 = baselineP.priceChange4hAbsP85 || 1.5;
-  const historicalFundingLongP95 = baselineP.fundingPositiveP95 || baselineP.fundingAbsP95 || 0.04;
-  const historicalFundingShortP5 = baselineP.fundingNegativeP5 || -(baselineP.fundingAbsP95 || 0.04);
   const baselineSampleLabel = baselineStatus === "live"
     ? `${historicalBaselines.sampleSizes.candles5m} 5m candles, ${historicalBaselines.sampleSizes.funding} funding prints`
     : "Historical baselines loading/fallback";
+  const liquidMarketClauses = [
+    makeClause({ metric: "hypeVolume", condition: "gt", value: 25_000_000, join: "AND" }),
+    makeClause({ metric: "assetVolumeRank", condition: "lt", value: 31, join: "AND" }),
+  ];
+  const relativeTakerFlowThreshold = Math.max(500_000, (selected?.volumeUsd || 0) * 0.002);
   const regimeScore = Math.round(
     clamp(Math.abs(weightedFunding) * 60_000 + Math.abs(selected?.changePct || 0) * 2 + Math.abs(book?.imbalance || 0) * 0.2, 0, 99),
   );
@@ -1844,57 +1847,61 @@ export default function Page() {
       title: "Fresh longs detected",
       tag: "New leverage",
       body: "Detects when aggressive buyers are likely opening fresh leveraged long exposure, not just chasing a green candle.",
-      checks: ["Taker buy flow spike", "Buy ratio > 68%", "OI rising + price confirms"],
+      checks: ["Volume > $25M + top 30", "Buy flow > max($500K, 0.20% 24h vol)", "Buy ratio > 68% + OI/price confirms", "Cooldown 20m"],
     },
     {
       kind: "freshShorts",
       title: "Fresh shorts detected",
       tag: "New leverage",
       body: "Detects aggressive sell flow with OI expansion and bearish price confirmation.",
-      checks: ["Taker sell flow spike", "Sell ratio > 68%", "OI rising + price confirms down"],
+      checks: ["Volume > $25M + top 30", "Sell flow > max($500K, 0.20% 24h vol)", "Sell ratio > 68% + OI/price confirms", "Cooldown 20m"],
     },
     {
       kind: "crowdedLongs",
       title: "Crowded longs risk",
       tag: "Squeeze setup",
       body: "Detects when longs are paying expensive funding while OI expands and price stops following.",
-      checks: ["Funding > historical P95", "OI rising 4h", "Price stalling"],
+      checks: ["Volume > $25M + top 30", "Funding > +0.010%", "OI 4h > 8% + price stalled", "Cooldown 2h"],
     },
     {
       kind: "crowdedShorts",
       title: "Crowded shorts risk",
       tag: "Squeeze setup",
       body: "Detects when shorts become crowded, funding is deeply negative, and downside momentum stalls.",
-      checks: ["Funding < historical P5", "OI rising 4h", "Price not breaking down"],
+      checks: ["Volume > $25M + top 30", "Funding < -0.010%", "OI 4h > 8% + price stalled", "Cooldown 2h"],
     },
   ];
 
   function loadPreset(kind: AlertPresetKind) {
     const presets: Record<AlertPresetKind, AlertRule> = {
       freshLongs: makePresetRule("Fresh longs detected", [
-        makeClause({ metric: "takerBuyUsd5m", condition: "gt", value: Math.max(takerBuyUsd5m * 1.15, historicalVolumeP95), join: "AND" }),
+        ...liquidMarketClauses,
+        makeClause({ metric: "takerBuyUsd5m", condition: "gt", value: relativeTakerFlowThreshold, join: "AND" }),
         makeClause({ metric: "takerBuyRatio5m", condition: "gt", value: 68, join: "AND" }),
-        makeClause({ metric: "oiChange15m", condition: "gt", value: Math.max(oiChange15m, 3), join: "AND" }),
-        makeClause({ metric: "priceChange15m", condition: "gt", value: Math.max(0.25, historicalPrice15mP85), join: "AND" }),
-      ]),
+        makeClause({ metric: "oiChange15m", condition: "gt", value: 2.5, join: "AND" }),
+        makeClause({ metric: "priceChange15m", condition: "gt", value: 0.35, join: "AND" }),
+      ], 20),
       freshShorts: makePresetRule("Fresh shorts detected", [
-        makeClause({ metric: "takerSellUsd5m", condition: "gt", value: Math.max(takerSellUsd5m * 1.15, historicalVolumeP95), join: "AND" }),
+        ...liquidMarketClauses,
+        makeClause({ metric: "takerSellUsd5m", condition: "gt", value: relativeTakerFlowThreshold, join: "AND" }),
         makeClause({ metric: "takerSellRatio5m", condition: "gt", value: 68, join: "AND" }),
-        makeClause({ metric: "oiChange15m", condition: "gt", value: Math.max(oiChange15m, 3), join: "AND" }),
-        makeClause({ metric: "priceChange15m", condition: "lt", value: -Math.max(0.25, historicalPrice15mP85), join: "AND" }),
-      ]),
+        makeClause({ metric: "oiChange15m", condition: "gt", value: 2.5, join: "AND" }),
+        makeClause({ metric: "priceChange15m", condition: "lt", value: -0.35, join: "AND" }),
+      ], 20),
       crowdedLongs: makePresetRule("Crowded longs risk", [
-        makeClause({ metric: "hypeFunding", condition: "gt", value: Math.max((selected?.funding || 0) * 100, historicalFundingLongP95), join: "AND" }),
-        makeClause({ metric: "oiChange4h", condition: "gt", value: Math.max(oiChange4h, 8), join: "AND" }),
-        makeClause({ metric: "priceChange4h", condition: "lt", value: Math.max(1.5, historicalPrice4hP85), join: "AND" }),
-        makeClause({ metric: "crowdingScore", condition: "gt", value: 80, join: "AND" }),
-      ]),
+        ...liquidMarketClauses,
+        makeClause({ metric: "hypeFunding", condition: "gt", value: 0.010, join: "AND" }),
+        makeClause({ metric: "oiChange4h", condition: "gt", value: 8, join: "AND" }),
+        makeClause({ metric: "priceChange4h", condition: "lt", value: 1.25, join: "AND" }),
+        makeClause({ metric: "priceChange4h", condition: "gt", value: -0.75, join: "AND" }),
+      ], 120),
       crowdedShorts: makePresetRule("Crowded shorts risk", [
-        makeClause({ metric: "hypeFunding", condition: "lt", value: Math.min((selected?.funding || 0) * 100, historicalFundingShortP5), join: "AND" }),
-        makeClause({ metric: "oiChange4h", condition: "gt", value: Math.max(oiChange4h, 8), join: "AND" }),
-        makeClause({ metric: "priceChange4h", condition: "gt", value: -Math.max(1.5, historicalPrice4hP85), join: "AND" }),
-        makeClause({ metric: "crowdingScore", condition: "gt", value: 80, join: "AND" }),
-      ]),
+        ...liquidMarketClauses,
+        makeClause({ metric: "hypeFunding", condition: "lt", value: -0.010, join: "AND" }),
+        makeClause({ metric: "oiChange4h", condition: "gt", value: 8, join: "AND" }),
+        makeClause({ metric: "priceChange4h", condition: "gt", value: -1.25, join: "AND" }),
+        makeClause({ metric: "priceChange4h", condition: "lt", value: 0.75, join: "AND" }),
+      ], 120),
     };
     const preset = { ...presets[kind], id: "draft" };
     setDraftRule(preset);
