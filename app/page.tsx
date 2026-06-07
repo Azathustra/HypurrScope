@@ -158,6 +158,7 @@ type AlertMetricKey =
 
 type AlertCondition = "gt" | "lt" | "absGt" | "isPositive" | "isNegative";
 type AlertJoin = "AND" | "OR";
+type AlertPresetKind = "longSqueeze" | "twapWeakness";
 
 type AlertClause = {
   id: string;
@@ -1517,24 +1518,35 @@ export default function Page() {
     setAlertRules((current: AlertRule[]) => current.filter((rule: AlertRule) => rule.id !== ruleId));
   }
 
-  function loadPreset(kind: "crowdedLong" | "twapSell" | "relativeWeakness" | "thinMove") {
-    const presets: Record<typeof kind, AlertRule> = {
-      crowdedLong: makePresetRule("Crowded long unwind risk", [
-        makeClause({ metric: "hypeFunding", condition: "gt", value: 0.05, join: "AND" }),
-        makeClause({ metric: "twapNet", condition: "lt", value: -2_000_000, join: "AND" }),
-        makeClause({ metric: "hypeVsBtc30d", condition: "lt", value: 0, join: "AND" }),
+  const alertPresetCards: Array<{ kind: AlertPresetKind; title: string; tag: string; body: string; checks: string[] }> = [
+    {
+      kind: "longSqueeze",
+      title: "Long squeeze early warning",
+      tag: "Leverage risk",
+      body: "Positive funding, heavy OI, and sell TWAP pressure line up before a crowded long unwind.",
+      checks: ["Funding > 0.04%", "HYPE OI > $800M", "TWAP net < -$1.5M"],
+    },
+    {
+      kind: "twapWeakness",
+      title: "TWAP sell + relative weakness",
+      tag: "Flow reversal",
+      body: "Large sell TWAPs matter more when HYPE is already weak versus BTC and volume is active.",
+      checks: ["Sell TWAP > $2M", "HYPE 24h < -1%", "HYPE vs BTC 30d < -2%"],
+    },
+  ];
+
+  function loadPreset(kind: AlertPresetKind) {
+    const presets: Record<AlertPresetKind, AlertRule> = {
+      longSqueeze: makePresetRule("Long squeeze early warning", [
+        makeClause({ metric: "hypeFunding", condition: "gt", value: 0.04, join: "AND" }),
+        makeClause({ metric: "hypeOpenInterest", condition: "gt", value: 800_000_000, join: "AND" }),
+        makeClause({ metric: "twapNet", condition: "lt", value: -1_500_000, join: "AND" }),
       ]),
-      twapSell: makePresetRule("TWAP sell pressure", [
+      twapWeakness: makePresetRule("TWAP sell + relative weakness", [
         makeClause({ metric: "twapSell", condition: "gt", value: 2_000_000, join: "AND" }),
-        makeClause({ metric: "hypeChange24h", condition: "lt", value: 0, join: "AND" }),
-      ]),
-      relativeWeakness: makePresetRule("HYPE relative weakness", [
-        makeClause({ metric: "hypeVsBtc30d", condition: "lt", value: -3, join: "AND" }),
-        makeClause({ metric: "hypeVolume", condition: "gt", value: 500_000_000, join: "AND" }),
-      ]),
-      thinMove: makePresetRule("Liquidity thin move", [
-        makeClause({ metric: "bookSpread", condition: "gt", value: 0.03, join: "AND" }),
-        makeClause({ metric: "bookImbalance", condition: "absGt", value: 20, join: "AND" }),
+        makeClause({ metric: "hypeChange24h", condition: "lt", value: -1, join: "AND" }),
+        makeClause({ metric: "hypeVsBtc30d", condition: "lt", value: -2, join: "AND" }),
+        makeClause({ metric: "hypeVolume", condition: "gt", value: 400_000_000, join: "AND" }),
       ]),
     };
     const preset = { ...presets[kind], id: "draft" };
@@ -1669,12 +1681,23 @@ export default function Page() {
             </section>
 
             <section className="alert-layout">
-              <Panel title="Rule builder" subtitle="Create a Hyperliquid market-structure rule without code. Combine conditions with AND / OR.">
-                <div className="preset-row">
-                  <button onClick={() => loadPreset("crowdedLong")}>Crowded long risk</button>
-                  <button onClick={() => loadPreset("twapSell")}>TWAP sell pressure</button>
-                  <button onClick={() => loadPreset("relativeWeakness")}>Relative weakness</button>
-                  <button onClick={() => loadPreset("thinMove")}>Thin liquidity move</button>
+              <Panel title="Alert presets" subtitle="Two practical market-structure rules to start from, then the builder below lets users customize everything.">
+                <div className="featured-presets">
+                  {alertPresetCards.map((preset) => (
+                    <button className="preset-card" key={preset.kind} onClick={() => loadPreset(preset.kind)}>
+                      <span>{preset.tag}</span>
+                      <strong>{preset.title}</strong>
+                      <p>{preset.body}</p>
+                      <ul>
+                        {preset.checks.map((check) => <li key={check}>{check}</li>)}
+                      </ul>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="custom-builder-head">
+                  <span>Custom alert builder</span>
+                  <strong>{draftRule.name}</strong>
                 </div>
 
                 <label className="rule-name">
@@ -2515,6 +2538,8 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
   const priceLineRef = useRef<any>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const thresholdRef = useRef(clause.value);
+  const priceZoomRef = useRef(1);
+  const priceAxisDragRef = useRef<{ y: number; zoom: number } | null>(null);
   const [range, setRange] = useState<AlertChartRange>("all");
   const [status, setStatus] = useState<AlertChartStatus>("loading");
   const [chartReady, setChartReady] = useState(false);
@@ -2575,14 +2600,46 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
         margins: { above: 10, below: 10 },
       }),
     });
+    priceZoomRef.current = nextZoom;
     setPriceZoom(nextZoom);
     window.requestAnimationFrame(updateAlertLinePosition);
   }
 
   function resetPriceScale() {
     candleSeriesRef.current?.applyOptions?.({ autoscaleInfoProvider: undefined });
+    priceZoomRef.current = 1;
     setPriceZoom(1);
     window.requestAnimationFrame(updateAlertLinePosition);
+  }
+
+  function handlePriceAxisWheel(event: React.WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const nextZoom = priceZoomRef.current * (event.deltaY < 0 ? 1.18 : 0.85);
+    applyManualPriceScale(clamp(nextZoom, 0.35, 8));
+  }
+
+  function handlePriceAxisPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    priceAxisDragRef.current = { y: event.clientY, zoom: priceZoomRef.current };
+  }
+
+  function handlePriceAxisPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (!priceAxisDragRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const delta = priceAxisDragRef.current.y - event.clientY;
+    const nextZoom = priceAxisDragRef.current.zoom * Math.exp(delta / 170);
+    applyManualPriceScale(clamp(nextZoom, 0.35, 8));
+  }
+
+  function handlePriceAxisPointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    priceAxisDragRef.current = null;
   }
 
   function handleAlertPointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -2862,6 +2919,15 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
             <span>alert {formatUsd(thresholdValue)}</span>
           </div>
         ) : null}
+        <div
+          className="tv-price-axis-hitbox"
+          onWheelCapture={handlePriceAxisWheel}
+          onPointerDown={handlePriceAxisPointerDown}
+          onPointerMove={handlePriceAxisPointerMove}
+          onPointerUp={handlePriceAxisPointerUp}
+          onPointerCancel={handlePriceAxisPointerUp}
+          aria-label="Price scale"
+        />
       </div>
       <div className="threshold-footer">
         <div>
@@ -2871,6 +2937,10 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
         <div>
           <span>Set alert</span>
           <strong>Drag mint line</strong>
+        </div>
+        <div>
+          <span>Price axis</span>
+          <strong>Wheel/drag right</strong>
         </div>
         <div>
           <span>Range</span>

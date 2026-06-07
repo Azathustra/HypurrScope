@@ -1481,6 +1481,95 @@ td {
   gap: 10px;
 }
 
+.featured-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.preset-card {
+  display: grid;
+  min-width: 0;
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid rgba(124, 247, 199, 0.2);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, rgba(124, 247, 199, 0.08), rgba(255, 255, 255, 0.025)),
+    var(--panel-2);
+  color: var(--text);
+  text-align: left;
+  transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+}
+
+.preset-card:hover {
+  border-color: rgba(124, 247, 199, 0.52);
+  background:
+    linear-gradient(145deg, rgba(124, 247, 199, 0.12), rgba(255, 255, 255, 0.035)),
+    var(--panel-3);
+  transform: translateY(-1px);
+}
+
+.preset-card span {
+  width: max-content;
+  max-width: 100%;
+  padding: 4px 7px;
+  border: 1px solid rgba(124, 247, 199, 0.22);
+  border-radius: 999px;
+  color: var(--mint);
+  font-size: 0.72rem;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.preset-card strong {
+  font-size: 1rem;
+}
+
+.preset-card p,
+.preset-card ul {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.83rem;
+  line-height: 1.42;
+}
+
+.preset-card ul {
+  display: grid;
+  gap: 5px;
+  padding-left: 16px;
+}
+
+.preset-card li {
+  padding-left: 2px;
+}
+
+.custom-builder-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.custom-builder-head span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.custom-builder-head strong {
+  max-width: 58%;
+  overflow: hidden;
+  font-size: 0.95rem;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .preset-row button,
 .saved-rule-actions button,
 .small-danger {
@@ -1957,6 +2046,33 @@ td {
   cursor: grabbing;
 }
 
+.tv-price-axis-hitbox {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 7;
+  width: 72px;
+  height: 100%;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.tv-price-axis-hitbox::after {
+  position: absolute;
+  top: 12px;
+  right: 6px;
+  bottom: 12px;
+  width: 1px;
+  background: rgba(124, 247, 199, 0.16);
+  content: "";
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.tv-price-axis-hitbox:hover::after {
+  opacity: 1;
+}
+
 .tv-alert-drag-line {
   position: absolute;
   right: 0;
@@ -2180,6 +2296,7 @@ td {
   .twap-columns,
   .nft-grid,
   .flow-summary,
+  .featured-presets,
   .metric-grid,
   .hip-market-grid {
     grid-template-columns: 1fr;
@@ -2210,6 +2327,16 @@ td {
 
   .threshold-readout {
     grid-template-columns: 1fr;
+  }
+
+  .custom-builder-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .custom-builder-head strong {
+    max-width: 100%;
+    text-align: left;
   }
 
   .threshold-ranges button {
