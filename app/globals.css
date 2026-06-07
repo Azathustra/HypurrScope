@@ -1081,7 +1081,8 @@ td {
 }
 
 .trade-list,
-.flow-list {
+.flow-list,
+.dat-grid {
   display: grid;
   gap: 10px;
 }
@@ -1110,7 +1111,8 @@ td {
 }
 
 .nft-card,
-.flow-link {
+.flow-link,
+.dat-card {
   color: inherit;
   text-decoration: none;
 }
@@ -1126,6 +1128,7 @@ td {
 
 .nft-card:hover,
 .flow-card:hover,
+.dat-card:hover,
 .external-card:hover {
   border-color: rgba(124, 247, 199, 0.42);
 }
@@ -1232,6 +1235,63 @@ td {
 .flow-card strong {
   color: var(--text);
   font-size: 1.15rem;
+}
+
+.dat-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dat-card {
+  display: grid;
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.dat-card > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dat-card span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+
+.dat-card strong {
+  padding: 4px 7px;
+  border: 1px solid rgba(124, 247, 199, 0.24);
+  border-radius: 999px;
+  color: var(--mint);
+  font-size: 0.76rem;
+}
+
+.dat-card h3,
+.dat-card p {
+  margin: 0;
+}
+
+.dat-card h3 {
+  font-size: 1rem;
+}
+
+.dat-card p,
+.dat-card small,
+.dat-card em {
+  color: var(--muted);
+  line-height: 1.42;
+}
+
+.dat-card em {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 0.8rem;
+  font-style: normal;
 }
 
 .flow-chart-wrap {
@@ -2351,6 +2411,7 @@ td {
   .twap-grid,
   .twap-columns,
   .nft-grid,
+  .dat-grid,
   .flow-summary,
   .featured-presets,
   .metric-grid,

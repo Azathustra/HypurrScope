@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-type View = "overview" | "alerts" | "statistics" | "markets" | "liquidity" | "twaps" | "nfts" | "etf" | "hip3" | "hip4" | "exchange" | "wallet" | "builder";
+type View = "overview" | "statistics" | "twaps" | "etf" | "dats" | "nfts" | "exchange" | "alerts" | "wallet" | "markets" | "liquidity" | "hip3" | "hip4" | "builder";
 type Status = "loading" | "live" | "fallback" | "error";
 
 type Market = {
@@ -142,6 +142,16 @@ type ExchangeRow = {
   status: string;
 };
 
+type DatRow = {
+  name: string;
+  ticker: string;
+  asset: "BTC" | "ETH";
+  strategy: string;
+  signal: string;
+  risk: string;
+  url: string;
+};
+
 type AlertMetricKey =
   | "hypePrice"
   | "hypeChange24h"
@@ -211,38 +221,50 @@ const HYPE_GENESIS_TIME = Date.UTC(2024, 10, 29);
 let lightweightChartsLoader: Promise<any> | null = null;
 
 const NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
-  { id: "overview", label: "Overview", description: "HYPE pulse" },
-  { id: "alerts", label: "Alert Studio", description: "Rule engine" },
-  { id: "statistics", label: "Statistics", description: "Charts lab" },
-  { id: "markets", label: "Markets", description: "Perps radar" },
-  { id: "liquidity", label: "Liquidity", description: "Order book" },
+  { id: "overview", label: "Overview", description: "Dashboard" },
+  { id: "statistics", label: "Statistics", description: "HYPE / BTC / ETH" },
   { id: "twaps", label: "TWAPs", description: "Flow tape" },
-  { id: "nfts", label: "Hypurr NFTs", description: "Floor + sales" },
   { id: "etf", label: "ETF flows", description: "TradFi bridge" },
-  { id: "hip3", label: "HIP-3", description: "Builder perps" },
-  { id: "hip4", label: "HIP-4", description: "Outcomes" },
+  { id: "dats", label: "DATs", description: "Crypto treasuries" },
+  { id: "nfts", label: "Hypurr NFTs", description: "Floor + sales" },
   { id: "exchange", label: "Exchange", description: "Venue share" },
-  { id: "wallet", label: "Wallet", description: "Risk scan" },
-  { id: "builder", label: "Builder", description: "Proof layer" },
+  { id: "alerts", label: "Alerts", description: "Rule engine" },
+  { id: "wallet", label: "Wallet scanner", description: "Risk scan" },
 ];
 
 const ALERT_METRICS: MetricMeta[] = [
-  { key: "hypePrice", label: "HYPE price", unit: "usd", description: "Current HYPE mark price." },
-  { key: "hypeChange24h", label: "HYPE 24h change", unit: "pct", description: "Daily price change." },
-  { key: "hypeFunding", label: "HYPE funding", unit: "pct", description: "Funding rate converted to percent." },
-  { key: "hypeOpenInterest", label: "HYPE open interest", unit: "usd", description: "HYPE perp OI in dollars." },
-  { key: "hypeVolume", label: "HYPE volume", unit: "usd", description: "HYPE 24h perp volume." },
+  { key: "hypePrice", label: "Asset price", unit: "usd", description: "Current selected asset mark price." },
+  { key: "hypeChange24h", label: "Asset 24h change", unit: "pct", description: "Daily price change for the selected asset." },
+  { key: "hypeFunding", label: "Asset funding", unit: "pct", description: "Funding rate converted to percent." },
+  { key: "hypeOpenInterest", label: "Asset open interest", unit: "usd", description: "Selected asset perp OI in dollars." },
+  { key: "hypeVolume", label: "Asset volume", unit: "usd", description: "Selected asset 24h perp volume." },
   { key: "twapNet", label: "TWAP net pressure", unit: "usd", description: "Buy TWAP notional minus sell TWAP notional." },
   { key: "twapSell", label: "TWAP sell pressure", unit: "usd", description: "Detected sell-side TWAP notional." },
   { key: "bookSpread", label: "Book spread", unit: "pct", description: "Visible best bid/ask spread." },
   { key: "bookImbalance", label: "Book imbalance", unit: "pct", description: "Bid depth minus ask depth as percent." },
-  { key: "hypeVsBtc30d", label: "HYPE vs BTC 30d", unit: "pct", description: "HYPE return minus BTC return." },
+  { key: "hypeVsBtc30d", label: "Asset vs benchmark 30d", unit: "pct", description: "Selected asset return minus benchmark return." },
   { key: "etfNetFlow", label: "ETF net flow", unit: "usd", description: "Latest ETF/ETP flow proxy." },
   { key: "nftSales24h", label: "Hypurr NFT sales", unit: "number", description: "Reported collection sales in 24h." },
 ];
 
-const DEFAULT_COINS = ["HYPE", "BTC", "ETH", "SOL"];
+const DEFAULT_COINS = ["HYPE", "BTC", "ETH"];
 const ALERT_CHART_RANGES: AlertChartRange[] = ["5m", "1h", "1d", "2d", "7d", "30d", "90d", "1y", "all"];
+
+function initialView(): View {
+  if (typeof window === "undefined") return "overview";
+  const saved = window.localStorage.getItem("hypurrscope-active-view");
+  return NAV_ITEMS.some((item) => item.id === saved) ? (saved as View) : "overview";
+}
+
+function initialCoin() {
+  if (typeof window === "undefined") return "HYPE";
+  const saved = window.localStorage.getItem("hypurrscope-active-asset");
+  return DEFAULT_COINS.includes(saved || "") ? saved || "HYPE" : "HYPE";
+}
+
+function benchmarkForAsset(asset: string) {
+  return asset === "BTC" ? "ETH" : "BTC";
+}
 
 const EMPTY_NFT_STATS: NftStats = {
   floor: "--",
@@ -283,6 +305,54 @@ const FALLBACK_FLOWS: FlowRow[] = [
     venue: "Germany",
     status: "Waiting for quote",
     dollarVolume: "--",
+  },
+];
+
+const DAT_ROWS: DatRow[] = [
+  {
+    name: "Strategy",
+    ticker: "MSTR",
+    asset: "BTC",
+    strategy: "Largest public BTC treasury proxy.",
+    signal: "Watch BTC per share, mNAV, issuance, and leverage.",
+    risk: "Premium compression and debt/refinancing sensitivity.",
+    url: "https://www.strategy.com/",
+  },
+  {
+    name: "Metaplanet",
+    ticker: "3350.T",
+    asset: "BTC",
+    strategy: "Japan-listed Bitcoin treasury accumulation vehicle.",
+    signal: "Watch purchase cadence, BTC yield, and yen financing.",
+    risk: "Equity premium can move faster than BTC holdings.",
+    url: "https://metaplanet.jp/",
+  },
+  {
+    name: "BitMine Immersion",
+    ticker: "BMNR",
+    asset: "ETH",
+    strategy: "Ethereum treasury strategy with staking/yield angle.",
+    signal: "Watch ETH holdings, staking yield, and ETH beta.",
+    risk: "ETH drawdowns plus operating-company execution risk.",
+    url: "https://bitminetech.io/",
+  },
+  {
+    name: "SharpLink",
+    ticker: "SBET",
+    asset: "ETH",
+    strategy: "Public-market ETH treasury and onchain yield narrative.",
+    signal: "Watch ETH reserve growth, validator yield, and dilution.",
+    risk: "ETH treasury premium depends on sustained market demand.",
+    url: "https://www.sharplink.com/",
+  },
+  {
+    name: "MARA Holdings",
+    ticker: "MARA",
+    asset: "BTC",
+    strategy: "Bitcoin miner with large BTC balance sheet exposure.",
+    signal: "Watch mined BTC, treasury retention, and energy margins.",
+    risk: "Mining economics add operational risk to treasury exposure.",
+    url: "https://www.mara.com/",
   },
 ];
 
@@ -1165,9 +1235,9 @@ function DepthBars({ book }: { book: Book | null }) {
 }
 
 export default function Page() {
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>(initialView);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [coin, setCoin] = useState("HYPE");
+  const [coin, setCoin] = useState(initialCoin);
   const [markets, setMarkets] = useState<Market[]>(fallbackMarkets);
   const [candles, setCandles] = useState<Candle[]>(makeFallbackCandles("HYPE"));
   const [hypeDaily, setHypeDaily] = useState<Candle[]>(makeFallbackDailyCandles("HYPE"));
@@ -1215,6 +1285,14 @@ export default function Page() {
   }, [coin]);
 
   useEffect(() => {
+    window.localStorage.setItem("hypurrscope-active-view", view);
+  }, [view]);
+
+  useEffect(() => {
+    window.localStorage.setItem("hypurrscope-active-asset", coin);
+  }, [coin]);
+
+  useEffect(() => {
     try {
       const saved = window.localStorage.getItem("hypurrscope-alert-rules");
       if (saved) setAlertRules(JSON.parse(saved));
@@ -1227,7 +1305,7 @@ export default function Page() {
     loadStatistics();
     const timer = window.setInterval(loadStatistics, 120_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [coin]);
 
   useEffect(() => {
     try {
@@ -1291,18 +1369,19 @@ export default function Page() {
       setStatsStatus((current) => (current === "live" ? "live" : "loading"));
       const now = Date.now();
       const startTime = now - 32 * 24 * 60 * 60 * 1000;
-      const [hypePayload, btcPayload] = await Promise.all([
-        postInfo({ type: "candleSnapshot", req: { coin: "HYPE", interval: "1d", startTime, endTime: now } }),
-        postInfo({ type: "candleSnapshot", req: { coin: "BTC", interval: "1d", startTime, endTime: now } }),
+      const benchmark = benchmarkForAsset(coin);
+      const [assetPayload, benchmarkPayload] = await Promise.all([
+        postInfo({ type: "candleSnapshot", req: { coin, interval: "1d", startTime, endTime: now } }),
+        postInfo({ type: "candleSnapshot", req: { coin: benchmark, interval: "1d", startTime, endTime: now } }),
       ]);
-      const nextHype = normalizeCandles(hypePayload);
-      const nextBtc = normalizeCandles(btcPayload);
-      if (nextHype.length) setHypeDaily(nextHype.slice(-30));
-      if (nextBtc.length) setBtcDaily(nextBtc.slice(-30));
+      const nextAsset = normalizeCandles(assetPayload);
+      const nextBenchmark = normalizeCandles(benchmarkPayload);
+      if (nextAsset.length) setHypeDaily(nextAsset.slice(-30));
+      if (nextBenchmark.length) setBtcDaily(nextBenchmark.slice(-30));
       setStatsStatus("live");
     } catch {
-      setHypeDaily(makeFallbackDailyCandles("HYPE"));
-      setBtcDaily(makeFallbackDailyCandles("BTC"));
+      setHypeDaily(makeFallbackDailyCandles(coin));
+      setBtcDaily(makeFallbackDailyCandles(benchmarkForAsset(coin)));
       setStatsStatus("fallback");
     }
   }
@@ -1417,17 +1496,18 @@ export default function Page() {
   const largestEtfPrint = Math.max(0, ...flows.map((row: FlowRow) => Math.abs(parseMoneyLabel(row.dollarVolume))));
   const exchangeRows = useMemo(() => buildExchangeRows(totalVolume), [totalVolume]);
   const revenueSeries = useMemo(() => buildRevenueSeries(hypeDaily, totalVolume), [hypeDaily, totalVolume]);
-  const hypeReturn30d = hypeDaily.length > 1 ? ((hypeDaily[hypeDaily.length - 1].close - hypeDaily[0].close) / hypeDaily[0].close) * 100 : 0;
-  const btcReturn30d = btcDaily.length > 1 ? ((btcDaily[btcDaily.length - 1].close - btcDaily[0].close) / btcDaily[0].close) * 100 : 0;
-  const relativeStrength = hypeReturn30d - btcReturn30d;
+  const benchmarkCoin = benchmarkForAsset(coin);
+  const assetReturn30d = hypeDaily.length > 1 ? ((hypeDaily[hypeDaily.length - 1].close - hypeDaily[0].close) / hypeDaily[0].close) * 100 : 0;
+  const benchmarkReturn30d = btcDaily.length > 1 ? ((btcDaily[btcDaily.length - 1].close - btcDaily[0].close) / btcDaily[0].close) * 100 : 0;
+  const relativeStrength = assetReturn30d - benchmarkReturn30d;
   const estimatedRevenue30d = revenueSeries.reduce((sum: number, item: Candle) => sum + item.close, 0);
   const avgDailyRevenue = revenueSeries.length ? estimatedRevenue30d / revenueSeries.length : 0;
   const alertSnapshot: MetricSnapshot = {
-    hypePrice: hype?.price || selected?.price || 0,
-    hypeChange24h: hype?.changePct || 0,
-    hypeFunding: (hype?.funding || 0) * 100,
-    hypeOpenInterest: hype?.oiUsd || 0,
-    hypeVolume: hype?.volumeUsd || 0,
+    hypePrice: selected?.price || 0,
+    hypeChange24h: selected?.changePct || 0,
+    hypeFunding: (selected?.funding || 0) * 100,
+    hypeOpenInterest: selected?.oiUsd || 0,
+    hypeVolume: selected?.volumeUsd || 0,
     twapNet,
     twapSell,
     bookSpread: book?.spreadPct || 0,
@@ -1442,7 +1522,7 @@ export default function Page() {
     clamp(Math.abs(weightedFunding) * 60_000 + Math.abs(selected?.changePct || 0) * 2 + Math.abs(book?.imbalance || 0) * 0.2, 0, 99),
   );
   const regime = regimeScore > 65 ? "Volatile" : regimeScore > 35 ? "Active" : "Balanced";
-  const marketOptions = Array.from(new Set(DEFAULT_COINS.concat(markets.slice(0, 30).map((market: Market) => market.symbol))));
+  const marketOptions = DEFAULT_COINS;
 
   const sortedMarkets = useMemo(() => {
     const query = search.trim().toUpperCase();
@@ -1533,14 +1613,14 @@ export default function Page() {
       title: "Long squeeze early warning",
       tag: "Leverage risk",
       body: "Positive funding, heavy OI, and sell TWAP pressure line up before a crowded long unwind.",
-      checks: ["Funding > 0.04%", "HYPE OI > $800M", "TWAP net < -$1.5M"],
+      checks: [`${coin} funding > 0.04%`, `${coin} OI > $800M`, "TWAP net < -$1.5M"],
     },
     {
       kind: "twapWeakness",
       title: "TWAP sell + relative weakness",
       tag: "Flow reversal",
-      body: "Large sell TWAPs matter more when HYPE is already weak versus BTC and volume is active.",
-      checks: ["Sell TWAP > $2M", "HYPE 24h < -1%", "HYPE vs BTC 30d < -2%"],
+      body: `Large sell TWAPs matter more when ${coin} is already weak versus ${benchmarkCoin} and volume is active.`,
+      checks: ["Sell TWAP > $2M", `${coin} 24h < -1%`, `${coin} vs ${benchmarkCoin} 30d < -2%`],
     },
   ];
 
@@ -1627,7 +1707,7 @@ export default function Page() {
                 <p className="eyebrow">No-code Hyperliquid rule engine</p>
                 <h1>Build market-structure alerts from Hyperliquid data.</h1>
                 <p>
-                  Combine funding, OI, TWAP pressure, liquidity, HYPE vs BTC, ETF flow, and NFT demand into
+                  Combine funding, OI, TWAP pressure, liquidity, relative strength, ETF flow, and NFT demand into
                   custom rules. HypurrScope is becoming an alert studio, not another passive dashboard.
                 </p>
                 <div className="actions">
@@ -1785,6 +1865,7 @@ export default function Page() {
                   <ThresholdPicker
                     clause={selectedDraftClause}
                     snapshot={alertSnapshot}
+                    asset={coin}
                     candles={candles}
                     hypeDaily={hypeDaily}
                     btcDaily={btcDaily}
@@ -1834,18 +1915,18 @@ export default function Page() {
 
         {view === "statistics" && (
           <>
-            <ViewHeader eyebrow="Analytics lab" title="HYPE statistics dashboard" />
+            <ViewHeader eyebrow="Analytics lab" title={`${coin} statistics dashboard`} />
             <section className="kpi-grid">
-              <Kpi label="HYPE 30d" value={formatPct(hypeReturn30d, 2)} detail="Daily candle return" tone={hypeReturn30d >= 0 ? "positive" : "negative"} />
-              <Kpi label="BTC 30d" value={formatPct(btcReturn30d, 2)} detail="Benchmark return" tone={btcReturn30d >= 0 ? "positive" : "negative"} />
-              <Kpi label="Relative strength" value={formatPct(relativeStrength, 2)} detail="HYPE return minus BTC return" tone={relativeStrength >= 0 ? "positive" : "negative"} />
+              <Kpi label={`${coin} 30d`} value={formatPct(assetReturn30d, 2)} detail="Daily candle return" tone={assetReturn30d >= 0 ? "positive" : "negative"} />
+              <Kpi label={`${benchmarkCoin} 30d`} value={formatPct(benchmarkReturn30d, 2)} detail="Benchmark return" tone={benchmarkReturn30d >= 0 ? "positive" : "negative"} />
+              <Kpi label="Relative strength" value={formatPct(relativeStrength, 2)} detail={`${coin} return minus ${benchmarkCoin} return`} tone={relativeStrength >= 0 ? "positive" : "negative"} />
               <Kpi label="Revenue proxy 30d" value={formatUsd(estimatedRevenue30d)} detail={`${sourceLabel(statsStatus)} candles, fee-pressure model`} />
             </section>
             <section className="stats-grid">
-              <Panel title="HYPE vs BTC normalized performance" subtitle="Both assets start at 100. This makes relative strength readable immediately.">
-                <DualLineChart primary={hypeDaily} secondary={btcDaily} primaryLabel="HYPE" secondaryLabel="BTC" />
+              <Panel title={`${coin} vs ${benchmarkCoin} normalized performance`} subtitle="Both assets start at 100. This makes relative strength readable immediately.">
+                <DualLineChart primary={hypeDaily} secondary={btcDaily} primaryLabel={coin} secondaryLabel={benchmarkCoin} />
               </Panel>
-              <Panel title="HYPE revenue / fee-pressure proxy" subtitle="Estimated from Hyperliquid volume and a transparent fee-rate model.">
+              <Panel title="Hyperliquid revenue / fee-pressure proxy" subtitle="Estimated from Hyperliquid volume and a transparent fee-rate model.">
                 <RevenueChart series={revenueSeries} />
               </Panel>
               <Panel title="Volume and OI structure" subtitle="A market-quality read inspired by exchange screener dashboards.">
@@ -1853,7 +1934,7 @@ export default function Page() {
               </Panel>
               <Panel title="Statistics read" subtitle="A compact interpretation layer so the page feels like a product, not a raw chart dump.">
                 <div className="signals">
-                  <Signal label="Relative trend" value={formatPct(relativeStrength, 2)} body={relativeStrength >= 0 ? "HYPE has outperformed BTC over the sampled daily window." : "HYPE is underperforming BTC over the sampled daily window."} tone={relativeStrength >= 0 ? "good" : "watch"} />
+                  <Signal label="Relative trend" value={formatPct(relativeStrength, 2)} body={relativeStrength >= 0 ? `${coin} has outperformed ${benchmarkCoin} over the sampled daily window.` : `${coin} is underperforming ${benchmarkCoin} over the sampled daily window.`} tone={relativeStrength >= 0 ? "good" : "watch"} />
                   <Signal label="Revenue run-rate" value={formatUsd(avgDailyRevenue)} body="This is a fee-pressure proxy, not audited protocol revenue. It is useful as a directional dashboard metric." tone="good" />
                   <Signal label="Market depth context" value={formatUsd(totalOi)} body="OI and volume structure help explain whether moves are spot-like, perp-driven, or liquidity-driven." tone="watch" />
                   <Signal label="Next upgrade" value="Historical API" body="A backend archive would turn these charts from rolling snapshots into a full time-series terminal." tone="good" />
@@ -1981,6 +2062,33 @@ export default function Page() {
                   <Stat label="Latest date" value={flowMeta.latestDate || "--"} />
                   <Stat label="Largest print" value={formatUsd(largestEtfPrint)} />
                   <Stat label="Endpoint state" value={sourceLabel(flowStatus)} />
+                </div>
+              </Panel>
+            </section>
+          </>
+        )}
+
+        {view === "dats" && (
+          <>
+            <ViewHeader eyebrow="Digital asset treasuries" title="DAT accumulation monitor" />
+            <section className="kpi-grid">
+              <Kpi label="Tracked DATs" value={String(DAT_ROWS.length)} detail="Public companies with crypto treasury narratives" />
+              <Kpi label="BTC vehicles" value={String(DAT_ROWS.filter((row) => row.asset === "BTC").length)} detail="Bitcoin treasury exposure" />
+              <Kpi label="ETH vehicles" value={String(DAT_ROWS.filter((row) => row.asset === "ETH").length)} detail="Ethereum treasury exposure" />
+              <Kpi label="Use case" value="mNAV watch" detail="Compare market cap premium versus crypto holdings" />
+            </section>
+            <section className="two-col">
+              <Panel title="Public DAT watchlist" subtitle="Companies accumulating crypto as a treasury strategy. Use this as a research map, not live audited holdings.">
+                <div className="dat-grid">
+                  {DAT_ROWS.map((row) => <DatCard row={row} key={`${row.ticker}-${row.asset}`} />)}
+                </div>
+              </Panel>
+              <Panel title="How to read DATs" subtitle="The useful signal is not only holdings; it is premium, issuance, and accumulation cadence.">
+                <div className="signals">
+                  <Signal label="mNAV" value="Premium/discount" body="A DAT can move far away from the value of its crypto holdings. That premium is the main market signal." tone="watch" />
+                  <Signal label="Accumulation" value="Cadence" body="Repeated purchases matter more when they are funded without destroying shareholder value." tone="good" />
+                  <Signal label="Asset beta" value={coin} body="Use the top-right selector to compare HYPE/BTC/ETH market conditions beside the DAT narrative." tone="good" />
+                  <Signal label="Risk" value="Dilution" body="Debt, convertibles, ATM issuance, and equity premium compression can dominate the crypto beta." tone="risk" />
                 </div>
               </Panel>
             </section>
@@ -2533,6 +2641,21 @@ function FlowCard({ row }: { row: FlowRow }) {
   return row.url ? <a className="flow-link" href={row.url} target="_blank" rel="noreferrer">{card}</a> : card;
 }
 
+function DatCard({ row }: { row: DatRow }) {
+  return (
+    <a className="dat-card" href={row.url} target="_blank" rel="noreferrer">
+      <div>
+        <span>{row.ticker}</span>
+        <strong>{row.asset}</strong>
+      </div>
+      <h3>{row.name}</h3>
+      <p>{row.strategy}</p>
+      <small>{row.signal}</small>
+      <em>{row.risk}</em>
+    </a>
+  );
+}
+
 function Stat({ label, value }: { label: string; value: string }) {
   return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
 }
@@ -2540,6 +2663,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 type ThresholdPickerProps = {
   clause: AlertClause;
   snapshot: MetricSnapshot;
+  asset: string;
   candles: Candle[];
   hypeDaily: Candle[];
   btcDaily: Candle[];
@@ -2554,7 +2678,7 @@ function ThresholdPicker(props: ThresholdPickerProps) {
   return <GenericThresholdPicker {...props} />;
 }
 
-function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProps) {
+function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPickerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartApiRef = useRef<any>(null);
   const candleSeriesRef = useRef<any>(null);
@@ -2563,8 +2687,9 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const thresholdRef = useRef(clause.value);
   const priceZoomRef = useRef(1);
+  const priceRangeRef = useRef<{ minValue: number; maxValue: number } | null>(null);
   const priceAxisDragRef = useRef<{ y: number; zoom: number } | null>(null);
-  const chartPanRef = useRef<{ x: number; from: number; to: number; width: number } | null>(null);
+  const chartPanRef = useRef<{ x: number; y: number; from: number; to: number; width: number; height: number; minValue: number; maxValue: number } | null>(null);
   const chartPanMoveRef = useRef<((event: MouseEvent) => void) | null>(null);
   const chartPanUpRef = useRef<((event: MouseEvent) => void) | null>(null);
   const [range, setRange] = useState<AlertChartRange>("all");
@@ -2608,33 +2733,63 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
     return visible.length ? visible : candles;
   }
 
-  function applyManualPriceScale(nextZoom: number) {
+  function basePriceRange() {
     const series = candleSeriesRef.current;
-    if (!series) return;
+    const container = containerRef.current;
+    if (series && container) {
+      const top = series.coordinateToPrice(0);
+      const bottom = series.coordinateToPrice(container.clientHeight);
+      if (typeof top === "number" && typeof bottom === "number" && Number.isFinite(top) && Number.isFinite(bottom)) {
+        const minValue = Math.min(top, bottom, thresholdValue);
+        const maxValue = Math.max(top, bottom, thresholdValue);
+        if (maxValue > minValue) return { minValue, maxValue };
+      }
+    }
+    if (priceRangeRef.current) return priceRangeRef.current;
     const rows = visibleCandlesForScale();
-    if (!rows.length) return;
+    if (!rows.length) {
+      const center = currentPrice > 0 ? currentPrice : 1;
+      const span = Math.max(center * 0.12, 1);
+      return { minValue: Math.max(0.0001, center - span / 2), maxValue: center + span / 2 };
+    }
     const lows = rows.map((candle: Candle) => candle.low ?? candle.close);
     const highs = rows.map((candle: Candle) => candle.high ?? candle.close);
-    const baseMin = Math.min(...lows, thresholdValue);
-    const baseMax = Math.max(...highs, thresholdValue);
-    const center = Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : (baseMin + baseMax) / 2;
-    const baseSpan = Math.max(baseMax - baseMin, center * 0.04, 1);
-    const span = baseSpan / nextZoom;
-    const minValue = Math.max(0.0001, center - span / 2);
-    const maxValue = center + span / 2;
+    const minValue = Math.min(...lows, thresholdValue);
+    const maxValue = Math.max(...highs, thresholdValue);
+    const fallbackSpan = Math.max(maxValue - minValue, currentPrice * 0.08, 1);
+    return maxValue > minValue ? { minValue, maxValue } : { minValue: currentPrice - fallbackSpan / 2, maxValue: currentPrice + fallbackSpan / 2 };
+  }
+
+  function applyPriceRange(minValue: number, maxValue: number) {
+    const series = candleSeriesRef.current;
+    if (!series || !Number.isFinite(minValue) || !Number.isFinite(maxValue)) return;
+    const safeMin = Math.max(0.0001, Math.min(minValue, maxValue - 0.0001));
+    const safeMax = Math.max(safeMin + 0.0001, maxValue);
+    priceRangeRef.current = { minValue: safeMin, maxValue: safeMax };
     series.applyOptions({
       autoscaleInfoProvider: () => ({
-        priceRange: { minValue, maxValue },
+        priceRange: { minValue: safeMin, maxValue: safeMax },
         margins: { above: 10, below: 10 },
       }),
     });
+    window.requestAnimationFrame(updateAlertLinePosition);
+  }
+
+  function applyManualPriceScale(nextZoom: number) {
+    const baseRange = basePriceRange();
+    const center = (baseRange.minValue + baseRange.maxValue) / 2;
+    const baseSpan = Math.max(baseRange.maxValue - baseRange.minValue, center * 0.04, 1);
+    const span = baseSpan / nextZoom;
+    const minValue = Math.max(0.0001, center - span / 2);
+    const maxValue = center + span / 2;
+    applyPriceRange(minValue, maxValue);
     priceZoomRef.current = nextZoom;
     setPriceZoom(nextZoom);
-    window.requestAnimationFrame(updateAlertLinePosition);
   }
 
   function resetPriceScale() {
     candleSeriesRef.current?.applyOptions?.({ autoscaleInfoProvider: undefined });
+    priceRangeRef.current = null;
     priceZoomRef.current = 1;
     setPriceZoom(1);
     window.requestAnimationFrame(updateAlertLinePosition);
@@ -2691,24 +2846,38 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
     window.requestAnimationFrame(updateAlertLinePosition);
   }
 
+  function moveVisiblePriceScale(clientY: number) {
+    const pan = chartPanRef.current;
+    if (!pan) return;
+    const span = Math.max(0.0001, pan.maxValue - pan.minValue);
+    const priceShift = ((clientY - pan.y) / Math.max(1, pan.height)) * span;
+    applyPriceRange(pan.minValue + priceShift, pan.maxValue + priceShift);
+  }
+
   function handleChartPanMouseDown(event: React.MouseEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     const logicalRange = chartApiRef.current?.timeScale?.().getVisibleLogicalRange?.();
     if (!logicalRange || !Number.isFinite(logicalRange.from) || !Number.isFinite(logicalRange.to)) return;
+    const range = basePriceRange();
     event.preventDefault();
     event.stopPropagation();
     detachChartPanListeners();
     chartPanRef.current = {
       x: event.clientX,
+      y: event.clientY,
       from: Number(logicalRange.from),
       to: Number(logicalRange.to),
       width: Math.max(1, event.currentTarget.clientWidth),
+      height: Math.max(1, event.currentTarget.clientHeight),
+      minValue: range.minValue,
+      maxValue: range.maxValue,
     };
     setChartPanning(true);
 
     const handleMove = (moveEvent: MouseEvent) => {
       moveEvent.preventDefault();
       moveVisibleChart(moveEvent.clientX);
+      moveVisiblePriceScale(moveEvent.clientY);
     };
     const handleUp = (upEvent: MouseEvent) => {
       upEvent.preventDefault();
@@ -2898,14 +3067,15 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
     let cancelled = false;
     async function loadCandles() {
       try {
-        setStatus("loading");
-        setHover(null);
-        setCandles([]);
-        setPriceZoom(1);
-        candleSeriesRef.current?.applyOptions?.({ autoscaleInfoProvider: undefined });
+      setStatus("loading");
+      setHover(null);
+      setCandles([]);
+      setPriceZoom(1);
+      priceRangeRef.current = null;
+      candleSeriesRef.current?.applyOptions?.({ autoscaleInfoProvider: undefined });
         candleSeriesRef.current?.setData?.([]);
         let nextCandles: Candle[] = [];
-        if (usesLongHypeHistory(range)) {
+        if (asset === "HYPE" && usesLongHypeHistory(range)) {
           const response = await fetch(`/api/hype/history?range=${range}`);
           if (response.ok) nextCandles = normalizeCandles(await response.json());
         }
@@ -2915,7 +3085,7 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
           const payload = await postInfo({
             type: "candleSnapshot",
             req: {
-              coin: "HYPE",
+              coin: asset,
               interval: alertCandleInterval(range),
               startTime: range === "all" ? HYPE_GENESIS_TIME : now - rangeMs(range),
               endTime: now,
@@ -2938,7 +3108,7 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
     return () => {
       cancelled = true;
     };
-  }, [range]);
+  }, [range, asset]);
 
   useEffect(() => {
     if (!chartReady || !candleSeriesRef.current || !chartApiRef.current) return;
@@ -2989,13 +3159,13 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
       <div className="threshold-head">
         <div>
           <span>TradingView-grade price chart</span>
-          <strong>HYPE price</strong>
+          <strong>{asset} price</strong>
         </div>
         <em className={hit ? "triggered" : ""}>{hit ? "condition met" : "waiting"}</em>
       </div>
       <div className="threshold-readout">
         <div>
-          <span>{status === "live" ? "Live HYPE candles" : status === "loading" ? "Loading HYPE candles" : "Chart fallback"}</span>
+          <span>{status === "live" ? `Live ${asset} candles` : status === "loading" ? `Loading ${asset} candles` : "Chart fallback"}</span>
           <strong>{hover ? formatUsd(hover.price) : formatUsd(currentPrice)}</strong>
         </div>
         <div>
@@ -3071,6 +3241,7 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
 function GenericThresholdPicker({
   clause,
   snapshot,
+  asset,
   candles,
   hypeDaily,
   btcDaily,
@@ -3162,7 +3333,7 @@ function GenericThresholdPicker({
         const payload = await postInfo({
           type: "candleSnapshot",
           req: {
-            coin: "HYPE",
+            coin: asset,
             interval: alertCandleInterval(range),
             startTime: now - rangeMs(range),
             endTime: now,
@@ -3186,7 +3357,7 @@ function GenericThresholdPicker({
     return () => {
       cancelled = true;
     };
-  }, [clause.metric, range]);
+  }, [clause.metric, range, asset]);
 
   useEffect(() => {
     setPanOffset(0);
@@ -3306,7 +3477,7 @@ function GenericThresholdPicker({
 
       <div className="threshold-readout">
         <div>
-          <span>{needsLiveCandles ? (chartStatus === "live" ? "Live HYPE candles" : chartStatus === "loading" ? "Loading HYPE candles" : "Live candles unavailable") : "Derived metric"}</span>
+          <span>{needsLiveCandles ? (chartStatus === "live" ? `Live ${asset} candles` : chartStatus === "loading" ? `Loading ${asset} candles` : "Live candles unavailable") : "Derived metric"}</span>
           <strong>{activeHover ? formatMetricValue(activeHover.point.value, meta.unit) : formatMetricValue(currentValue, meta.unit)}</strong>
         </div>
         <div>
