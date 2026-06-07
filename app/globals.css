@@ -1918,16 +1918,6 @@ td {
   background: #090d0b;
 }
 
-.tv-price-wheel-zone {
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 7;
-  width: 62px;
-  height: 100%;
-  cursor: ns-resize;
-}
-
 .tv-alert-drag-line {
   position: absolute;
   right: 0;

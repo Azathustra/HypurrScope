@@ -703,6 +703,10 @@ function alertCandleInterval(range: AlertChartRange) {
   return "1d";
 }
 
+function usesLongHypeHistory(range: AlertChartRange) {
+  return range === "30d" || range === "90d" || range === "1y" || range === "all";
+}
+
 function isLiveCandleMetric(key: AlertMetricKey) {
   return key === "hypePrice" || key === "hypeChange24h" || key === "hypeVolume";
 }
@@ -2581,12 +2585,6 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
     window.requestAnimationFrame(updateAlertLinePosition);
   }
 
-  function handlePriceWheel(event: React.WheelEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const nextZoom = clamp(priceZoom * (event.deltaY < 0 ? 1.18 : 0.85), 0.35, 8);
-    applyManualPriceScale(nextZoom);
-  }
-
   function handleAlertPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -2613,6 +2611,8 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
 
   useEffect(() => {
     let disposed = false;
+    let wheelTarget: HTMLDivElement | null = null;
+    let wheelBlocker: ((event: WheelEvent) => void) | null = null;
 
     async function setupChart() {
       try {
@@ -2663,6 +2663,12 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
             pinch: true,
           },
         });
+        wheelTarget = containerRef.current;
+        wheelBlocker = (event: WheelEvent) => {
+          event.preventDefault();
+          event.stopPropagation();
+        };
+        wheelTarget.addEventListener("wheel", wheelBlocker, { passive: false });
 
         const candleSeries = chart.addCandlestickSeries({
           upColor: "#7cf7c7",
@@ -2711,6 +2717,9 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
     setupChart();
     return () => {
       disposed = true;
+      if (wheelTarget && wheelBlocker) {
+        wheelTarget.removeEventListener("wheel", wheelBlocker);
+      }
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
       chartApiRef.current?.remove?.();
@@ -2731,18 +2740,27 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
         setPriceZoom(1);
         candleSeriesRef.current?.applyOptions?.({ autoscaleInfoProvider: undefined });
         candleSeriesRef.current?.setData?.([]);
-        const now = Date.now();
-        const payload = await postInfo({
-          type: "candleSnapshot",
-          req: {
-            coin: "HYPE",
-            interval: alertCandleInterval(range),
-            startTime: range === "all" ? HYPE_GENESIS_TIME : now - rangeMs(range),
-            endTime: now,
-          },
-        });
+        let nextCandles: Candle[] = [];
+        if (usesLongHypeHistory(range)) {
+          const response = await fetch(`/api/hype/history?range=${range}`);
+          if (response.ok) nextCandles = normalizeCandles(await response.json());
+        }
+
+        if (!nextCandles.length) {
+          const now = Date.now();
+          const payload = await postInfo({
+            type: "candleSnapshot",
+            req: {
+              coin: "HYPE",
+              interval: alertCandleInterval(range),
+              startTime: range === "all" ? HYPE_GENESIS_TIME : now - rangeMs(range),
+              endTime: now,
+            },
+          });
+          nextCandles = normalizeCandles(payload);
+        }
+
         if (cancelled) return;
-        const nextCandles = normalizeCandles(payload);
         setCandles(nextCandles);
         setStatus(nextCandles.length ? "live" : "fallback");
       } catch {
@@ -2832,7 +2850,6 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
         <button onClick={resetPriceScale}>Auto</button>
       </div>
       <div className="tv-chart-wrap" ref={containerRef}>
-        <div className="tv-price-wheel-zone" onWheel={handlePriceWheel} title="Mouse wheel here changes price scale" />
         {lineY !== null ? (
           <div
             className="tv-alert-drag-line"
