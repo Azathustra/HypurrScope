@@ -205,6 +205,8 @@ type AlertChartStatus = "loading" | "live" | "fallback";
 const HYPE_SUPPLY = 1_000_000_000;
 const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
 const HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info";
+const LIGHTWEIGHT_CHARTS_URL = "https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js";
+let lightweightChartsLoader: Promise<any> | null = null;
 
 const NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
   { id: "overview", label: "Overview", description: "HYPE pulse" },
@@ -590,6 +592,35 @@ function roundMetricThreshold(value: number, unit: MetricMeta["unit"], span: num
   return Number(rounded.toFixed(step < 1 ? 1 : 0));
 }
 
+function loadLightweightCharts() {
+  if (typeof window === "undefined") return Promise.reject(new Error("Browser chart unavailable"));
+  const existing = (window as any).LightweightCharts;
+  if (existing) return Promise.resolve(existing);
+  if (lightweightChartsLoader) return lightweightChartsLoader;
+
+  lightweightChartsLoader = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = LIGHTWEIGHT_CHARTS_URL;
+    script.async = true;
+    script.onload = () => {
+      const loaded = (window as any).LightweightCharts;
+      if (loaded) resolve(loaded);
+      else reject(new Error("Lightweight Charts did not initialize"));
+    };
+    script.onerror = () => reject(new Error("Unable to load Lightweight Charts"));
+    document.head.appendChild(script);
+  });
+  return lightweightChartsLoader;
+}
+
+function tradingViewTimeLabel(value: unknown) {
+  if (typeof value === "number") return dailyLabel(value * 1000);
+  if (typeof value === "string") return value;
+  const item = value as { year?: number; month?: number; day?: number };
+  if (item?.year && item?.month && item?.day) return `${item.month}/${item.day}`;
+  return "Pointer";
+}
+
 function roundAlertThreshold(value: number, metric: AlertMetricKey, unit: MetricMeta["unit"], span: number) {
   const step = metricStep(unit, span, metric);
   const rounded = Math.round(value / step) * step;
@@ -658,9 +689,9 @@ function timeAxisLabel(time: number, range: AlertChartRange) {
 function alertCandleInterval(range: AlertChartRange) {
   if (range === "5m" || range === "1h") return "1m";
   if (range === "1d") return "15m";
-  if (range === "2d") return "1h";
-  if (range === "7d") return "4h";
-  return "1d";
+  if (range === "2d") return "15m";
+  if (range === "7d") return "1h";
+  return "4h";
 }
 
 function isLiveCandleMetric(key: AlertMetricKey) {
@@ -859,7 +890,7 @@ function normalizeCandles(payload: unknown): Candle[] {
     })
     .filter((row: Candle) => row.time > 0 && row.close > 0)
     .sort((a: Candle, b: Candle) => a.time - b.time)
-    .slice(-96);
+    .slice(-500);
   return candles;
 }
 
@@ -2446,15 +2477,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
 }
 
-function ThresholdPicker({
-  clause,
-  snapshot,
-  candles,
-  hypeDaily,
-  btcDaily,
-  flowDays,
-  onChange,
-}: {
+type ThresholdPickerProps = {
   clause: AlertClause;
   snapshot: MetricSnapshot;
   candles: Candle[];
@@ -2462,7 +2485,321 @@ function ThresholdPicker({
   btcDaily: Candle[];
   flowDays: FlowDay[];
   onChange: (value: number) => void;
-}) {
+};
+
+function ThresholdPicker(props: ThresholdPickerProps) {
+  if (props.clause.metric === "hypePrice") {
+    return <HypePriceAlertChart {...props} />;
+  }
+  return <GenericThresholdPicker {...props} />;
+}
+
+function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartApiRef = useRef<any>(null);
+  const candleSeriesRef = useRef<any>(null);
+  const thresholdScaleSeriesRef = useRef<any>(null);
+  const priceLineRef = useRef<any>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const thresholdRef = useRef(clause.value);
+  const [range, setRange] = useState<AlertChartRange>("30d");
+  const [status, setStatus] = useState<AlertChartStatus>("loading");
+  const [chartReady, setChartReady] = useState(false);
+  const [candles, setCandles] = useState<Candle[]>([]);
+  const [hover, setHover] = useState<{ price: number; label: string } | null>(null);
+  const [lineY, setLineY] = useState<number | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const currentPrice = snapshot.hypePrice;
+  const thresholdValue = Number.isFinite(clause.value) && clause.value > 0 ? clause.value : currentPrice;
+  const hit = evaluateClause(clause, snapshot);
+  thresholdRef.current = thresholdValue;
+
+  function updateAlertLinePosition() {
+    const series = candleSeriesRef.current;
+    if (!series) return;
+    const y = series.priceToCoordinate(thresholdRef.current);
+    setLineY(typeof y === "number" && Number.isFinite(y) ? y : null);
+  }
+
+  function updateThresholdFromPointer(event: React.PointerEvent<HTMLDivElement>) {
+    const container = containerRef.current;
+    const series = candleSeriesRef.current;
+    if (!container || !series) return;
+    const rect = container.getBoundingClientRect();
+    const y = event.clientY - rect.top;
+    const price = series.coordinateToPrice(y);
+    if (typeof price !== "number" || !Number.isFinite(price) || price <= 0) return;
+    onChange(roundAlertThreshold(price, "hypePrice", "usd", Math.max(price * 0.12, 1)));
+  }
+
+  function handleAlertPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragging(true);
+    updateThresholdFromPointer(event);
+  }
+
+  function handleAlertPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (dragging) updateThresholdFromPointer(event);
+  }
+
+  function handleAlertPointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setDragging(false);
+  }
+
+  useEffect(() => {
+    if ((!Number.isFinite(clause.value) || clause.value <= 0) && currentPrice > 0) {
+      onChange(defaultAlertValue("hypePrice", snapshot));
+    }
+  }, [clause.value, currentPrice, onChange, snapshot]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    async function setupChart() {
+      try {
+        const LightweightCharts = await loadLightweightCharts();
+        if (disposed || !containerRef.current) return;
+        const chart = LightweightCharts.createChart(containerRef.current, {
+          width: containerRef.current.clientWidth,
+          height: 360,
+          layout: {
+            background: { type: LightweightCharts.ColorType?.Solid || "solid", color: "#090d0b" },
+            textColor: "#c7d2cc",
+            fontSize: 12,
+          },
+          grid: {
+            vertLines: { color: "rgba(255, 255, 255, 0.06)" },
+            horzLines: { color: "rgba(255, 255, 255, 0.06)" },
+          },
+          rightPriceScale: {
+            borderColor: "rgba(255, 255, 255, 0.18)",
+            scaleMargins: { top: 0.12, bottom: 0.12 },
+          },
+          timeScale: {
+            borderColor: "rgba(255, 255, 255, 0.18)",
+            timeVisible: true,
+            secondsVisible: false,
+            rightOffset: 8,
+            barSpacing: 8,
+            fixLeftEdge: false,
+            fixRightEdge: false,
+          },
+          crosshair: {
+            mode: 0,
+            vertLine: { color: "rgba(255, 255, 255, 0.32)", width: 1, style: 2 },
+            horzLine: { color: "rgba(255, 255, 255, 0.32)", width: 1, style: 2 },
+          },
+          handleScroll: true,
+          handleScale: true,
+        });
+
+        const candleSeries = chart.addCandlestickSeries({
+          upColor: "#7cf7c7",
+          downColor: "#ff6b82",
+          borderUpColor: "#7cf7c7",
+          borderDownColor: "#ff6b82",
+          wickUpColor: "#7cf7c7",
+          wickDownColor: "#ff6b82",
+          priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+          priceLineVisible: false,
+          lastValueVisible: true,
+        });
+
+        const thresholdScaleSeries = chart.addLineSeries({
+          color: "rgba(124, 247, 199, 0)",
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+
+        chart.subscribeCrosshairMove((param: any) => {
+          const item = candleSeriesRef.current ? param?.seriesData?.get(candleSeriesRef.current) : null;
+          if (item?.close) {
+            setHover({ price: n(item.close), label: tradingViewTimeLabel(param.time) });
+          }
+        });
+
+        chart.timeScale().subscribeVisibleLogicalRangeChange(updateAlertLinePosition);
+        resizeObserverRef.current = new ResizeObserver(() => {
+          if (!containerRef.current) return;
+          chart.applyOptions({ width: containerRef.current.clientWidth });
+          window.requestAnimationFrame(updateAlertLinePosition);
+        });
+        resizeObserverRef.current.observe(containerRef.current);
+
+        chartApiRef.current = chart;
+        candleSeriesRef.current = candleSeries;
+        thresholdScaleSeriesRef.current = thresholdScaleSeries;
+        setChartReady(true);
+      } catch {
+        if (!disposed) setStatus("fallback");
+      }
+    }
+
+    setupChart();
+    return () => {
+      disposed = true;
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
+      chartApiRef.current?.remove?.();
+      chartApiRef.current = null;
+      candleSeriesRef.current = null;
+      thresholdScaleSeriesRef.current = null;
+      priceLineRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCandles() {
+      try {
+        setStatus("loading");
+        const now = Date.now();
+        const payload = await postInfo({
+          type: "candleSnapshot",
+          req: {
+            coin: "HYPE",
+            interval: alertCandleInterval(range),
+            startTime: now - rangeMs(range),
+            endTime: now,
+          },
+        });
+        if (cancelled) return;
+        const nextCandles = normalizeCandles(payload);
+        setCandles(nextCandles);
+        setStatus(nextCandles.length ? "live" : "fallback");
+      } catch {
+        if (!cancelled) {
+          setCandles([]);
+          setStatus("fallback");
+        }
+      }
+    }
+    loadCandles();
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  useEffect(() => {
+    if (!chartReady || !candleSeriesRef.current || !chartApiRef.current) return;
+    const data = candles.map((candle: Candle) => ({
+      time: Math.floor(candle.time / 1000),
+      open: candle.open ?? candle.close,
+      high: candle.high ?? candle.close,
+      low: candle.low ?? candle.close,
+      close: candle.close,
+    }));
+    candleSeriesRef.current.setData(data);
+    if (data.length) {
+      chartApiRef.current.timeScale().fitContent();
+      window.requestAnimationFrame(updateAlertLinePosition);
+    }
+  }, [candles, chartReady]);
+
+  useEffect(() => {
+    if (!chartReady || !candleSeriesRef.current || !thresholdScaleSeriesRef.current) return;
+    const first = candles[0];
+    const last = candles[candles.length - 1];
+    if (first && last && thresholdValue > 0) {
+      thresholdScaleSeriesRef.current.setData([
+        { time: Math.floor(first.time / 1000), value: thresholdValue },
+        { time: Math.floor(last.time / 1000), value: thresholdValue },
+      ]);
+    }
+    if (!priceLineRef.current) {
+      priceLineRef.current = candleSeriesRef.current.createPriceLine({
+        price: thresholdValue,
+        color: "#7cf7c7",
+        lineWidth: 2,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: `alert ${formatUsd(thresholdValue)}`,
+      });
+    } else {
+      priceLineRef.current.applyOptions({
+        price: thresholdValue,
+        title: `alert ${formatUsd(thresholdValue)}`,
+      });
+    }
+    window.requestAnimationFrame(updateAlertLinePosition);
+  }, [thresholdValue, candles, chartReady]);
+
+  return (
+    <article className={dragging ? "tv-alert-card dragging" : "tv-alert-card"}>
+      <div className="threshold-head">
+        <div>
+          <span>TradingView-grade price chart</span>
+          <strong>HYPE price</strong>
+        </div>
+        <em className={hit ? "triggered" : ""}>{hit ? "condition met" : "waiting"}</em>
+      </div>
+      <div className="threshold-readout">
+        <div>
+          <span>{status === "live" ? "Live HYPE candles" : status === "loading" ? "Loading HYPE candles" : "Chart fallback"}</span>
+          <strong>{hover ? formatUsd(hover.price) : formatUsd(currentPrice)}</strong>
+        </div>
+        <div>
+          <span>Alert level</span>
+          <strong>{formatUsd(thresholdValue)}</strong>
+        </div>
+      </div>
+      <div className="tv-range-row">
+        {ALERT_CHART_RANGES.map((item: AlertChartRange) => (
+          <button className={range === item ? "active" : ""} key={item} onClick={() => setRange(item)}>{item}</button>
+        ))}
+        <button onClick={() => chartApiRef.current?.timeScale?.().fitContent?.()}>Fit</button>
+      </div>
+      <div className="tv-chart-wrap" ref={containerRef}>
+        {lineY !== null ? (
+          <div
+            className="tv-alert-drag-line"
+            style={{ top: `${lineY}px` }}
+            onPointerDown={handleAlertPointerDown}
+            onPointerMove={handleAlertPointerMove}
+            onPointerUp={handleAlertPointerUp}
+            onPointerCancel={handleAlertPointerUp}
+          >
+            <span>alert {formatUsd(thresholdValue)}</span>
+          </div>
+        ) : null}
+      </div>
+      <div className="threshold-footer">
+        <div>
+          <span>Navigation</span>
+          <strong>Drag/scroll chart</strong>
+        </div>
+        <div>
+          <span>Set alert</span>
+          <strong>Drag mint line</strong>
+        </div>
+        <div>
+          <span>Range</span>
+          <strong>{rangeLabel(range)}</strong>
+        </div>
+        <div>
+          <span>Candles</span>
+          <strong>{candles.length || "--"}</strong>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function GenericThresholdPicker({
+  clause,
+  snapshot,
+  candles,
+  hypeDaily,
+  btcDaily,
+  flowDays,
+  onChange,
+}: ThresholdPickerProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const [range, setRange] = useState<AlertChartRange>("1d");
