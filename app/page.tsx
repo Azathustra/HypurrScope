@@ -3260,16 +3260,16 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
     if (!priceLineRef.current) {
       priceLineRef.current = candleSeriesRef.current.createPriceLine({
         price: thresholdValue,
-        color: "#7cf7c7",
-        lineWidth: 2,
+        color: "rgba(124, 247, 199, 0)",
+        lineWidth: 1,
         lineStyle: 2,
-        axisLabelVisible: true,
-        title: `alert ${formatUsd(thresholdValue)}`,
+        axisLabelVisible: false,
+        title: "",
       });
     } else {
       priceLineRef.current.applyOptions({
         price: thresholdValue,
-        title: `alert ${formatUsd(thresholdValue)}`,
+        title: "",
       });
     }
     window.requestAnimationFrame(updateAlertLinePosition);

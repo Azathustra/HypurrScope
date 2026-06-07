@@ -2330,7 +2330,11 @@ td {
   right: 0;
   left: 0;
   height: 2px;
-  border-top: 2px dashed var(--mint);
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--mint) 0 9px,
+    transparent 9px 15px
+  );
   content: "";
   filter: drop-shadow(0 0 8px rgba(124, 247, 199, 0.35));
 }
@@ -2338,19 +2342,26 @@ td {
 .tv-alert-drag-line span {
   position: absolute;
   top: 50%;
-  right: 12px;
+  right: 18px;
   padding: 5px 8px;
   transform: translateY(-50%);
   border: 1px solid rgba(124, 247, 199, 0.42);
   border-radius: 8px;
-  background: rgba(6, 10, 8, 0.92);
+  background: rgba(6, 10, 8, 0.98);
   color: var(--mint);
   font-size: 0.75rem;
   font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 0 0 3px rgba(6, 10, 8, 0.82), 0 10px 24px rgba(0, 0, 0, 0.28);
 }
 
 .tv-alert-card.dragging .tv-alert-drag-line::before {
-  border-top-color: #9effda;
+  background-image: repeating-linear-gradient(
+    90deg,
+    #9effda 0 9px,
+    transparent 9px 15px
+  );
   filter: drop-shadow(0 0 14px rgba(124, 247, 199, 0.7));
 }
 
