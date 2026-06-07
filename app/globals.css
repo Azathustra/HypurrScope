@@ -481,14 +481,14 @@ h2 {
 
 .alert-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(420px, 0.85fr);
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
   align-items: start;
   gap: 16px;
   margin: 28px 28px 0;
 }
 
 .alert-layout.lower {
-  grid-template-columns: minmax(0, 1fr) minmax(380px, 0.65fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.75fr);
 }
 
 .panel {
@@ -1557,6 +1557,10 @@ td {
 
 .threshold-picker {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
   gap: 12px;
   padding: 14px;
   border: 1px solid rgba(124, 247, 199, 0.22);
@@ -1575,7 +1579,9 @@ td {
 .threshold-tools {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  min-width: 0;
   gap: 10px;
 }
 
@@ -1615,10 +1621,14 @@ td {
 .threshold-zoom {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
   gap: 6px;
 }
 
 .threshold-ranges {
+  flex: 1 1 260px;
+  max-width: 100%;
   overflow-x: auto;
   padding-bottom: 2px;
 }
@@ -1693,6 +1703,10 @@ td {
 
 .threshold-chart {
   position: relative;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   height: 250px;
   overflow: hidden;
   border: 1px solid rgba(40, 48, 44, 0.76);
@@ -1827,11 +1841,15 @@ td {
 .threshold-target-label {
   position: absolute;
   z-index: 2;
+  max-width: min(170px, 42%);
+  overflow: hidden;
   padding: 4px 7px;
   border-radius: 6px;
   background: rgba(6, 10, 8, 0.82);
   color: var(--muted);
   font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   pointer-events: none;
 }
 
@@ -1851,7 +1869,8 @@ td {
 
 .threshold-footer {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 10px;
 }
 
 .threshold-footer div {
@@ -1862,6 +1881,11 @@ td {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.threshold-footer strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
 .threshold-picker p {
   color: var(--muted);
   font-size: 0.84rem;
@@ -1870,6 +1894,10 @@ td {
 
 .tv-alert-card {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
   gap: 12px;
   padding: 14px;
   border: 1px solid rgba(124, 247, 199, 0.22);
@@ -1911,11 +1939,22 @@ td {
 .tv-chart-wrap {
   position: relative;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   height: 360px;
   overflow: hidden;
   border: 1px solid rgba(40, 48, 44, 0.76);
   border-radius: 8px;
   background: #090d0b;
+  cursor: grab;
+  overscroll-behavior: contain;
+  touch-action: none;
+  user-select: none;
+}
+
+.tv-chart-wrap:active {
+  cursor: grabbing;
 }
 
 .tv-alert-drag-line {
