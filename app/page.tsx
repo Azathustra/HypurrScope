@@ -2565,6 +2565,8 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
   const priceZoomRef = useRef(1);
   const priceAxisDragRef = useRef<{ y: number; zoom: number } | null>(null);
   const chartPanRef = useRef<{ x: number; from: number; to: number; width: number } | null>(null);
+  const chartPanMoveRef = useRef<((event: MouseEvent) => void) | null>(null);
+  const chartPanUpRef = useRef<((event: MouseEvent) => void) | null>(null);
   const [range, setRange] = useState<AlertChartRange>("all");
   const [status, setStatus] = useState<AlertChartStatus>("loading");
   const [chartReady, setChartReady] = useState(false);
@@ -2572,6 +2574,7 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
   const [hover, setHover] = useState<{ price: number; label: string } | null>(null);
   const [lineY, setLineY] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [chartPanning, setChartPanning] = useState(false);
   const [priceZoom, setPriceZoom] = useState(1);
   const currentPrice = snapshot.hypePrice;
   const thresholdValue = Number.isFinite(clause.value) && clause.value > 0 ? clause.value : currentPrice;
@@ -2667,41 +2670,82 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
     priceAxisDragRef.current = null;
   }
 
-  function handleChartPointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    const target = event.target instanceof Element ? event.target : null;
-    if (target?.closest(".tv-alert-drag-line") || target?.closest(".tv-price-axis-hitbox")) return;
-    const logicalRange = chartApiRef.current?.timeScale?.().getVisibleLogicalRange?.();
-    if (!logicalRange || !Number.isFinite(logicalRange.from) || !Number.isFinite(logicalRange.to)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    chartPanRef.current = {
-      x: event.clientX,
-      from: Number(logicalRange.from),
-      to: Number(logicalRange.to),
-      width: Math.max(1, event.currentTarget.clientWidth),
-    };
+  function detachChartPanListeners() {
+    if (chartPanMoveRef.current) window.removeEventListener("mousemove", chartPanMoveRef.current);
+    if (chartPanUpRef.current) window.removeEventListener("mouseup", chartPanUpRef.current);
+    chartPanMoveRef.current = null;
+    chartPanUpRef.current = null;
+    chartPanRef.current = null;
   }
 
-  function handleChartPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+  function moveVisibleChart(clientX: number) {
     const pan = chartPanRef.current;
-    if (!pan) return;
-    event.preventDefault();
-    event.stopPropagation();
+    const timeScale = chartApiRef.current?.timeScale?.();
+    if (!pan || !timeScale) return;
     const span = Math.max(1, pan.to - pan.from);
-    const barsMoved = ((event.clientX - pan.x) / pan.width) * span;
-    chartApiRef.current?.timeScale?.().setVisibleLogicalRange?.({
+    const barsMoved = ((clientX - pan.x) / pan.width) * span;
+    timeScale.setVisibleLogicalRange?.({
       from: pan.from - barsMoved,
       to: pan.to - barsMoved,
     });
     window.requestAnimationFrame(updateAlertLinePosition);
   }
 
-  function handleChartPointerUp(event: React.PointerEvent<HTMLDivElement>) {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
+  function handleChartPanMouseDown(event: React.MouseEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    const logicalRange = chartApiRef.current?.timeScale?.().getVisibleLogicalRange?.();
+    if (!logicalRange || !Number.isFinite(logicalRange.from) || !Number.isFinite(logicalRange.to)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    detachChartPanListeners();
+    chartPanRef.current = {
+      x: event.clientX,
+      from: Number(logicalRange.from),
+      to: Number(logicalRange.to),
+      width: Math.max(1, event.currentTarget.clientWidth),
+    };
+    setChartPanning(true);
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      moveEvent.preventDefault();
+      moveVisibleChart(moveEvent.clientX);
+    };
+    const handleUp = (upEvent: MouseEvent) => {
+      upEvent.preventDefault();
+      detachChartPanListeners();
+      setChartPanning(false);
+    };
+    chartPanMoveRef.current = handleMove;
+    chartPanUpRef.current = handleUp;
+    window.addEventListener("mousemove", handleMove, { passive: false });
+    window.addEventListener("mouseup", handleUp, { passive: false });
+  }
+
+  function handleChartPanWheel(event: React.WheelEvent<HTMLDivElement>) {
+    const timeScale = chartApiRef.current?.timeScale?.();
+    const logicalRange = timeScale?.getVisibleLogicalRange?.();
+    if (!timeScale || !logicalRange || !Number.isFinite(logicalRange.from) || !Number.isFinite(logicalRange.to)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const width = Math.max(1, rect.width);
+    const from = Number(logicalRange.from);
+    const to = Number(logicalRange.to);
+    const span = Math.max(1, to - from);
+
+    if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      const shift = (event.deltaX / width) * span;
+      timeScale.setVisibleLogicalRange?.({ from: from + shift, to: to + shift });
+    } else {
+      const anchorRatio = clamp((event.clientX - rect.left) / width, 0, 1);
+      const anchor = from + span * anchorRatio;
+      const factor = event.deltaY < 0 ? 0.86 : 1.16;
+      timeScale.setVisibleLogicalRange?.({
+        from: anchor - (anchor - from) * factor,
+        to: anchor + (to - anchor) * factor,
+      });
     }
-    chartPanRef.current = null;
+    window.requestAnimationFrame(updateAlertLinePosition);
   }
 
   function handleAlertPointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -2836,6 +2880,7 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
     setupChart();
     return () => {
       disposed = true;
+      detachChartPanListeners();
       if (wheelTarget && wheelBlocker) {
         wheelTarget.removeEventListener("wheel", wheelBlocker);
       }
@@ -2940,7 +2985,7 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
   }, [thresholdValue, candles, chartReady]);
 
   return (
-    <article className={dragging ? "tv-alert-card dragging" : "tv-alert-card"}>
+    <article className={`${dragging ? "tv-alert-card dragging" : "tv-alert-card"} ${chartPanning ? "panning" : ""}`}>
       <div className="threshold-head">
         <div>
           <span>TradingView-grade price chart</span>
@@ -2968,14 +3013,7 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
         <button onClick={() => applyManualPriceScale(clamp(priceZoom * 1.18, 0.35, 8))}>Price +</button>
         <button onClick={resetPriceScale}>Auto</button>
       </div>
-      <div
-        className="tv-chart-wrap"
-        ref={containerRef}
-        onPointerDownCapture={handleChartPointerDown}
-        onPointerMoveCapture={handleChartPointerMove}
-        onPointerUpCapture={handleChartPointerUp}
-        onPointerCancelCapture={handleChartPointerUp}
-      >
+      <div className="tv-chart-wrap" ref={containerRef}>
         {lineY !== null ? (
           <div
             className="tv-alert-drag-line"
@@ -2988,6 +3026,12 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
             <span>alert {formatUsd(thresholdValue)}</span>
           </div>
         ) : null}
+        <div
+          className="tv-chart-pan-layer"
+          onMouseDown={handleChartPanMouseDown}
+          onWheel={handleChartPanWheel}
+          aria-label="Move price chart"
+        />
         <div
           className="tv-price-axis-hitbox"
           onWheelCapture={handlePriceAxisWheel}

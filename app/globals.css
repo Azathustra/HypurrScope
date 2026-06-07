@@ -2086,6 +2086,22 @@ td {
   cursor: grabbing;
 }
 
+.tv-chart-pan-layer {
+  position: absolute;
+  top: 0;
+  right: 72px;
+  bottom: 0;
+  left: 0;
+  z-index: 6;
+  cursor: grab;
+  touch-action: none;
+}
+
+.tv-chart-pan-layer:active,
+.tv-alert-card.panning .tv-chart-pan-layer {
+  cursor: grabbing;
+}
+
 .tv-price-axis-hitbox {
   position: absolute;
   top: 0;
