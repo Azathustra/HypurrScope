@@ -201,6 +201,7 @@ type AlertChartStatus = "loading" | "live" | "fallback";
 
 const HYPE_SUPPLY = 1_000_000_000;
 const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
+const HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info";
 
 const NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
   { id: "overview", label: "Overview", description: "HYPE pulse" },
@@ -568,6 +569,19 @@ function roundMetricThreshold(value: number, unit: MetricMeta["unit"], span: num
   return Number(rounded.toFixed(step < 1 ? 1 : 0));
 }
 
+function defaultAlertValue(metric: AlertMetricKey, snapshot: MetricSnapshot) {
+  const meta = metricMeta(metric);
+  const value = snapshot[metric];
+  if (!Number.isFinite(value) || value === 0) {
+    if (meta.unit === "usd") return metric === "hypePrice" ? 50 : 1_000_000;
+    if (meta.unit === "pct") return 1;
+    return 10;
+  }
+  if (meta.unit === "usd") return roundMetricThreshold(value, meta.unit, Math.max(Math.abs(value) * 0.2, 1));
+  if (meta.unit === "pct") return roundMetricThreshold(value, meta.unit, Math.max(Math.abs(value) * 0.5, 0.1));
+  return roundMetricThreshold(value, meta.unit, Math.max(Math.abs(value) * 0.5, 1));
+}
+
 function metricPoint(time: number, value: number, label: string): MetricPoint {
   return { time, value: Number.isFinite(value) ? value : 0, label };
 }
@@ -726,13 +740,22 @@ function riskColor(score: number) {
 }
 
 async function postInfo(body: unknown) {
-  const response = await fetch("/api/hyperliquid/info", {
+  const request = {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-  });
-  if (!response.ok) throw new Error(`Hyperliquid API ${response.status}`);
-  return response.json();
+  };
+
+  try {
+    const response = await fetch("/api/hyperliquid/info", request);
+    if (response.ok) return response.json();
+  } catch {
+    // Fall back to the public Hyperliquid endpoint when the app proxy is not deployed.
+  }
+
+  const directResponse = await fetch(HYPERLIQUID_INFO_URL, request);
+  if (!directResponse.ok) throw new Error(`Hyperliquid API ${directResponse.status}`);
+  return directResponse.json();
 }
 
 function normalizeMarkets(payload: unknown): Market[] {
@@ -1581,7 +1604,13 @@ export default function Page() {
                       ) : (
                         <span className="clause-start">WHEN</span>
                       )}
-                      <select value={clause.metric} onChange={(event) => updateDraftClause(clause.id, { metric: event.target.value as AlertMetricKey })}>
+                      <select
+                        value={clause.metric}
+                        onChange={(event) => {
+                          const metric = event.target.value as AlertMetricKey;
+                          updateDraftClause(clause.id, { metric, value: defaultAlertValue(metric, alertSnapshot) });
+                        }}
+                      >
                         {ALERT_METRICS.map((metric: MetricMeta) => <option value={metric.key} key={metric.key}>{metric.label}</option>)}
                       </select>
                       <select value={clause.condition} onChange={(event) => updateDraftClause(clause.id, { condition: event.target.value as AlertCondition })}>
