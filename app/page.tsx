@@ -207,6 +207,31 @@ type AlertRule = {
 
 type MetricSnapshot = Record<AlertMetricKey, number>;
 
+type HistoricalBaselines = {
+  source: string;
+  updatedAt: string;
+  sampleSizes: {
+    candles5m: number;
+    candles15m: number;
+    candles1h: number;
+    funding: number;
+  };
+  percentiles: {
+    volumeUsd5mP90: number;
+    volumeUsd5mP95: number;
+    priceChange15mAbsP85: number;
+    priceChange15mAbsP95: number;
+    priceChange4hAbsP85: number;
+    priceChange4hAbsP95: number;
+    fundingAbsP90: number;
+    fundingAbsP95: number;
+    fundingPositiveP90: number;
+    fundingPositiveP95: number;
+    fundingNegativeP10: number;
+    fundingNegativeP5: number;
+  };
+};
+
 type MetricMeta = {
   key: AlertMetricKey;
   label: string;
@@ -315,6 +340,31 @@ const EMPTY_NFT_STATS: NftStats = {
   listed: "--",
   owners: "--",
   sales24h: "--",
+};
+
+const EMPTY_BASELINES: HistoricalBaselines = {
+  source: "loading",
+  updatedAt: "",
+  sampleSizes: {
+    candles5m: 0,
+    candles15m: 0,
+    candles1h: 0,
+    funding: 0,
+  },
+  percentiles: {
+    volumeUsd5mP90: 0,
+    volumeUsd5mP95: 0,
+    priceChange15mAbsP85: 0,
+    priceChange15mAbsP95: 0,
+    priceChange4hAbsP85: 0,
+    priceChange4hAbsP95: 0,
+    fundingAbsP90: 0,
+    fundingAbsP95: 0,
+    fundingPositiveP90: 0,
+    fundingPositiveP95: 0,
+    fundingNegativeP10: 0,
+    fundingNegativeP5: 0,
+  },
 };
 
 const FALLBACK_FLOWS: FlowRow[] = [
@@ -1343,6 +1393,8 @@ export default function Page() {
   const [flowDays, setFlowDays] = useState<FlowDay[]>(synthesizeFlowDays(FALLBACK_FLOWS));
   const [flowStatus, setFlowStatus] = useState<Status>("fallback");
   const [flowMeta, setFlowMeta] = useState({ source: "fallback", latestDate: "", note: "" });
+  const [historicalBaselines, setHistoricalBaselines] = useState<HistoricalBaselines>(EMPTY_BASELINES);
+  const [baselineStatus, setBaselineStatus] = useState<Status>("loading");
   const [buyback, setBuyback] = useState<BuybackData>(EMPTY_BUYBACK);
   const [buybackStatus, setBuybackStatus] = useState<Status>("loading");
   const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
@@ -1393,6 +1445,10 @@ export default function Page() {
     loadStatistics();
     const timer = window.setInterval(loadStatistics, 120_000);
     return () => window.clearInterval(timer);
+  }, [coin]);
+
+  useEffect(() => {
+    loadHistoricalBaselines();
   }, [coin]);
 
   useEffect(() => {
@@ -1479,6 +1535,43 @@ export default function Page() {
       setHypeDaily(makeFallbackDailyCandles(coin));
       setBtcDaily(makeFallbackDailyCandles(benchmarkForAsset(coin)));
       setStatsStatus("fallback");
+    }
+  }
+
+  async function loadHistoricalBaselines() {
+    try {
+      setBaselineStatus((current) => (current === "live" ? "live" : "loading"));
+      const response = await fetch(`/api/hyperliquid/history?coin=${encodeURIComponent(coin)}`);
+      if (!response.ok) throw new Error("Historical baseline API failed");
+      const data = await response.json();
+      setHistoricalBaselines({
+        source: data?.source || "hyperliquid-info",
+        updatedAt: data?.updatedAt || "",
+        sampleSizes: {
+          candles5m: n(data?.sampleSizes?.candles5m),
+          candles15m: n(data?.sampleSizes?.candles15m),
+          candles1h: n(data?.sampleSizes?.candles1h),
+          funding: n(data?.sampleSizes?.funding),
+        },
+        percentiles: {
+          volumeUsd5mP90: n(data?.percentiles?.volumeUsd5mP90),
+          volumeUsd5mP95: n(data?.percentiles?.volumeUsd5mP95),
+          priceChange15mAbsP85: n(data?.percentiles?.priceChange15mAbsP85),
+          priceChange15mAbsP95: n(data?.percentiles?.priceChange15mAbsP95),
+          priceChange4hAbsP85: n(data?.percentiles?.priceChange4hAbsP85),
+          priceChange4hAbsP95: n(data?.percentiles?.priceChange4hAbsP95),
+          fundingAbsP90: n(data?.percentiles?.fundingAbsP90),
+          fundingAbsP95: n(data?.percentiles?.fundingAbsP95),
+          fundingPositiveP90: n(data?.percentiles?.fundingPositiveP90),
+          fundingPositiveP95: n(data?.percentiles?.fundingPositiveP95),
+          fundingNegativeP10: n(data?.percentiles?.fundingNegativeP10),
+          fundingNegativeP5: n(data?.percentiles?.fundingNegativeP5),
+        },
+      });
+      setBaselineStatus("live");
+    } catch {
+      setHistoricalBaselines(EMPTY_BASELINES);
+      setBaselineStatus("fallback");
     }
   }
 
@@ -1647,6 +1740,15 @@ export default function Page() {
   const telegramHandle = userProfile.telegram.trim().replace(/^@/, "");
   const isAccountReady = Boolean(userProfile.displayName.trim() || userProfile.email.trim());
   const selectedDraftClause = draftRule.clauses.find((clause: AlertClause) => clause.id === selectedClauseId) || draftRule.clauses[0];
+  const baselineP = historicalBaselines.percentiles;
+  const historicalVolumeP95 = baselineP.volumeUsd5mP95 || 1_000_000;
+  const historicalPrice15mP85 = baselineP.priceChange15mAbsP85 || 0.25;
+  const historicalPrice4hP85 = baselineP.priceChange4hAbsP85 || 1.5;
+  const historicalFundingLongP95 = baselineP.fundingPositiveP95 || baselineP.fundingAbsP95 || 0.04;
+  const historicalFundingShortP5 = baselineP.fundingNegativeP5 || -(baselineP.fundingAbsP95 || 0.04);
+  const baselineSampleLabel = baselineStatus === "live"
+    ? `${historicalBaselines.sampleSizes.candles5m} 5m candles, ${historicalBaselines.sampleSizes.funding} funding prints`
+    : "Historical baselines loading/fallback";
   const regimeScore = Math.round(
     clamp(Math.abs(weightedFunding) * 60_000 + Math.abs(selected?.changePct || 0) * 2 + Math.abs(book?.imbalance || 0) * 0.2, 0, 99),
   );
@@ -1756,41 +1858,41 @@ export default function Page() {
       title: "Crowded longs risk",
       tag: "Squeeze setup",
       body: "Detects when longs are paying expensive funding while OI expands and price stops following.",
-      checks: ["Funding extreme", "OI rising 4h", "Price stalling"],
+      checks: ["Funding > historical P95", "OI rising 4h", "Price stalling"],
     },
     {
       kind: "crowdedShorts",
       title: "Crowded shorts risk",
       tag: "Squeeze setup",
       body: "Detects when shorts become crowded, funding is deeply negative, and downside momentum stalls.",
-      checks: ["Negative funding extreme", "OI rising 4h", "Price not breaking down"],
+      checks: ["Funding < historical P5", "OI rising 4h", "Price not breaking down"],
     },
   ];
 
   function loadPreset(kind: AlertPresetKind) {
     const presets: Record<AlertPresetKind, AlertRule> = {
       freshLongs: makePresetRule("Fresh longs detected", [
-        makeClause({ metric: "takerBuyUsd5m", condition: "gt", value: Math.max(takerBuyUsd5m * 1.15, 1_000_000), join: "AND" }),
+        makeClause({ metric: "takerBuyUsd5m", condition: "gt", value: Math.max(takerBuyUsd5m * 1.15, historicalVolumeP95), join: "AND" }),
         makeClause({ metric: "takerBuyRatio5m", condition: "gt", value: 68, join: "AND" }),
         makeClause({ metric: "oiChange15m", condition: "gt", value: Math.max(oiChange15m, 3), join: "AND" }),
-        makeClause({ metric: "priceChange15m", condition: "gt", value: 0.25, join: "AND" }),
+        makeClause({ metric: "priceChange15m", condition: "gt", value: Math.max(0.25, historicalPrice15mP85), join: "AND" }),
       ]),
       freshShorts: makePresetRule("Fresh shorts detected", [
-        makeClause({ metric: "takerSellUsd5m", condition: "gt", value: Math.max(takerSellUsd5m * 1.15, 1_000_000), join: "AND" }),
+        makeClause({ metric: "takerSellUsd5m", condition: "gt", value: Math.max(takerSellUsd5m * 1.15, historicalVolumeP95), join: "AND" }),
         makeClause({ metric: "takerSellRatio5m", condition: "gt", value: 68, join: "AND" }),
         makeClause({ metric: "oiChange15m", condition: "gt", value: Math.max(oiChange15m, 3), join: "AND" }),
-        makeClause({ metric: "priceChange15m", condition: "lt", value: -0.25, join: "AND" }),
+        makeClause({ metric: "priceChange15m", condition: "lt", value: -Math.max(0.25, historicalPrice15mP85), join: "AND" }),
       ]),
       crowdedLongs: makePresetRule("Crowded longs risk", [
-        makeClause({ metric: "hypeFunding", condition: "gt", value: Math.max((selected?.funding || 0) * 100, 0.04), join: "AND" }),
+        makeClause({ metric: "hypeFunding", condition: "gt", value: Math.max((selected?.funding || 0) * 100, historicalFundingLongP95), join: "AND" }),
         makeClause({ metric: "oiChange4h", condition: "gt", value: Math.max(oiChange4h, 8), join: "AND" }),
-        makeClause({ metric: "priceChange4h", condition: "lt", value: 1.5, join: "AND" }),
+        makeClause({ metric: "priceChange4h", condition: "lt", value: Math.max(1.5, historicalPrice4hP85), join: "AND" }),
         makeClause({ metric: "crowdingScore", condition: "gt", value: 80, join: "AND" }),
       ]),
       crowdedShorts: makePresetRule("Crowded shorts risk", [
-        makeClause({ metric: "hypeFunding", condition: "lt", value: Math.min((selected?.funding || 0) * 100, -0.04), join: "AND" }),
+        makeClause({ metric: "hypeFunding", condition: "lt", value: Math.min((selected?.funding || 0) * 100, historicalFundingShortP5), join: "AND" }),
         makeClause({ metric: "oiChange4h", condition: "gt", value: Math.max(oiChange4h, 8), join: "AND" }),
-        makeClause({ metric: "priceChange4h", condition: "gt", value: -1.5, join: "AND" }),
+        makeClause({ metric: "priceChange4h", condition: "gt", value: -Math.max(1.5, historicalPrice4hP85), join: "AND" }),
         makeClause({ metric: "crowdingScore", condition: "gt", value: 80, join: "AND" }),
       ]),
     };
@@ -1941,6 +2043,7 @@ export default function Page() {
               <Kpi label="Saved rules" value={String(alertRules.length)} detail={isAccountReady ? `Local account: ${accountName}` : "Create an account below"} />
               <Kpi label="Triggered now" value={String(activeAlertCount)} detail="Evaluated against the current market snapshot" tone={activeAlertCount ? "negative" : "positive"} />
               <Kpi label="Metrics available" value={String(ALERT_METRICS.length)} detail="Taker flow, funding, OI, TWAP, liquidity, ETF, NFT, relative strength" />
+              <Kpi label="Historical P95" value={baselineStatus === "live" ? "Live" : sourceLabel(baselineStatus)} detail={baselineSampleLabel} tone={baselineStatus === "live" ? "positive" : "negative"} />
               <Kpi label="Delivery" value={telegramHandle ? "Telegram ready" : "Browser now"} detail={telegramHandle ? `@${telegramHandle} linked locally` : "Add Telegram below"} />
             </section>
 
