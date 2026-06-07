@@ -1,32 +1,26 @@
-import { NextRequest, NextResponse } from "next/server";
-
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
 
-const HYPERLIQUID_INFO_ENDPOINT = "https://api.hyperliquid.xyz/info";
+const HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info";
 
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const response = await fetch(HYPERLIQUID_INFO_ENDPOINT, {
+    const response = await fetch(HYPERLIQUID_INFO_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
       cache: "no-store",
     });
 
     const text = await response.text();
-    return new NextResponse(text, {
+    return new Response(text, {
       status: response.status,
       headers: {
-        "Content-Type": response.headers.get("Content-Type") || "application/json",
-        "Cache-Control": "no-store",
+        "content-type": response.headers.get("content-type") || "application/json",
+        "cache-control": "no-store",
       },
     });
-  } catch (error) {
-    return NextResponse.json(
-      { ok: false, error: "Hyperliquid info proxy failed" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
-    );
+  } catch {
+    return Response.json({ error: "Unable to reach Hyperliquid info endpoint" }, { status: 502 });
   }
 }
