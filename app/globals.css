@@ -253,6 +253,7 @@ input:focus {
 
 .icon-btn,
 .theme-toggle,
+.account-button,
 .primary,
 .secondary {
   min-height: 40px;
@@ -274,6 +275,55 @@ input:focus {
   background: var(--panel-2);
   color: var(--text);
   font-weight: 760;
+}
+
+.theme-toggle.icon-only {
+  display: grid;
+  width: 40px;
+  padding: 0;
+  place-items: center;
+  color: var(--mint);
+  font-size: 1rem;
+}
+
+.theme-toggle.icon-only svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.account-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 190px;
+  padding: 0 12px 0 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.account-button span {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(124, 247, 199, 0.13);
+  color: var(--mint);
+  font-size: 0.76rem;
+  font-weight: 860;
+}
+
+.account-button strong {
+  overflow: hidden;
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .primary {
@@ -1700,10 +1750,57 @@ td {
 
 .clause-list,
 .saved-rules,
-.telegram-flow {
+.telegram-flow,
+.account-card,
+.account-flow {
   display: grid;
   gap: 10px;
   margin-top: 16px;
+}
+
+.account-card {
+  margin-top: 0;
+}
+
+.account-card label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.account-summary {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  border: 1px solid rgba(124, 247, 199, 0.24);
+  border-radius: 8px;
+  background: rgba(124, 247, 199, 0.055);
+}
+
+.account-summary span,
+.account-summary small,
+.account-flow span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.account-summary strong {
+  font-size: 1.2rem;
+}
+
+.account-flow {
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.account-flow div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
 }
 
 .clause-row {
@@ -2150,7 +2247,7 @@ td {
   position: absolute;
   top: 0;
   right: 72px;
-  bottom: 0;
+  bottom: 48px;
   left: 0;
   z-index: 6;
   cursor: grab;
@@ -2186,6 +2283,33 @@ td {
 }
 
 .tv-price-axis-hitbox:hover::after {
+  opacity: 1;
+}
+
+.tv-time-axis-hitbox {
+  position: absolute;
+  right: 72px;
+  bottom: 0;
+  left: 0;
+  z-index: 7;
+  height: 52px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.tv-time-axis-hitbox::after {
+  position: absolute;
+  right: 16px;
+  bottom: 8px;
+  left: 16px;
+  height: 1px;
+  background: rgba(124, 247, 199, 0.14);
+  content: "";
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.tv-time-axis-hitbox:hover::after {
   opacity: 1;
 }
 

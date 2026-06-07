@@ -134,6 +134,12 @@ type BuybackData = {
   note?: string;
 };
 
+type UserProfile = {
+  displayName: string;
+  email: string;
+  telegram: string;
+};
+
 type ExchangeRow = {
   name: string;
   category: "CEX" | "DEX";
@@ -260,6 +266,22 @@ function initialCoin() {
   if (typeof window === "undefined") return "HYPE";
   const saved = window.localStorage.getItem("hypurrscope-active-asset");
   return DEFAULT_COINS.includes(saved || "") ? saved || "HYPE" : "HYPE";
+}
+
+function initialUserProfile(): UserProfile {
+  if (typeof window === "undefined") return { displayName: "", email: "", telegram: "" };
+  try {
+    const saved = window.localStorage.getItem("hypurrscope-user-profile");
+    if (!saved) return { displayName: "", email: "", telegram: "" };
+    const parsed = JSON.parse(saved);
+    return {
+      displayName: typeof parsed.displayName === "string" ? parsed.displayName : "",
+      email: typeof parsed.email === "string" ? parsed.email : "",
+      telegram: typeof parsed.telegram === "string" ? parsed.telegram : "",
+    };
+  } catch {
+    return { displayName: "", email: "", telegram: "" };
+  }
 }
 
 function benchmarkForAsset(asset: string) {
@@ -1238,6 +1260,7 @@ export default function Page() {
   const [view, setView] = useState<View>(initialView);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [coin, setCoin] = useState(initialCoin);
+  const [userProfile, setUserProfile] = useState<UserProfile>(initialUserProfile);
   const [markets, setMarkets] = useState<Market[]>(fallbackMarkets);
   const [candles, setCandles] = useState<Candle[]>(makeFallbackCandles("HYPE"));
   const [hypeDaily, setHypeDaily] = useState<Candle[]>(makeFallbackDailyCandles("HYPE"));
@@ -1314,6 +1337,14 @@ export default function Page() {
       return;
     }
   }, [alertRules]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("hypurrscope-user-profile", JSON.stringify(userProfile));
+    } catch {
+      return;
+    }
+  }, [userProfile]);
 
   useEffect(() => {
     if (!draftRule.clauses.some((clause: AlertClause) => clause.id === selectedClauseId)) {
@@ -1517,6 +1548,10 @@ export default function Page() {
     nftSales24h: Number(nftStats.sales24h.replace(/,/g, "")) || 0,
   };
   const activeAlertCount = alertRules.filter((rule: AlertRule) => evaluateRule(rule, alertSnapshot)).length;
+  const enabledRuleCount = alertRules.filter((rule: AlertRule) => rule.enabled).length;
+  const accountName = userProfile.displayName.trim() || userProfile.email.trim() || "Guest";
+  const telegramHandle = userProfile.telegram.trim().replace(/^@/, "");
+  const isAccountReady = Boolean(userProfile.displayName.trim() || userProfile.email.trim());
   const selectedDraftClause = draftRule.clauses.find((clause: AlertClause) => clause.id === selectedClauseId) || draftRule.clauses[0];
   const regimeScore = Math.round(
     clamp(Math.abs(weightedFunding) * 60_000 + Math.abs(selected?.changePct || 0) * 2 + Math.abs(book?.imbalance || 0) * 0.2, 0, 99),
@@ -1680,9 +1715,6 @@ export default function Page() {
             <strong>HypurrScope</strong>
           </div>
           <div className="controls">
-            <button className="theme-toggle" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-              {theme === "dark" ? "Night" : "Day"}
-            </button>
             <label>
               Asset
               <select value={coin} onChange={(event) => setCoin(event.target.value)}>
@@ -1691,6 +1723,22 @@ export default function Page() {
                 ))}
               </select>
             </label>
+            <button className="theme-toggle icon-only" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? "Switch to day mode" : "Switch to night mode"}>
+              {theme === "dark" ? (
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="M21 14.6A8.2 8.2 0 0 1 9.4 3a7 7 0 1 0 11.6 11.6Z" />
+                </svg>
+              ) : (
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="4" />
+                  <path d="M12 2v2.4M12 19.6V22M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M2 12h2.4M19.6 12H22M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7" />
+                </svg>
+              )}
+            </button>
+            <button className="account-button" onClick={() => setView("alerts")}>
+              <span>{isAccountReady ? accountName.slice(0, 1).toUpperCase() : "?"}</span>
+              <strong>{isAccountReady ? accountName : "Connect"}</strong>
+            </button>
             <button className="icon-btn" onClick={loadMarketData} aria-label="Refresh">R</button>
           </div>
           <nav className="mobile-tabs">
@@ -1769,10 +1817,10 @@ export default function Page() {
           <>
             <ViewHeader eyebrow="No-code alert engine" title="HypurrScope Alert Studio" />
             <section className="kpi-grid">
-              <Kpi label="Saved rules" value={String(alertRules.length)} detail="Stored in this browser for the MVP" />
+              <Kpi label="Saved rules" value={String(alertRules.length)} detail={isAccountReady ? `Local account: ${accountName}` : "Create an account below"} />
               <Kpi label="Triggered now" value={String(activeAlertCount)} detail="Evaluated against the current market snapshot" tone={activeAlertCount ? "negative" : "positive"} />
               <Kpi label="Metrics available" value={String(ALERT_METRICS.length)} detail="Funding, OI, TWAP, liquidity, ETF, NFT, relative strength" />
-              <Kpi label="Delivery" value="Browser now" detail="Telegram-ready architecture panel included" />
+              <Kpi label="Delivery" value={telegramHandle ? "Telegram ready" : "Browser now"} detail={telegramHandle ? `@${telegramHandle} linked locally` : "Add Telegram below"} />
             </section>
 
             <section className="alert-layout">
@@ -1887,7 +1935,7 @@ export default function Page() {
             </section>
 
             <section className="alert-layout lower">
-              <Panel title="Saved rules" subtitle="This MVP runs locally. The next backend step stores these in Supabase and checks them every minute.">
+              <Panel title="My alerts" subtitle={isAccountReady ? `${enabledRuleCount} enabled rules attached to ${accountName}.` : "Create a local account to make this feel like a personal alert desk."}>
                 <div className="saved-rules">
                   {alertRules.length ? alertRules.map((rule: AlertRule) => (
                     <SavedRuleCard
@@ -1901,12 +1949,43 @@ export default function Page() {
                 </div>
               </Panel>
 
-              <Panel title="Telegram delivery architecture" subtitle="Not connected yet in the static MVP, but designed as the next production step.">
-                <div className="telegram-flow">
-                  <div><strong>1. Connect Telegram</strong><span>User opens t.me/HypurrScopeBot?start=code</span></div>
-                  <div><strong>2. Store rule</strong><span>Supabase saves chat_id, rule JSON, cooldown, enabled state</span></div>
-                  <div><strong>3. Cron evaluates</strong><span>Worker checks live metrics once per minute</span></div>
-                  <div><strong>4. Send explainable alert</strong><span>Telegram message includes triggered metrics and interpretation</span></div>
+              <Panel title="Account & Telegram" subtitle="Local account now, backend-ready flow later: Supabase user, Telegram chat_id, scheduled alert worker.">
+                <div className="account-card">
+                  <div className="account-summary">
+                    <span>{isAccountReady ? "Connected locally" : "Guest mode"}</span>
+                    <strong>{accountName}</strong>
+                    <small>{telegramHandle ? `Telegram: @${telegramHandle}` : "Telegram not linked yet"}</small>
+                  </div>
+                  <label>
+                    Display name
+                    <input
+                      placeholder="Azathustra"
+                      value={userProfile.displayName}
+                      onChange={(event) => setUserProfile((current) => ({ ...current, displayName: event.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Email
+                    <input
+                      type="email"
+                      placeholder="you@example.com"
+                      value={userProfile.email}
+                      onChange={(event) => setUserProfile((current) => ({ ...current, email: event.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Telegram username
+                    <input
+                      placeholder="@username"
+                      value={userProfile.telegram}
+                      onChange={(event) => setUserProfile((current) => ({ ...current, telegram: event.target.value }))}
+                    />
+                  </label>
+                  <div className="account-flow">
+                    <div><strong>1. Account</strong><span>Rules are tied to this local profile for the MVP.</span></div>
+                    <div><strong>2. Telegram</strong><span>Username is stored now; production stores chat_id after bot verification.</span></div>
+                    <div><strong>3. Alerts</strong><span>Saved rules become server-side checks every minute.</span></div>
+                  </div>
                 </div>
               </Panel>
             </section>
@@ -2688,7 +2767,7 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
   const thresholdRef = useRef(clause.value);
   const priceZoomRef = useRef(1);
   const priceRangeRef = useRef<{ minValue: number; maxValue: number } | null>(null);
-  const priceAxisDragRef = useRef<{ y: number; zoom: number } | null>(null);
+  const priceAxisDragRef = useRef<{ y: number; minValue: number; maxValue: number } | null>(null);
   const chartPanRef = useRef<{ x: number; y: number; from: number; to: number; width: number; height: number; minValue: number; maxValue: number } | null>(null);
   const chartPanMoveRef = useRef<((event: MouseEvent) => void) | null>(null);
   const chartPanUpRef = useRef<((event: MouseEvent) => void) | null>(null);
@@ -2787,6 +2866,17 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
     setPriceZoom(nextZoom);
   }
 
+  function zoomPriceRange(factor: number, anchor?: number) {
+    const range = basePriceRange();
+    const minValue = range.minValue;
+    const maxValue = range.maxValue;
+    const pivot = Number.isFinite(anchor) && anchor ? anchor : (minValue + maxValue) / 2;
+    applyPriceRange(
+      pivot - (pivot - minValue) * factor,
+      pivot + (maxValue - pivot) * factor,
+    );
+  }
+
   function resetPriceScale() {
     candleSeriesRef.current?.applyOptions?.({ autoscaleInfoProvider: undefined });
     priceRangeRef.current = null;
@@ -2798,24 +2888,33 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
   function handlePriceAxisWheel(event: React.WheelEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
-    const nextZoom = priceZoomRef.current * (event.deltaY < 0 ? 1.18 : 0.85);
-    applyManualPriceScale(clamp(nextZoom, 0.35, 8));
+    const container = containerRef.current;
+    const series = candleSeriesRef.current;
+    let anchor: number | undefined;
+    if (container && series) {
+      const rect = container.getBoundingClientRect();
+      const price = series.coordinateToPrice(event.clientY - rect.top);
+      if (typeof price === "number" && Number.isFinite(price)) anchor = price;
+    }
+    zoomPriceRange(event.deltaY < 0 ? 0.88 : 1.14, anchor);
   }
 
   function handlePriceAxisPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    priceAxisDragRef.current = { y: event.clientY, zoom: priceZoomRef.current };
+    const range = basePriceRange();
+    priceAxisDragRef.current = { y: event.clientY, minValue: range.minValue, maxValue: range.maxValue };
   }
 
   function handlePriceAxisPointerMove(event: React.PointerEvent<HTMLDivElement>) {
     if (!priceAxisDragRef.current) return;
     event.preventDefault();
     event.stopPropagation();
-    const delta = priceAxisDragRef.current.y - event.clientY;
-    const nextZoom = priceAxisDragRef.current.zoom * Math.exp(delta / 170);
-    applyManualPriceScale(clamp(nextZoom, 0.35, 8));
+    const drag = priceAxisDragRef.current;
+    const center = (drag.minValue + drag.maxValue) / 2;
+    const factor = clamp(Math.exp((event.clientY - drag.y) / 220), 0.25, 4);
+    applyPriceRange(center - ((center - drag.minValue) * factor), center + ((drag.maxValue - center) * factor));
   }
 
   function handlePriceAxisPointerUp(event: React.PointerEvent<HTMLDivElement>) {
@@ -2891,11 +2990,11 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
   }
 
   function handleChartPanWheel(event: React.WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
     const timeScale = chartApiRef.current?.timeScale?.();
     const logicalRange = timeScale?.getVisibleLogicalRange?.();
     if (!timeScale || !logicalRange || !Number.isFinite(logicalRange.from) || !Number.isFinite(logicalRange.to)) return;
-    event.preventDefault();
-    event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
     const width = Math.max(1, rect.width);
     const from = Number(logicalRange.from);
@@ -2915,6 +3014,16 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
       });
     }
     window.requestAnimationFrame(updateAlertLinePosition);
+  }
+
+  function handleTimeAxisWheel(event: React.WheelEvent<HTMLDivElement>) {
+    handleChartPanWheel(event);
+  }
+
+  function handleChartWrapWheel(event: React.WheelEvent<HTMLDivElement>) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest(".tv-chart-pan-layer") || target?.closest(".tv-time-axis-hitbox") || target?.closest(".tv-price-axis-hitbox")) return;
+    handleChartPanWheel(event);
   }
 
   function handleAlertPointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -2943,8 +3052,6 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
 
   useEffect(() => {
     let disposed = false;
-    let wheelTarget: HTMLDivElement | null = null;
-    let wheelBlocker: ((event: WheelEvent) => void) | null = null;
 
     async function setupChart() {
       try {
@@ -2995,12 +3102,6 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
             pinch: true,
           },
         });
-        wheelTarget = containerRef.current;
-        wheelBlocker = (event: WheelEvent) => {
-          event.preventDefault();
-          event.stopPropagation();
-        };
-        wheelTarget.addEventListener("wheel", wheelBlocker, { passive: false });
 
         const candleSeries = chart.addCandlestickSeries({
           upColor: "#7cf7c7",
@@ -3050,9 +3151,6 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
     return () => {
       disposed = true;
       detachChartPanListeners();
-      if (wheelTarget && wheelBlocker) {
-        wheelTarget.removeEventListener("wheel", wheelBlocker);
-      }
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
       chartApiRef.current?.remove?.();
@@ -3183,7 +3281,7 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
         <button onClick={() => applyManualPriceScale(clamp(priceZoom * 1.18, 0.35, 8))}>Price +</button>
         <button onClick={resetPriceScale}>Auto</button>
       </div>
-      <div className="tv-chart-wrap" ref={containerRef}>
+      <div className="tv-chart-wrap" ref={containerRef} onWheelCapture={handleChartWrapWheel}>
         {lineY !== null ? (
           <div
             className="tv-alert-drag-line"
@@ -3201,6 +3299,11 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
           onMouseDown={handleChartPanMouseDown}
           onWheel={handleChartPanWheel}
           aria-label="Move price chart"
+        />
+        <div
+          className="tv-time-axis-hitbox"
+          onWheelCapture={handleTimeAxisWheel}
+          aria-label="Time scale"
         />
         <div
           className="tv-price-axis-hitbox"
