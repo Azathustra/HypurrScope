@@ -1579,6 +1579,36 @@ td {
   gap: 10px;
 }
 
+.threshold-readout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.threshold-readout div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.threshold-readout span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.threshold-readout strong {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 1.05rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .threshold-ranges,
 .threshold-zoom {
   display: flex;
@@ -1729,6 +1759,20 @@ td {
   stroke: rgba(255, 255, 255, 0.45);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
+}
+
+.threshold-crosshair {
+  stroke: rgba(255, 255, 255, 0.34);
+  stroke-width: 2;
+  stroke-dasharray: 4 6;
+  vector-effect: non-scaling-stroke;
+}
+
+.threshold-hover-dot {
+  fill: #f2c66d;
+  stroke: #080b0a;
+  stroke-width: 4;
+  filter: drop-shadow(0 0 10px rgba(242, 198, 109, 0.4));
 }
 
 .threshold-handle {
@@ -1985,6 +2029,10 @@ td {
 
   .threshold-ranges {
     width: 100%;
+  }
+
+  .threshold-readout {
+    grid-template-columns: 1fr;
   }
 
   .threshold-ranges button {

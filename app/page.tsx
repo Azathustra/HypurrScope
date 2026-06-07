@@ -190,7 +190,14 @@ type MetricPoint = {
   label: string;
 };
 
+type ChartHover = {
+  point: MetricPoint;
+  x: number;
+  y: number;
+};
+
 type AlertChartRange = "5m" | "1h" | "1d" | "2d" | "7d" | "30d";
+type AlertChartStatus = "loading" | "live" | "fallback";
 
 const HYPE_SUPPLY = 1_000_000_000;
 const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
@@ -592,6 +599,32 @@ function timeAxisLabel(time: number, range: AlertChartRange) {
     return `${date.getMonth() + 1}/${date.getDate()} ${date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`;
   }
   return dailyLabel(time);
+}
+
+function alertCandleInterval(range: AlertChartRange) {
+  if (range === "5m" || range === "1h") return "1m";
+  if (range === "1d") return "15m";
+  if (range === "2d") return "1h";
+  if (range === "7d") return "4h";
+  return "1d";
+}
+
+function isLiveCandleMetric(key: AlertMetricKey) {
+  return key === "hypePrice" || key === "hypeChange24h" || key === "hypeVolume";
+}
+
+function candlesToMetricSeries(key: AlertMetricKey, candles: Candle[], range: AlertChartRange): MetricPoint[] {
+  if (!candles.length) return [];
+  const base = candles[0].close || 1;
+  return candles.map((candle: Candle) => {
+    if (key === "hypeChange24h") {
+      return metricPoint(candle.time, ((candle.close - base) / base) * 100, timeAxisLabel(candle.time, range));
+    }
+    if (key === "hypeVolume") {
+      return metricPoint(candle.time, candle.volume, timeAxisLabel(candle.time, range));
+    }
+    return metricPoint(candle.time, candle.close, timeAxisLabel(candle.time, range));
+  });
 }
 
 function filterSeriesByRange(series: MetricPoint[], range: AlertChartRange) {
@@ -2356,9 +2389,18 @@ function ThresholdPicker({
   const [dragging, setDragging] = useState(false);
   const [range, setRange] = useState<AlertChartRange>("1d");
   const [zoomLevel, setZoomLevel] = useState(0);
+  const [liveSeries, setLiveSeries] = useState<MetricPoint[]>([]);
+  const [chartStatus, setChartStatus] = useState<AlertChartStatus>("fallback");
+  const [hover, setHover] = useState<ChartHover | null>(null);
   const meta = metricMeta(clause.metric);
   const currentValue = snapshot[clause.metric];
-  const series = buildMetricSeries(clause.metric, snapshot, candles, hypeDaily, btcDaily, flowDays, range);
+  const staticSeries = buildMetricSeries(clause.metric, snapshot, candles, hypeDaily, btcDaily, flowDays, range);
+  const needsLiveCandles = isLiveCandleMetric(clause.metric);
+  const flatCurrentSeries = [
+    metricPoint(Date.now() - rangeMs(range), currentValue, "Waiting"),
+    metricPoint(Date.now(), currentValue, "Now"),
+  ];
+  const series = liveSeries.length ? liveSeries : needsLiveCandles ? flatCurrentSeries : staticSeries;
   const thresholdEnabled = clause.condition !== "isPositive" && clause.condition !== "isNegative";
   const thresholdValue = clause.condition === "absGt" ? Math.abs(clause.value) : clause.value;
   const values = series
@@ -2390,7 +2432,64 @@ function ThresholdPicker({
   const firstPoint = series[0];
   const middlePoint = series[Math.floor(series.length / 2)];
   const lastPoint = series[series.length - 1];
+  const activeHover = hover || (lastPoint ? { point: lastPoint, ...pointToChart(lastPoint, series.length - 1) } : null);
   const hit = evaluateClause(clause, snapshot);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadLiveHypeCandles() {
+      setHover(null);
+      if (!isLiveCandleMetric(clause.metric)) {
+        setLiveSeries([]);
+        setChartStatus("fallback");
+        return;
+      }
+      try {
+        setChartStatus("loading");
+        const now = Date.now();
+        const payload = await postInfo({
+          type: "candleSnapshot",
+          req: {
+            coin: "HYPE",
+            interval: alertCandleInterval(range),
+            startTime: now - rangeMs(range),
+            endTime: now,
+          },
+        });
+        if (cancelled) return;
+        const nextCandles = normalizeCandles(payload);
+        const nextSeries = candlesToMetricSeries(clause.metric, nextCandles, range);
+        setLiveSeries(nextSeries);
+        setChartStatus(nextSeries.length ? "live" : "fallback");
+      } catch {
+        if (!cancelled) {
+          setLiveSeries([]);
+          setChartStatus("fallback");
+        }
+      }
+    }
+    loadLiveHypeCandles();
+    return () => {
+      cancelled = true;
+    };
+  }, [clause.metric, range]);
+
+  function pointToChart(point: MetricPoint, index: number) {
+    const x = plot.left + (series.length > 1 ? (index / (series.length - 1)) * plotWidth : 0);
+    const y = plot.top + ((max - point.value) / span) * plotHeight;
+    return { x, y: clamp(y, plot.top, plot.bottom) };
+  }
+
+  function updateHoverFromPointer(event: React.PointerEvent<HTMLDivElement>) {
+    if (!chartRef.current || !series.length) return;
+    const rect = chartRef.current.getBoundingClientRect();
+    const svgX = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 1000;
+    const index = clamp(Math.round(((svgX - plot.left) / plotWidth) * (series.length - 1)), 0, series.length - 1);
+    const pointIndex = Math.round(index);
+    const point = series[pointIndex];
+    const chartPoint = pointToChart(point, pointIndex);
+    setHover({ point, x: chartPoint.x, y: chartPoint.y });
+  }
 
   function updateFromPointer(event: React.PointerEvent<HTMLDivElement>) {
     if (!thresholdEnabled || !chartRef.current) return;
@@ -2406,10 +2505,12 @@ function ThresholdPicker({
     if (!thresholdEnabled) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     setDragging(true);
+    updateHoverFromPointer(event);
     updateFromPointer(event);
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    updateHoverFromPointer(event);
     if (!dragging) return;
     updateFromPointer(event);
   }
@@ -2419,6 +2520,10 @@ function ThresholdPicker({
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     setDragging(false);
+  }
+
+  function handlePointerLeave() {
+    if (!dragging) setHover(null);
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
@@ -2447,6 +2552,17 @@ function ThresholdPicker({
         <em className={hit ? "triggered" : ""}>{hit ? "condition met" : "waiting"}</em>
       </div>
 
+      <div className="threshold-readout">
+        <div>
+          <span>{needsLiveCandles ? (chartStatus === "live" ? "Live HYPE candles" : chartStatus === "loading" ? "Loading HYPE candles" : "Live candles unavailable") : "Derived metric"}</span>
+          <strong>{activeHover ? formatMetricValue(activeHover.point.value, meta.unit) : formatMetricValue(currentValue, meta.unit)}</strong>
+        </div>
+        <div>
+          <span>Pointer</span>
+          <strong>{activeHover?.point.label || "Now"}</strong>
+        </div>
+      </div>
+
       <div className="threshold-tools" aria-label="Chart controls">
         <div className="threshold-ranges">
           {ALERT_CHART_RANGES.map((item: AlertChartRange) => (
@@ -2467,6 +2583,7 @@ function ThresholdPicker({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
+        onPointerLeave={handlePointerLeave}
         onKeyDown={handleKeyDown}
         role="slider"
         tabIndex={thresholdEnabled ? 0 : -1}
@@ -2486,6 +2603,8 @@ function ThresholdPicker({
           {clause.condition === "absGt" ? <line x1={plot.left} x2={plot.right} y1={mirrorY} y2={mirrorY} className="threshold-mirror" /> : null}
           {thresholdEnabled ? <line x1={plot.left} x2={plot.right} y1={thresholdY} y2={thresholdY} className="threshold-rule" /> : null}
           <line x1={plot.left} x2={plot.right} y1={currentY} y2={currentY} className="threshold-current" />
+          {activeHover ? <line x1={activeHover.x} x2={activeHover.x} y1={plot.top} y2={plot.bottom} className="threshold-crosshair" /> : null}
+          {activeHover ? <circle cx={activeHover.x} cy={activeHover.y} r="8" className="threshold-hover-dot" /> : null}
           {thresholdEnabled ? <circle cx="930" cy={thresholdY} r="13" className="threshold-handle" /> : null}
           <text x="10" y={plot.top + 5} className="axis-text">{formatMetricValue(max, meta.unit)}</text>
           <text x="10" y={plot.top + plotHeight / 2 + 5} className="axis-text">{formatMetricValue(midValue, meta.unit)}</text>
@@ -2511,7 +2630,7 @@ function ThresholdPicker({
         </div>
         <div>
           <span>X axis</span>
-          <strong>{rangeLabel(range)} / {series.length} points</strong>
+          <strong>{rangeLabel(range)} / {series.length} candles</strong>
         </div>
         <div>
           <span>Condition</span>
