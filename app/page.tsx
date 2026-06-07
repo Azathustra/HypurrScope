@@ -2826,6 +2826,7 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
   }
 
   function basePriceRange() {
+    if (priceRangeRef.current) return priceRangeRef.current;
     const series = candleSeriesRef.current;
     const container = containerRef.current;
     if (series && container) {
@@ -2837,7 +2838,6 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
         if (maxValue > minValue) return { minValue, maxValue };
       }
     }
-    if (priceRangeRef.current) return priceRangeRef.current;
     const rows = visibleCandlesForScale();
     if (!rows.length) {
       const center = currentPrice > 0 ? currentPrice : 1;
@@ -2879,15 +2879,17 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
     setPriceZoom(nextZoom);
   }
 
-  function zoomPriceRange(factor: number, anchor?: number) {
+  function zoomPriceRange(factor: number) {
     const range = basePriceRange();
     const minValue = range.minValue;
     const maxValue = range.maxValue;
-    const pivot = Number.isFinite(anchor) && anchor ? anchor : (minValue + maxValue) / 2;
-    const nextZoom = clamp(priceZoomRef.current / factor, 0.35, 8);
+    const pivot = (minValue + maxValue) / 2;
+    const currentZoom = priceZoomRef.current;
+    const nextZoom = clamp(currentZoom / factor, 0.35, 8);
+    const appliedFactor = currentZoom / nextZoom;
     applyPriceRange(
-      pivot - (pivot - minValue) * factor,
-      pivot + (maxValue - pivot) * factor,
+      pivot - (pivot - minValue) * appliedFactor,
+      pivot + (maxValue - pivot) * appliedFactor,
     );
     priceZoomRef.current = nextZoom;
     setPriceZoom(nextZoom);
@@ -2901,16 +2903,6 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
     window.requestAnimationFrame(updateAlertLinePosition);
   }
 
-  function priceAtClientY(clientY: number) {
-    const container = containerRef.current;
-    const series = candleSeriesRef.current;
-    if (!container || !series) return undefined;
-    const rect = container.getBoundingClientRect();
-    const y = clamp(clientY - rect.top, 0, plotHeight());
-    const price = series.coordinateToPrice(y);
-    return typeof price === "number" && Number.isFinite(price) ? price : undefined;
-  }
-
   function handlePriceAxisWheelEvent(event: WheelEvent | React.WheelEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
@@ -2919,7 +2911,7 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
     }
     const delta = clamp(event.deltaY, -180, 180);
     const factor = Math.exp(delta / 850);
-    zoomPriceRange(factor, priceAtClientY(event.clientY));
+    zoomPriceRange(factor);
   }
 
   function handlePriceAxisPointerDown(event: React.PointerEvent<HTMLDivElement>) {
