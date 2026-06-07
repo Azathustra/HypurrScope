@@ -164,6 +164,16 @@ type AlertMetricKey =
   | "hypeFunding"
   | "hypeOpenInterest"
   | "hypeVolume"
+  | "takerBuyUsd5m"
+  | "takerSellUsd5m"
+  | "takerBuyRatio5m"
+  | "takerSellRatio5m"
+  | "oiChange15m"
+  | "oiChange4h"
+  | "priceChange15m"
+  | "priceChange4h"
+  | "fundingExtremeScore"
+  | "crowdingScore"
   | "twapNet"
   | "twapSell"
   | "bookSpread"
@@ -174,7 +184,7 @@ type AlertMetricKey =
 
 type AlertCondition = "gt" | "lt" | "absGt" | "isPositive" | "isNegative";
 type AlertJoin = "AND" | "OR";
-type AlertPresetKind = "longSqueeze" | "twapWeakness";
+type AlertPresetKind = "freshLongs" | "freshShorts" | "crowdedLongs" | "crowdedShorts";
 
 type AlertClause = {
   id: string;
@@ -244,6 +254,16 @@ const ALERT_METRICS: MetricMeta[] = [
   { key: "hypeFunding", label: "Asset funding", unit: "pct", description: "Funding rate converted to percent." },
   { key: "hypeOpenInterest", label: "Asset open interest", unit: "usd", description: "Selected asset perp OI in dollars." },
   { key: "hypeVolume", label: "Asset volume", unit: "usd", description: "Selected asset 24h perp volume." },
+  { key: "takerBuyUsd5m", label: "Taker buy flow 5m", unit: "usd", description: "Aggressive buy-flow proxy from the latest execution tape." },
+  { key: "takerSellUsd5m", label: "Taker sell flow 5m", unit: "usd", description: "Aggressive sell-flow proxy from the latest execution tape." },
+  { key: "takerBuyRatio5m", label: "Taker buy ratio 5m", unit: "pct", description: "Share of recent aggressive notional that is buy-side." },
+  { key: "takerSellRatio5m", label: "Taker sell ratio 5m", unit: "pct", description: "Share of recent aggressive notional that is sell-side." },
+  { key: "oiChange15m", label: "OI change 15m proxy", unit: "pct", description: "Short-window OI expansion proxy normalized by current open interest." },
+  { key: "oiChange4h", label: "OI change 4h proxy", unit: "pct", description: "Four-hour OI expansion proxy normalized by current open interest." },
+  { key: "priceChange15m", label: "Price change 15m", unit: "pct", description: "Selected asset price change over the last 15-minute candles." },
+  { key: "priceChange4h", label: "Price change 4h", unit: "pct", description: "Selected asset price change over the last four hours." },
+  { key: "fundingExtremeScore", label: "Funding extreme score", unit: "number", description: "0-100 score for how stretched current funding is." },
+  { key: "crowdingScore", label: "Crowding score", unit: "number", description: "Composite score combining funding stress, OI growth, price stall, and volume." },
   { key: "twapNet", label: "TWAP net pressure", unit: "usd", description: "Buy TWAP notional minus sell TWAP notional." },
   { key: "twapSell", label: "TWAP sell pressure", unit: "usd", description: "Detected sell-side TWAP notional." },
   { key: "bookSpread", label: "Book spread", unit: "pct", description: "Visible best bid/ask spread." },
@@ -631,6 +651,43 @@ function makeCustomDraftRule(snapshot?: MetricSnapshot): AlertRule {
       join: "AND",
     }),
   ]);
+}
+
+function priceChangeFromCandles(candles: Candle[], lookbackMs: number) {
+  if (candles.length < 2) return 0;
+  const last = candles[candles.length - 1];
+  const cutoff = last.time - lookbackMs;
+  const base = [...candles].reverse().find((candle: Candle) => candle.time <= cutoff) || candles[0];
+  if (!base?.close || !last?.close) return 0;
+  return ((last.close - base.close) / base.close) * 100;
+}
+
+function estimateOiChangePct(currentOi: number, recentFlowUsd: number, windowShare: number) {
+  if (!Number.isFinite(currentOi) || currentOi <= 0) return 0;
+  return clamp((Math.abs(recentFlowUsd) / currentOi) * 100 * windowShare, 0, 30);
+}
+
+function fundingExtremeScore(fundingPct: number) {
+  return clamp((Math.abs(fundingPct) / 0.08) * 100, 0, 100);
+}
+
+function volumeIntensityScore(volumeUsd: number, oiUsd: number) {
+  if (!Number.isFinite(volumeUsd) || !Number.isFinite(oiUsd) || oiUsd <= 0) return 0;
+  return clamp((volumeUsd / oiUsd) * 18, 0, 100);
+}
+
+function priceStallScore(priceChangePct: number, direction: "longs" | "shorts") {
+  const move = direction === "longs" ? priceChangePct : -priceChangePct;
+  return clamp(100 - Math.max(0, move) * 55, 0, 100);
+}
+
+function buildCrowdingScore(input: { fundingPct: number; oiChangePct: number; priceChangePct: number; volumeUsd: number; oiUsd: number }) {
+  const side = input.fundingPct >= 0 ? "longs" : "shorts";
+  const fundingScore = fundingExtremeScore(input.fundingPct);
+  const oiScore = clamp((input.oiChangePct / 8) * 100, 0, 100);
+  const stallScore = priceStallScore(input.priceChangePct, side);
+  const volumeScore = volumeIntensityScore(input.volumeUsd, input.oiUsd);
+  return Math.round((fundingScore * 0.4) + (oiScore * 0.35) + (stallScore * 0.15) + (volumeScore * 0.1));
 }
 
 function evaluateClause(clause: AlertClause, snapshot: MetricSnapshot) {
@@ -1531,6 +1588,13 @@ export default function Page() {
   const twapBuy = twaps.filter((row: TwapRow) => row.side === "Buy").reduce((sum: number, row: TwapRow) => sum + row.rawNotional, 0);
   const twapSell = twaps.filter((row: TwapRow) => row.side === "Sell").reduce((sum: number, row: TwapRow) => sum + row.rawNotional, 0);
   const twapNet = twapBuy - twapSell;
+  const tapeBuy = trades.filter((row: TradeRow) => row.side === "Buy").reduce((sum: number, row: TradeRow) => sum + (row.rawNotional || 0), 0);
+  const tapeSell = trades.filter((row: TradeRow) => row.side === "Sell").reduce((sum: number, row: TradeRow) => sum + (row.rawNotional || 0), 0);
+  const takerBuyUsd5m = Math.max(tapeBuy, twapBuy * 0.22);
+  const takerSellUsd5m = Math.max(tapeSell, twapSell * 0.22);
+  const takerTotalUsd5m = takerBuyUsd5m + takerSellUsd5m;
+  const takerBuyRatio5m = takerTotalUsd5m > 0 ? (takerBuyUsd5m / takerTotalUsd5m) * 100 : 50;
+  const takerSellRatio5m = takerTotalUsd5m > 0 ? (takerSellUsd5m / takerTotalUsd5m) * 100 : 50;
   const etfNetFlow = flows.reduce((sum: number, row: FlowRow) => sum + parseMoneyLabel(row.dollarVolume), 0);
   const largestEtfPrint = Math.max(0, ...flows.map((row: FlowRow) => Math.abs(parseMoneyLabel(row.dollarVolume))));
   const exchangeRows = useMemo(() => buildExchangeRows(totalVolume), [totalVolume]);
@@ -1541,12 +1605,34 @@ export default function Page() {
   const relativeStrength = assetReturn30d - benchmarkReturn30d;
   const estimatedRevenue30d = revenueSeries.reduce((sum: number, item: Candle) => sum + item.close, 0);
   const avgDailyRevenue = revenueSeries.length ? estimatedRevenue30d / revenueSeries.length : 0;
+  const priceChange15m = priceChangeFromCandles(candles, 15 * 60_000);
+  const priceChange4h = priceChangeFromCandles(candles, 4 * 60 * 60_000);
+  const oiChange15m = estimateOiChangePct(selected?.oiUsd || 0, takerTotalUsd5m, 3);
+  const oiChange4h = estimateOiChangePct(selected?.oiUsd || 0, takerTotalUsd5m + Math.abs(twapNet), 10);
+  const fundingExtreme = fundingExtremeScore((selected?.funding || 0) * 100);
+  const crowdingScore = buildCrowdingScore({
+    fundingPct: (selected?.funding || 0) * 100,
+    oiChangePct: oiChange4h,
+    priceChangePct: priceChange4h,
+    volumeUsd: selected?.volumeUsd || 0,
+    oiUsd: selected?.oiUsd || 0,
+  });
   const alertSnapshot: MetricSnapshot = {
     hypePrice: selected?.price || 0,
     hypeChange24h: selected?.changePct || 0,
     hypeFunding: (selected?.funding || 0) * 100,
     hypeOpenInterest: selected?.oiUsd || 0,
     hypeVolume: selected?.volumeUsd || 0,
+    takerBuyUsd5m,
+    takerSellUsd5m,
+    takerBuyRatio5m,
+    takerSellRatio5m,
+    oiChange15m,
+    oiChange4h,
+    priceChange15m,
+    priceChange4h,
+    fundingExtremeScore: fundingExtreme,
+    crowdingScore,
     twapNet,
     twapSell,
     bookSpread: book?.spreadPct || 0,
@@ -1652,33 +1738,60 @@ export default function Page() {
 
   const alertPresetCards: Array<{ kind: AlertPresetKind; title: string; tag: string; body: string; checks: string[] }> = [
     {
-      kind: "longSqueeze",
-      title: "Long squeeze early warning",
-      tag: "Leverage risk",
-      body: "Positive funding, heavy OI, and sell TWAP pressure line up before a crowded long unwind.",
-      checks: [`${coin} funding > 0.04%`, `${coin} OI > $800M`, "TWAP net < -$1.5M"],
+      kind: "freshLongs",
+      title: "Fresh longs detected",
+      tag: "New leverage",
+      body: "Detects when aggressive buyers are likely opening fresh leveraged long exposure, not just chasing a green candle.",
+      checks: ["Taker buy flow spike", "Buy ratio > 68%", "OI rising + price confirms"],
     },
     {
-      kind: "twapWeakness",
-      title: "TWAP sell + relative weakness",
-      tag: "Flow reversal",
-      body: `Large sell TWAPs matter more when ${coin} is already weak versus ${benchmarkCoin} and volume is active.`,
-      checks: ["Sell TWAP > $2M", `${coin} 24h < -1%`, `${coin} vs ${benchmarkCoin} 30d < -2%`],
+      kind: "freshShorts",
+      title: "Fresh shorts detected",
+      tag: "New leverage",
+      body: "Detects aggressive sell flow with OI expansion and bearish price confirmation.",
+      checks: ["Taker sell flow spike", "Sell ratio > 68%", "OI rising + price confirms down"],
+    },
+    {
+      kind: "crowdedLongs",
+      title: "Crowded longs risk",
+      tag: "Squeeze setup",
+      body: "Detects when longs are paying expensive funding while OI expands and price stops following.",
+      checks: ["Funding extreme", "OI rising 4h", "Price stalling"],
+    },
+    {
+      kind: "crowdedShorts",
+      title: "Crowded shorts risk",
+      tag: "Squeeze setup",
+      body: "Detects when shorts become crowded, funding is deeply negative, and downside momentum stalls.",
+      checks: ["Negative funding extreme", "OI rising 4h", "Price not breaking down"],
     },
   ];
 
   function loadPreset(kind: AlertPresetKind) {
     const presets: Record<AlertPresetKind, AlertRule> = {
-      longSqueeze: makePresetRule("Long squeeze early warning", [
-        makeClause({ metric: "hypeFunding", condition: "gt", value: 0.04, join: "AND" }),
-        makeClause({ metric: "hypeOpenInterest", condition: "gt", value: 800_000_000, join: "AND" }),
-        makeClause({ metric: "twapNet", condition: "lt", value: -1_500_000, join: "AND" }),
+      freshLongs: makePresetRule("Fresh longs detected", [
+        makeClause({ metric: "takerBuyUsd5m", condition: "gt", value: Math.max(takerBuyUsd5m * 1.15, 1_000_000), join: "AND" }),
+        makeClause({ metric: "takerBuyRatio5m", condition: "gt", value: 68, join: "AND" }),
+        makeClause({ metric: "oiChange15m", condition: "gt", value: Math.max(oiChange15m, 3), join: "AND" }),
+        makeClause({ metric: "priceChange15m", condition: "gt", value: 0.25, join: "AND" }),
       ]),
-      twapWeakness: makePresetRule("TWAP sell + relative weakness", [
-        makeClause({ metric: "twapSell", condition: "gt", value: 2_000_000, join: "AND" }),
-        makeClause({ metric: "hypeChange24h", condition: "lt", value: -1, join: "AND" }),
-        makeClause({ metric: "hypeVsBtc30d", condition: "lt", value: -2, join: "AND" }),
-        makeClause({ metric: "hypeVolume", condition: "gt", value: 400_000_000, join: "AND" }),
+      freshShorts: makePresetRule("Fresh shorts detected", [
+        makeClause({ metric: "takerSellUsd5m", condition: "gt", value: Math.max(takerSellUsd5m * 1.15, 1_000_000), join: "AND" }),
+        makeClause({ metric: "takerSellRatio5m", condition: "gt", value: 68, join: "AND" }),
+        makeClause({ metric: "oiChange15m", condition: "gt", value: Math.max(oiChange15m, 3), join: "AND" }),
+        makeClause({ metric: "priceChange15m", condition: "lt", value: -0.25, join: "AND" }),
+      ]),
+      crowdedLongs: makePresetRule("Crowded longs risk", [
+        makeClause({ metric: "hypeFunding", condition: "gt", value: Math.max((selected?.funding || 0) * 100, 0.04), join: "AND" }),
+        makeClause({ metric: "oiChange4h", condition: "gt", value: Math.max(oiChange4h, 8), join: "AND" }),
+        makeClause({ metric: "priceChange4h", condition: "lt", value: 1.5, join: "AND" }),
+        makeClause({ metric: "crowdingScore", condition: "gt", value: 80, join: "AND" }),
+      ]),
+      crowdedShorts: makePresetRule("Crowded shorts risk", [
+        makeClause({ metric: "hypeFunding", condition: "lt", value: Math.min((selected?.funding || 0) * 100, -0.04), join: "AND" }),
+        makeClause({ metric: "oiChange4h", condition: "gt", value: Math.max(oiChange4h, 8), join: "AND" }),
+        makeClause({ metric: "priceChange4h", condition: "gt", value: -1.5, join: "AND" }),
+        makeClause({ metric: "crowdingScore", condition: "gt", value: 80, join: "AND" }),
       ]),
     };
     const preset = { ...presets[kind], id: "draft" };
@@ -1827,12 +1940,12 @@ export default function Page() {
             <section className="kpi-grid">
               <Kpi label="Saved rules" value={String(alertRules.length)} detail={isAccountReady ? `Local account: ${accountName}` : "Create an account below"} />
               <Kpi label="Triggered now" value={String(activeAlertCount)} detail="Evaluated against the current market snapshot" tone={activeAlertCount ? "negative" : "positive"} />
-              <Kpi label="Metrics available" value={String(ALERT_METRICS.length)} detail="Funding, OI, TWAP, liquidity, ETF, NFT, relative strength" />
+              <Kpi label="Metrics available" value={String(ALERT_METRICS.length)} detail="Taker flow, funding, OI, TWAP, liquidity, ETF, NFT, relative strength" />
               <Kpi label="Delivery" value={telegramHandle ? "Telegram ready" : "Browser now"} detail={telegramHandle ? `@${telegramHandle} linked locally` : "Add Telegram below"} />
             </section>
 
             <section className="alert-layout">
-              <Panel title="Alert presets" subtitle="Two practical market-structure rules to start from, then the builder below lets users customize everything.">
+              <Panel title="Alert presets" subtitle="Hyperliquid-native rules built around fresh leverage and crowded-side risk, then the builder below lets users customize everything.">
                 <div className="featured-presets">
                   {alertPresetCards.map((preset) => (
                     <button className="preset-card" key={preset.kind} onClick={() => loadPreset(preset.kind)}>
