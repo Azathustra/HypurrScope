@@ -1526,6 +1526,17 @@ td {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-2);
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.clause-row:hover,
+.clause-row.selected {
+  border-color: rgba(124, 247, 199, 0.42);
+  background: var(--panel-3);
+}
+
+.clause-row.selected {
+  box-shadow: inset 0 0 0 1px rgba(124, 247, 199, 0.2), 0 16px 36px rgba(0, 0, 0, 0.18);
 }
 
 .clause-start {
@@ -1542,6 +1553,172 @@ td {
 .builder-actions {
   justify-content: space-between;
   margin-top: 16px;
+}
+
+.threshold-picker {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(124, 247, 199, 0.22);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(124, 247, 199, 0.08), var(--panel-2));
+}
+
+.threshold-head,
+.threshold-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.threshold-head span,
+.threshold-footer span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.threshold-head em {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.threshold-head em.triggered {
+  border-color: rgba(255, 122, 141, 0.48);
+  background: rgba(255, 122, 141, 0.12);
+  color: var(--red);
+}
+
+.threshold-chart {
+  position: relative;
+  height: 250px;
+  overflow: hidden;
+  border: 1px solid rgba(40, 48, 44, 0.76);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 80% 18%, rgba(124, 247, 199, 0.08), transparent 28%),
+    #090d0b;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.threshold-chart.disabled {
+  cursor: default;
+  touch-action: auto;
+}
+
+.threshold-chart svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.threshold-chart .grid-line {
+  stroke: rgba(255, 255, 255, 0.07);
+}
+
+.threshold-series {
+  fill: none;
+  stroke: var(--amber);
+  stroke-width: 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.threshold-rule {
+  stroke: var(--mint);
+  stroke-width: 3;
+  stroke-dasharray: 10 7;
+  vector-effect: non-scaling-stroke;
+}
+
+.threshold-mirror {
+  stroke: rgba(124, 247, 199, 0.35);
+  stroke-width: 2;
+  stroke-dasharray: 3 8;
+  vector-effect: non-scaling-stroke;
+}
+
+.threshold-current {
+  stroke: rgba(255, 255, 255, 0.45);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.threshold-handle {
+  fill: var(--mint);
+  stroke: #07110d;
+  stroke-width: 5;
+  filter: drop-shadow(0 0 12px rgba(124, 247, 199, 0.45));
+}
+
+.threshold-picker.dragging .threshold-handle {
+  filter: drop-shadow(0 0 18px rgba(124, 247, 199, 0.8));
+}
+
+.threshold-scale,
+.threshold-current-label,
+.threshold-target-label {
+  position: absolute;
+  z-index: 2;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: rgba(6, 10, 8, 0.82);
+  color: var(--muted);
+  font-size: 0.72rem;
+  pointer-events: none;
+}
+
+.threshold-scale.top {
+  top: 8px;
+  left: 8px;
+}
+
+.threshold-scale.bottom {
+  bottom: 8px;
+  left: 8px;
+}
+
+.threshold-current-label {
+  right: 8px;
+  transform: translateY(-50%);
+  color: #dfe7e2;
+}
+
+.threshold-target-label {
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(124, 247, 199, 0.35);
+  color: var(--mint);
+  font-weight: 780;
+}
+
+.threshold-footer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.threshold-footer div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.threshold-picker p {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .alert-preview,

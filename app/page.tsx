@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type View = "overview" | "alerts" | "statistics" | "markets" | "liquidity" | "twaps" | "nfts" | "etf" | "hip3" | "hip4" | "exchange" | "wallet" | "builder";
 type Status = "loading" | "live" | "fallback" | "error";
@@ -182,6 +182,12 @@ type MetricMeta = {
   label: string;
   unit: "usd" | "pct" | "number";
   description: string;
+};
+
+type MetricPoint = {
+  time: number;
+  value: number;
+  label: string;
 };
 
 const HYPE_SUPPLY = 1_000_000_000;
@@ -497,7 +503,7 @@ function evaluateClause(clause: AlertClause, snapshot: MetricSnapshot) {
   const value = snapshot[clause.metric];
   if (clause.condition === "gt") return value > clause.value;
   if (clause.condition === "lt") return value < clause.value;
-  if (clause.condition === "absGt") return Math.abs(value) > clause.value;
+  if (clause.condition === "absGt") return Math.abs(value) > Math.abs(clause.value);
   if (clause.condition === "isPositive") return value > 0;
   return value < 0;
 }
@@ -517,12 +523,93 @@ function explainClause(clause: AlertClause, snapshot: MetricSnapshot) {
   const target =
     clause.condition === "isPositive" || clause.condition === "isNegative"
       ? ""
-      : ` ${formatMetricValue(clause.value, meta.unit)}`;
+      : ` ${formatMetricValue(clause.condition === "absGt" ? Math.abs(clause.value) : clause.value, meta.unit)}`;
   return `${meta.label}: ${current} / ${conditionLabel(clause.condition)}${target}`;
 }
 
 function alertSummary(rule: AlertRule, snapshot: MetricSnapshot) {
   return rule.clauses.map((clause: AlertClause, index: number) => `${index ? `${clause.join} ` : ""}${explainClause(clause, snapshot)}`).join(" | ");
+}
+
+function metricStep(unit: MetricMeta["unit"], span: number) {
+  if (unit === "usd") {
+    if (span >= 1_000_000_000) return 10_000_000;
+    if (span >= 100_000_000) return 1_000_000;
+    if (span >= 10_000_000) return 100_000;
+    if (span >= 1_000_000) return 10_000;
+    if (span >= 100_000) return 1_000;
+    if (span >= 10_000) return 100;
+    if (span >= 1_000) return 10;
+    return 0.01;
+  }
+  if (unit === "pct") {
+    if (span >= 20) return 0.25;
+    if (span >= 2) return 0.05;
+    return 0.001;
+  }
+  return span >= 100 ? 1 : 0.1;
+}
+
+function roundMetricThreshold(value: number, unit: MetricMeta["unit"], span: number) {
+  const step = metricStep(unit, span);
+  const rounded = Math.round(value / step) * step;
+  if (unit === "usd") return Number(rounded.toFixed(step < 1 ? 2 : 0));
+  if (unit === "pct") return Number(rounded.toFixed(step < 0.01 ? 4 : 2));
+  return Number(rounded.toFixed(step < 1 ? 1 : 0));
+}
+
+function metricPoint(time: number, value: number, label: string): MetricPoint {
+  return { time, value: Number.isFinite(value) ? value : 0, label };
+}
+
+function syntheticMetricSeries(current: number, unit: MetricMeta["unit"], key: AlertMetricKey): MetricPoint[] {
+  const safeCurrent = Number.isFinite(current) ? current : 0;
+  const floor = unit === "pct" ? 0.02 : unit === "usd" ? Math.max(50_000, Math.abs(safeCurrent) * 0.12) : 1;
+  const amplitude = Math.max(Math.abs(safeCurrent) * 0.28, floor);
+  const phase = ALERT_METRICS.findIndex((metric: MetricMeta) => metric.key === key) + 1;
+  return Array.from({ length: 36 }, (_, index: number) => {
+    const wave = Math.sin(index / 3.2 + phase) * 0.68 + Math.cos(index / 6.5 + phase * 0.5) * 0.32;
+    const drift = (index - 35) * amplitude * 0.006;
+    const value = index === 35 ? safeCurrent : safeCurrent + wave * amplitude + drift;
+    return metricPoint(Date.now() - (35 - index) * 30 * 60_000, value, index === 35 ? "Now" : `T-${35 - index}`);
+  });
+}
+
+function buildMetricSeries(
+  key: AlertMetricKey,
+  snapshot: MetricSnapshot,
+  candles: Candle[],
+  hypeDaily: Candle[],
+  btcDaily: Candle[],
+  flowDays: FlowDay[],
+): MetricPoint[] {
+  const meta = metricMeta(key);
+  if (key === "hypePrice" && candles.length > 1) {
+    return candles.slice(-60).map((candle: Candle) => metricPoint(candle.time, candle.close, dailyLabel(candle.time)));
+  }
+  if (key === "hypeChange24h" && candles.length > 1) {
+    const first = candles[0].close || 1;
+    return candles.slice(-60).map((candle: Candle) => metricPoint(candle.time, ((candle.close - first) / first) * 100, dailyLabel(candle.time)));
+  }
+  if (key === "hypeVolume" && candles.length > 1) {
+    return candles.slice(-60).map((candle: Candle) => metricPoint(candle.time, candle.volume, dailyLabel(candle.time)));
+  }
+  if (key === "hypeVsBtc30d" && hypeDaily.length > 1 && btcDaily.length > 1) {
+    const length = Math.min(hypeDaily.length, btcDaily.length);
+    const hypeBase = hypeDaily[hypeDaily.length - length].close || 1;
+    const btcBase = btcDaily[btcDaily.length - length].close || 1;
+    return Array.from({ length }, (_, index: number) => {
+      const hypeCandle = hypeDaily[hypeDaily.length - length + index];
+      const btcCandle = btcDaily[btcDaily.length - length + index];
+      const hypeReturn = ((hypeCandle.close - hypeBase) / hypeBase) * 100;
+      const btcReturn = ((btcCandle.close - btcBase) / btcBase) * 100;
+      return metricPoint(hypeCandle.time, hypeReturn - btcReturn, dailyLabel(hypeCandle.time));
+    });
+  }
+  if (key === "etfNetFlow" && flowDays.length > 1) {
+    return flowDays.map((day: FlowDay, index: number) => metricPoint(Date.now() - (flowDays.length - 1 - index) * 24 * 60 * 60_000, day.net, day.date));
+  }
+  return syntheticMetricSeries(snapshot[key], meta.unit, key);
 }
 
 function scoreRisk(changePct: number, funding: number, oiUsd: number, volumeUsd: number, maxLeverage = 10) {
@@ -899,6 +986,7 @@ export default function Page() {
   const [buyback, setBuyback] = useState<BuybackData>(EMPTY_BUYBACK);
   const [buybackStatus, setBuybackStatus] = useState<Status>("loading");
   const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
+  const [selectedClauseId, setSelectedClauseId] = useState("draft-1");
   const [draftRule, setDraftRule] = useState<AlertRule>({
     id: "draft",
     name: "Crowded long unwind risk",
@@ -941,6 +1029,12 @@ export default function Page() {
       return;
     }
   }, [alertRules]);
+
+  useEffect(() => {
+    if (!draftRule.clauses.some((clause: AlertClause) => clause.id === selectedClauseId)) {
+      setSelectedClauseId(draftRule.clauses[0]?.id || "");
+    }
+  }, [draftRule.clauses, selectedClauseId]);
 
   useEffect(() => {
     loadNfts();
@@ -1136,6 +1230,7 @@ export default function Page() {
     nftSales24h: Number(nftStats.sales24h.replace(/,/g, "")) || 0,
   };
   const activeAlertCount = alertRules.filter((rule: AlertRule) => evaluateRule(rule, alertSnapshot)).length;
+  const selectedDraftClause = draftRule.clauses.find((clause: AlertClause) => clause.id === selectedClauseId) || draftRule.clauses[0];
   const regimeScore = Math.round(
     clamp(Math.abs(weightedFunding) * 60_000 + Math.abs(selected?.changePct || 0) * 2 + Math.abs(book?.imbalance || 0) * 0.2, 0, 99),
   );
@@ -1196,10 +1291,12 @@ export default function Page() {
   }
 
   function addDraftClause() {
+    const nextClause = makeClause({ metric: "hypeOpenInterest", condition: "gt", value: 1_000_000_000 });
     setDraftRule((current: AlertRule) => ({
       ...current,
-      clauses: current.clauses.concat(makeClause({ metric: "hypeOpenInterest", condition: "gt", value: 1_000_000_000 })),
+      clauses: current.clauses.concat(nextClause),
     }));
+    setSelectedClauseId(nextClause.id);
   }
 
   function saveDraftRule() {
@@ -1243,7 +1340,9 @@ export default function Page() {
         makeClause({ metric: "bookImbalance", condition: "absGt", value: 20, join: "AND" }),
       ]),
     };
-    setDraftRule({ ...presets[kind], id: "draft" });
+    const preset = { ...presets[kind], id: "draft" };
+    setDraftRule(preset);
+    setSelectedClauseId(preset.clauses[0]?.id || "");
   }
 
   return (
@@ -1388,7 +1487,11 @@ export default function Page() {
 
                 <div className="clause-list">
                   {draftRule.clauses.map((clause: AlertClause, index: number) => (
-                    <div className="clause-row" key={clause.id}>
+                    <div
+                      className={clause.id === selectedDraftClause?.id ? "clause-row selected" : "clause-row"}
+                      key={clause.id}
+                      onFocusCapture={() => setSelectedClauseId(clause.id)}
+                    >
                       {index > 0 ? (
                         <select value={clause.join} onChange={(event) => updateDraftClause(clause.id, { join: event.target.value as AlertJoin })}>
                           <option value="AND">AND</option>
@@ -1409,9 +1512,12 @@ export default function Page() {
                       </select>
                       <input
                         type="number"
-                        value={clause.value}
+                        value={clause.condition === "absGt" ? Math.abs(clause.value) : clause.value}
                         disabled={clause.condition === "isPositive" || clause.condition === "isNegative"}
-                        onChange={(event) => updateDraftClause(clause.id, { value: Number(event.target.value) })}
+                        onChange={(event) => {
+                          const value = Number(event.target.value);
+                          updateDraftClause(clause.id, { value: clause.condition === "absGt" ? Math.abs(value) : value });
+                        }}
                       />
                       <button className="small-danger" onClick={() => removeDraftClause(clause.id)}>Remove</button>
                     </div>
@@ -1425,6 +1531,17 @@ export default function Page() {
               </Panel>
 
               <Panel title="Live preview" subtitle="The rule is evaluated immediately against the current Hyperliquid snapshot.">
+                {selectedDraftClause ? (
+                  <ThresholdPicker
+                    clause={selectedDraftClause}
+                    snapshot={alertSnapshot}
+                    candles={candles}
+                    hypeDaily={hypeDaily}
+                    btcDaily={btcDaily}
+                    flowDays={flowDays}
+                    onChange={(value: number) => updateDraftClause(selectedDraftClause.id, { value })}
+                  />
+                ) : null}
                 <AlertPreview rule={draftRule} snapshot={alertSnapshot} />
                 <div className="metric-grid">
                   {ALERT_METRICS.map((metric: MetricMeta) => (
@@ -2168,6 +2285,162 @@ function FlowCard({ row }: { row: FlowRow }) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function ThresholdPicker({
+  clause,
+  snapshot,
+  candles,
+  hypeDaily,
+  btcDaily,
+  flowDays,
+  onChange,
+}: {
+  clause: AlertClause;
+  snapshot: MetricSnapshot;
+  candles: Candle[];
+  hypeDaily: Candle[];
+  btcDaily: Candle[];
+  flowDays: FlowDay[];
+  onChange: (value: number) => void;
+}) {
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const meta = metricMeta(clause.metric);
+  const currentValue = snapshot[clause.metric];
+  const series = buildMetricSeries(clause.metric, snapshot, candles, hypeDaily, btcDaily, flowDays);
+  const thresholdEnabled = clause.condition !== "isPositive" && clause.condition !== "isNegative";
+  const thresholdValue = clause.condition === "absGt" ? Math.abs(clause.value) : clause.value;
+  const values = series
+    .map((point: MetricPoint) => point.value)
+    .concat(currentValue, thresholdEnabled ? thresholdValue : currentValue, clause.condition === "absGt" ? -thresholdValue : currentValue);
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const padding = Math.max(Math.abs(rawMax - rawMin) * 0.18, meta.unit === "pct" ? 0.02 : meta.unit === "usd" ? 10_000 : 1);
+  const min = rawMin - padding;
+  const max = rawMax + padding;
+  const span = Math.max(0.000001, max - min);
+  const points = series
+    .map((point: MetricPoint, index: number) => {
+      const x = series.length > 1 ? (index / (series.length - 1)) * 1000 : 0;
+      const y = ((max - point.value) / span) * 260;
+      return `${x},${clamp(y, 0, 260)}`;
+    })
+    .join(" ");
+  const thresholdY = clamp(((max - thresholdValue) / span) * 260, 0, 260);
+  const mirrorY = clamp(((max + thresholdValue) / span) * 260, 0, 260);
+  const currentY = clamp(((max - currentValue) / span) * 260, 0, 260);
+  const hit = evaluateClause(clause, snapshot);
+
+  function updateFromPointer(event: React.PointerEvent<HTMLDivElement>) {
+    if (!thresholdEnabled || !chartRef.current) return;
+    const rect = chartRef.current.getBoundingClientRect();
+    const y = clamp(event.clientY - rect.top, 0, rect.height);
+    const nextValue = max - (y / Math.max(1, rect.height)) * span;
+    const rounded = roundMetricThreshold(nextValue, meta.unit, span);
+    onChange(clause.condition === "absGt" ? Math.abs(rounded) : rounded);
+  }
+
+  function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (!thresholdEnabled) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragging(true);
+    updateFromPointer(event);
+  }
+
+  function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (!dragging) return;
+    updateFromPointer(event);
+  }
+
+  function handlePointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setDragging(false);
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (!thresholdEnabled) return;
+    const step = metricStep(meta.unit, span);
+    let nextValue = thresholdValue;
+    if (event.key === "ArrowUp") nextValue += step;
+    else if (event.key === "ArrowDown") nextValue -= step;
+    else if (event.key === "PageUp") nextValue += step * 10;
+    else if (event.key === "PageDown") nextValue -= step * 10;
+    else if (event.key === "Home") nextValue = min;
+    else if (event.key === "End") nextValue = max;
+    else return;
+    event.preventDefault();
+    const rounded = roundMetricThreshold(clamp(nextValue, min, max), meta.unit, span);
+    onChange(clause.condition === "absGt" ? Math.abs(rounded) : rounded);
+  }
+
+  return (
+    <article className={dragging ? "threshold-picker dragging" : "threshold-picker"}>
+      <div className="threshold-head">
+        <div>
+          <span>Mouse threshold picker</span>
+          <strong>{meta.label}</strong>
+        </div>
+        <em className={hit ? "triggered" : ""}>{hit ? "condition met" : "waiting"}</em>
+      </div>
+
+      <div
+        className={thresholdEnabled ? "threshold-chart" : "threshold-chart disabled"}
+        ref={chartRef}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onKeyDown={handleKeyDown}
+        role="slider"
+        tabIndex={thresholdEnabled ? 0 : -1}
+        aria-disabled={!thresholdEnabled}
+        aria-label={`${meta.label} alert threshold`}
+        aria-valuenow={thresholdValue}
+        aria-valuemin={min}
+        aria-valuemax={max}
+      >
+        <svg viewBox="0 0 1000 260" preserveAspectRatio="none" aria-hidden="true">
+          <line x1="0" x2="1000" y1="40" y2="40" className="grid-line" />
+          <line x1="0" x2="1000" y1="130" y2="130" className="grid-line" />
+          <line x1="0" x2="1000" y1="220" y2="220" className="grid-line" />
+          <polyline points={points} className="threshold-series" />
+          {clause.condition === "absGt" ? <line x1="0" x2="1000" y1={mirrorY} y2={mirrorY} className="threshold-mirror" /> : null}
+          {thresholdEnabled ? <line x1="0" x2="1000" y1={thresholdY} y2={thresholdY} className="threshold-rule" /> : null}
+          <line x1="0" x2="1000" y1={currentY} y2={currentY} className="threshold-current" />
+          {thresholdEnabled ? <circle cx="930" cy={thresholdY} r="13" className="threshold-handle" /> : null}
+        </svg>
+        <div className="threshold-scale top">{formatMetricValue(max, meta.unit)}</div>
+        <div className="threshold-scale bottom">{formatMetricValue(min, meta.unit)}</div>
+        <div className="threshold-current-label" style={{ top: `${(currentY / 260) * 100}%` }}>
+          live {formatMetricValue(currentValue, meta.unit)}
+        </div>
+        {thresholdEnabled ? (
+          <div className="threshold-target-label" style={{ top: `${(thresholdY / 260) * 100}%` }}>
+            alert {formatMetricValue(thresholdValue, meta.unit)}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="threshold-footer">
+        <div>
+          <span>Condition</span>
+          <strong>{conditionLabel(clause.condition)}</strong>
+        </div>
+        <div>
+          <span>Threshold</span>
+          <strong>{thresholdEnabled ? formatMetricValue(thresholdValue, meta.unit) : "No number needed"}</strong>
+        </div>
+      </div>
+      <p>
+        {thresholdEnabled
+          ? "Drag the mint line on the chart to set the alert level. The numeric field on the left updates automatically."
+          : "This condition only checks whether the metric is positive or negative, so it does not need a manual level."}
+      </p>
+    </article>
+  );
 }
 
 function AlertPreview({ rule, snapshot }: { rule: AlertRule; snapshot: MetricSnapshot }) {
