@@ -183,7 +183,7 @@ type AlertMetricKey =
   | "etfNetFlow"
   | "nftSales24h";
 
-type AlertCondition = "gt" | "lt" | "absGt" | "isPositive" | "isNegative";
+type AlertCondition = "gt" | "gte" | "lt" | "lte" | "absGt" | "isPositive" | "isNegative";
 type AlertJoin = "AND" | "OR";
 type AlertPresetKind = "freshLongs" | "freshShorts" | "crowdedLongs" | "crowdedShorts";
 
@@ -284,16 +284,16 @@ const NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
 const ALERT_METRICS: MetricMeta[] = [
   { key: "hypePrice", label: "Asset price", unit: "usd", description: "Current selected asset mark price." },
   { key: "hypeChange24h", label: "Asset 24h change", unit: "pct", description: "Daily price change for the selected asset." },
-  { key: "hypeFunding", label: "Asset funding", unit: "pct", description: "Funding rate converted to percent." },
+  { key: "hypeFunding", label: "Hourly funding", unit: "pct", description: "Hourly funding displayed as percent; 0.010 means 0.010%, equal to 0.00010 raw API funding." },
   { key: "hypeOpenInterest", label: "Asset open interest", unit: "usd", description: "Selected asset perp OI in dollars." },
-  { key: "hypeVolume", label: "Asset volume", unit: "usd", description: "Selected asset 24h perp volume." },
-  { key: "assetVolumeRank", label: "Asset volume rank", unit: "number", description: "Rank by 24h perp volume across loaded Hyperliquid markets." },
+  { key: "hypeVolume", label: "24h volume USD", unit: "usd", description: "Selected asset 24h perp notional volume in dollars." },
+  { key: "assetVolumeRank", label: "Volume rank", unit: "number", description: "Rank by 24h perp volume across loaded Hyperliquid markets." },
   { key: "takerBuyUsd5m", label: "Taker buy flow 5m", unit: "usd", description: "Aggressive buy-flow proxy from the latest execution tape." },
   { key: "takerSellUsd5m", label: "Taker sell flow 5m", unit: "usd", description: "Aggressive sell-flow proxy from the latest execution tape." },
   { key: "takerBuyRatio5m", label: "Taker buy ratio 5m", unit: "pct", description: "Share of recent aggressive notional that is buy-side." },
   { key: "takerSellRatio5m", label: "Taker sell ratio 5m", unit: "pct", description: "Share of recent aggressive notional that is sell-side." },
-  { key: "oiChange15m", label: "OI change 15m proxy", unit: "pct", description: "Short-window OI expansion proxy normalized by current open interest." },
-  { key: "oiChange4h", label: "OI change 4h proxy", unit: "pct", description: "Four-hour OI expansion proxy normalized by current open interest." },
+  { key: "oiChange15m", label: "OI change 15m", unit: "pct", description: "Short-window OI expansion normalized by current open interest." },
+  { key: "oiChange4h", label: "OI change 4h", unit: "pct", description: "Four-hour OI expansion normalized by current open interest." },
   { key: "priceChange15m", label: "Price change 15m", unit: "pct", description: "Selected asset price change over the last 15-minute candles." },
   { key: "priceChange4h", label: "Price change 4h", unit: "pct", description: "Selected asset price change over the last four hours." },
   { key: "fundingExtremeScore", label: "Funding extreme score", unit: "number", description: "0-100 score for how stretched current funding is." },
@@ -677,7 +677,9 @@ function metricMeta(key: AlertMetricKey) {
 
 function conditionLabel(condition: AlertCondition) {
   if (condition === "gt") return "greater than";
+  if (condition === "gte") return "greater than or equal to";
   if (condition === "lt") return "less than";
+  if (condition === "lte") return "less than or equal to";
   if (condition === "absGt") return "absolute value greater than";
   if (condition === "isPositive") return "is positive";
   return "is negative";
@@ -757,7 +759,9 @@ function buildCrowdingScore(input: { fundingPct: number; oiChangePct: number; pr
 function evaluateClause(clause: AlertClause, snapshot: MetricSnapshot) {
   const value = snapshot[clause.metric];
   if (clause.condition === "gt") return value > clause.value;
+  if (clause.condition === "gte") return value >= clause.value;
   if (clause.condition === "lt") return value < clause.value;
+  if (clause.condition === "lte") return value <= clause.value;
   if (clause.condition === "absGt") return Math.abs(value) > Math.abs(clause.value);
   if (clause.condition === "isPositive") return value > 0;
   return value < 0;
@@ -1762,7 +1766,7 @@ export default function Page() {
     : "Historical baselines loading/fallback";
   const liquidMarketClauses = [
     makeClause({ metric: "hypeVolume", condition: "gt", value: 25_000_000, join: "AND" }),
-    makeClause({ metric: "assetVolumeRank", condition: "lt", value: 31, join: "AND" }),
+    makeClause({ metric: "assetVolumeRank", condition: "lte", value: 30, join: "AND" }),
   ];
   const presetCalibration = ASSET_PRESET_CALIBRATIONS[coin] || ASSET_PRESET_CALIBRATIONS.HYPE;
   const regimeScore = Math.round(
@@ -1863,28 +1867,28 @@ export default function Page() {
       title: "Fresh longs detected",
       tag: "New leverage",
       body: "Detects when aggressive buyers are likely opening fresh leveraged long exposure, not just chasing a green candle.",
-      checks: [`${presetCalibration.family}: ${presetCalibration.examples}`, `Buy flow 5m > ${formatUsd(presetCalibration.flow5m)}`, `OI 15m > ${formatPct(presetCalibration.oi15m, 2, false)} + price > +0.35%`, "Cooldown 20m"],
+      checks: ["24h volume > $25M + rank <= 30", `${presetCalibration.family}: ${presetCalibration.examples}`, `Buy flow 5m > ${formatUsd(presetCalibration.flow5m)}`, `OI 15m > ${formatPct(presetCalibration.oi15m, 2, false)} + price > +0.35%`, "Cooldown 20m"],
     },
     {
       kind: "freshShorts",
       title: "Fresh shorts detected",
       tag: "New leverage",
       body: "Detects aggressive sell flow with OI expansion and bearish price confirmation.",
-      checks: [`${presetCalibration.family}: ${presetCalibration.examples}`, `Sell flow 5m > ${formatUsd(presetCalibration.flow5m)}`, `OI 15m > ${formatPct(presetCalibration.oi15m, 2, false)} + price < -0.35%`, "Cooldown 20m"],
+      checks: ["24h volume > $25M + rank <= 30", `${presetCalibration.family}: ${presetCalibration.examples}`, `Sell flow 5m > ${formatUsd(presetCalibration.flow5m)}`, `OI 15m > ${formatPct(presetCalibration.oi15m, 2, false)} + price < -0.35%`, "Cooldown 20m"],
     },
     {
       kind: "crowdedLongs",
       title: "Crowded longs risk",
       tag: "Squeeze setup",
       body: "Detects when longs are paying expensive funding while OI expands and price stops following.",
-      checks: [`${presetCalibration.family}: ${presetCalibration.examples}`, "Funding > +0.010%", `OI 4h > ${formatPct(presetCalibration.oi4h, 2, false)} + price stalled`, "Cooldown 2h"],
+      checks: ["24h volume > $25M + rank <= 30", `${presetCalibration.family}: ${presetCalibration.examples}`, "Hourly funding > +0.010%", `OI 4h > ${formatPct(presetCalibration.oi4h, 2, false)} + price stalled`, "Cooldown 2h"],
     },
     {
       kind: "crowdedShorts",
       title: "Crowded shorts risk",
       tag: "Squeeze setup",
       body: "Detects when shorts become crowded, funding is deeply negative, and downside momentum stalls.",
-      checks: [`${presetCalibration.family}: ${presetCalibration.examples}`, "Funding < -0.010%", `OI 4h > ${formatPct(presetCalibration.oi4h, 2, false)} + price stalled`, "Cooldown 2h"],
+      checks: ["24h volume > $25M + rank <= 30", `${presetCalibration.family}: ${presetCalibration.examples}`, "Hourly funding < -0.010%", `OI 4h > ${formatPct(presetCalibration.oi4h, 2, false)} + price stalled`, "Cooldown 2h"],
     },
   ];
 
@@ -2142,7 +2146,9 @@ export default function Page() {
                       </select>
                       <select value={clause.condition} onChange={(event) => updateDraftClause(clause.id, { condition: event.target.value as AlertCondition })}>
                         <option value="gt">greater than</option>
+                        <option value="gte">greater or equal</option>
                         <option value="lt">less than</option>
+                        <option value="lte">less or equal</option>
                         <option value="absGt">abs greater than</option>
                         <option value="isPositive">is positive</option>
                         <option value="isNegative">is negative</option>
