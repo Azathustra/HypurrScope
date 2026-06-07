@@ -1257,6 +1257,7 @@ function DepthBars({ book }: { book: Book | null }) {
 }
 
 export default function Page() {
+  const accountPanelRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>(initialView);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [coin, setCoin] = useState(initialCoin);
@@ -1300,6 +1301,13 @@ export default function Page() {
     createdAt: new Date(0).toISOString(),
     delivery: "browser",
   });
+
+  function openAccountPanel() {
+    setView("alerts");
+    window.setTimeout(() => {
+      accountPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 80);
+  }
 
   useEffect(() => {
     loadMarketData();
@@ -1735,7 +1743,7 @@ export default function Page() {
                 </svg>
               )}
             </button>
-            <button className="account-button" onClick={() => setView("alerts")}>
+            <button className="account-button" onClick={openAccountPanel}>
               <span>{isAccountReady ? accountName.slice(0, 1).toUpperCase() : "?"}</span>
               <strong>{isAccountReady ? accountName : "Connect"}</strong>
             </button>
@@ -1950,7 +1958,7 @@ export default function Page() {
               </Panel>
 
               <Panel title="Account & Telegram" subtitle="Local account now, backend-ready flow later: Supabase user, Telegram chat_id, scheduled alert worker.">
-                <div className="account-card">
+                <div className="account-card" ref={accountPanelRef}>
                   <div className="account-summary">
                     <span>{isAccountReady ? "Connected locally" : "Guest mode"}</span>
                     <strong>{accountName}</strong>
@@ -2759,6 +2767,7 @@ function ThresholdPicker(props: ThresholdPickerProps) {
 
 function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPickerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const priceAxisRef = useRef<HTMLDivElement>(null);
   const chartApiRef = useRef<any>(null);
   const candleSeriesRef = useRef<any>(null);
   const thresholdScaleSeriesRef = useRef<any>(null);
@@ -2803,6 +2812,10 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
     onChange(roundAlertThreshold(price, "hypePrice", "usd", Math.max(price * 0.12, 1)));
   }
 
+  function plotHeight() {
+    return Math.max(1, (containerRef.current?.clientHeight || 360) - 48);
+  }
+
   function visibleCandlesForScale() {
     const rangeInfo = chartApiRef.current?.timeScale?.().getVisibleRange?.();
     if (!rangeInfo?.from || !rangeInfo?.to) return candles.length ? candles : [];
@@ -2817,7 +2830,7 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
     const container = containerRef.current;
     if (series && container) {
       const top = series.coordinateToPrice(0);
-      const bottom = series.coordinateToPrice(container.clientHeight);
+      const bottom = series.coordinateToPrice(plotHeight());
       if (typeof top === "number" && typeof bottom === "number" && Number.isFinite(top) && Number.isFinite(bottom)) {
         const minValue = Math.min(top, bottom, thresholdValue);
         const maxValue = Math.max(top, bottom, thresholdValue);
@@ -2871,10 +2884,13 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
     const minValue = range.minValue;
     const maxValue = range.maxValue;
     const pivot = Number.isFinite(anchor) && anchor ? anchor : (minValue + maxValue) / 2;
+    const nextZoom = clamp(priceZoomRef.current / factor, 0.35, 8);
     applyPriceRange(
       pivot - (pivot - minValue) * factor,
       pivot + (maxValue - pivot) * factor,
     );
+    priceZoomRef.current = nextZoom;
+    setPriceZoom(nextZoom);
   }
 
   function resetPriceScale() {
@@ -2885,18 +2901,25 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
     window.requestAnimationFrame(updateAlertLinePosition);
   }
 
-  function handlePriceAxisWheel(event: React.WheelEvent<HTMLDivElement>) {
-    event.preventDefault();
-    event.stopPropagation();
+  function priceAtClientY(clientY: number) {
     const container = containerRef.current;
     const series = candleSeriesRef.current;
-    let anchor: number | undefined;
-    if (container && series) {
-      const rect = container.getBoundingClientRect();
-      const price = series.coordinateToPrice(event.clientY - rect.top);
-      if (typeof price === "number" && Number.isFinite(price)) anchor = price;
+    if (!container || !series) return undefined;
+    const rect = container.getBoundingClientRect();
+    const y = clamp(clientY - rect.top, 0, plotHeight());
+    const price = series.coordinateToPrice(y);
+    return typeof price === "number" && Number.isFinite(price) ? price : undefined;
+  }
+
+  function handlePriceAxisWheelEvent(event: WheelEvent | React.WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if ("stopImmediatePropagation" in event) {
+      event.stopImmediatePropagation();
     }
-    zoomPriceRange(event.deltaY < 0 ? 0.88 : 1.14, anchor);
+    const delta = clamp(event.deltaY, -180, 180);
+    const factor = Math.exp(delta / 850);
+    zoomPriceRange(factor, priceAtClientY(event.clientY));
   }
 
   function handlePriceAxisPointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -3043,6 +3066,14 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
     }
     setDragging(false);
   }
+
+  useEffect(() => {
+    const priceAxis = priceAxisRef.current;
+    if (!priceAxis) return;
+    const handleWheel = (event: WheelEvent) => handlePriceAxisWheelEvent(event);
+    priceAxis.addEventListener("wheel", handleWheel, { passive: false });
+    return () => priceAxis.removeEventListener("wheel", handleWheel);
+  });
 
   useEffect(() => {
     if ((!Number.isFinite(clause.value) || clause.value <= 0) && currentPrice > 0) {
@@ -3307,7 +3338,7 @@ function HypePriceAlertChart({ clause, snapshot, asset, onChange }: ThresholdPic
         />
         <div
           className="tv-price-axis-hitbox"
-          onWheelCapture={handlePriceAxisWheel}
+          ref={priceAxisRef}
           onPointerDown={handlePriceAxisPointerDown}
           onPointerMove={handlePriceAxisPointerMove}
           onPointerUp={handlePriceAxisPointerUp}
