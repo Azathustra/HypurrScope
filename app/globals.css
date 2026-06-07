@@ -1902,6 +1902,12 @@ td {
   color: var(--text);
 }
 
+.tv-row-separator {
+  width: 1px;
+  height: 28px;
+  background: var(--line);
+}
+
 .tv-chart-wrap {
   position: relative;
   width: 100%;
@@ -1910,6 +1916,16 @@ td {
   border: 1px solid rgba(40, 48, 44, 0.76);
   border-radius: 8px;
   background: #090d0b;
+}
+
+.tv-price-wheel-zone {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 7;
+  width: 62px;
+  height: 100%;
+  cursor: ns-resize;
 }
 
 .tv-alert-drag-line {

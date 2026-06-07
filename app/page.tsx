@@ -199,13 +199,14 @@ type ChartHover = {
   y: number;
 };
 
-type AlertChartRange = "5m" | "1h" | "1d" | "2d" | "7d" | "30d";
+type AlertChartRange = "5m" | "1h" | "1d" | "2d" | "7d" | "30d" | "90d" | "1y" | "all";
 type AlertChartStatus = "loading" | "live" | "fallback";
 
 const HYPE_SUPPLY = 1_000_000_000;
 const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
 const HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info";
 const LIGHTWEIGHT_CHARTS_URL = "https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js";
+const HYPE_GENESIS_TIME = Date.UTC(2024, 10, 29);
 let lightweightChartsLoader: Promise<any> | null = null;
 
 const NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
@@ -240,7 +241,7 @@ const ALERT_METRICS: MetricMeta[] = [
 ];
 
 const DEFAULT_COINS = ["HYPE", "BTC", "ETH", "SOL"];
-const ALERT_CHART_RANGES: AlertChartRange[] = ["5m", "1h", "1d", "2d", "7d", "30d"];
+const ALERT_CHART_RANGES: AlertChartRange[] = ["5m", "1h", "1d", "2d", "7d", "30d", "90d", "1y", "all"];
 
 const EMPTY_NFT_STATS: NftStats = {
   floor: "--",
@@ -663,7 +664,10 @@ function rangeMs(range: AlertChartRange) {
   if (range === "1d") return 24 * 60 * 60_000;
   if (range === "2d") return 2 * 24 * 60 * 60_000;
   if (range === "7d") return 7 * 24 * 60 * 60_000;
-  return 30 * 24 * 60 * 60_000;
+  if (range === "30d") return 30 * 24 * 60 * 60_000;
+  if (range === "90d") return 90 * 24 * 60 * 60_000;
+  if (range === "1y") return 365 * 24 * 60 * 60_000;
+  return Math.max(30 * 24 * 60 * 60_000, Date.now() - HYPE_GENESIS_TIME);
 }
 
 function rangeLabel(range: AlertChartRange) {
@@ -672,7 +676,10 @@ function rangeLabel(range: AlertChartRange) {
   if (range === "1d") return "1 day";
   if (range === "2d") return "2 days";
   if (range === "7d") return "7 days";
-  return "30 days";
+  if (range === "30d") return "30 days";
+  if (range === "90d") return "90 days";
+  if (range === "1y") return "1 year";
+  return "All history";
 }
 
 function timeAxisLabel(time: number, range: AlertChartRange) {
@@ -691,7 +698,9 @@ function alertCandleInterval(range: AlertChartRange) {
   if (range === "1d") return "15m";
   if (range === "2d") return "15m";
   if (range === "7d") return "1h";
-  return "4h";
+  if (range === "30d") return "4h";
+  if (range === "90d") return "12h";
+  return "1d";
 }
 
 function isLiveCandleMetric(key: AlertMetricKey) {
@@ -890,7 +899,7 @@ function normalizeCandles(payload: unknown): Candle[] {
     })
     .filter((row: Candle) => row.time > 0 && row.close > 0)
     .sort((a: Candle, b: Candle) => a.time - b.time)
-    .slice(-500);
+    .slice(-1500);
   return candles;
 }
 
@@ -2502,13 +2511,14 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
   const priceLineRef = useRef<any>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const thresholdRef = useRef(clause.value);
-  const [range, setRange] = useState<AlertChartRange>("30d");
+  const [range, setRange] = useState<AlertChartRange>("all");
   const [status, setStatus] = useState<AlertChartStatus>("loading");
   const [chartReady, setChartReady] = useState(false);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [hover, setHover] = useState<{ price: number; label: string } | null>(null);
   const [lineY, setLineY] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [priceZoom, setPriceZoom] = useState(1);
   const currentPrice = snapshot.hypePrice;
   const thresholdValue = Number.isFinite(clause.value) && clause.value > 0 ? clause.value : currentPrice;
   const hit = evaluateClause(clause, snapshot);
@@ -2530,6 +2540,51 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
     const price = series.coordinateToPrice(y);
     if (typeof price !== "number" || !Number.isFinite(price) || price <= 0) return;
     onChange(roundAlertThreshold(price, "hypePrice", "usd", Math.max(price * 0.12, 1)));
+  }
+
+  function visibleCandlesForScale() {
+    const rangeInfo = chartApiRef.current?.timeScale?.().getVisibleRange?.();
+    if (!rangeInfo?.from || !rangeInfo?.to) return candles.length ? candles : [];
+    const from = Number(rangeInfo.from) * 1000;
+    const to = Number(rangeInfo.to) * 1000;
+    const visible = candles.filter((candle: Candle) => candle.time >= from && candle.time <= to);
+    return visible.length ? visible : candles;
+  }
+
+  function applyManualPriceScale(nextZoom: number) {
+    const series = candleSeriesRef.current;
+    if (!series) return;
+    const rows = visibleCandlesForScale();
+    if (!rows.length) return;
+    const lows = rows.map((candle: Candle) => candle.low ?? candle.close);
+    const highs = rows.map((candle: Candle) => candle.high ?? candle.close);
+    const baseMin = Math.min(...lows, thresholdValue);
+    const baseMax = Math.max(...highs, thresholdValue);
+    const center = Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : (baseMin + baseMax) / 2;
+    const baseSpan = Math.max(baseMax - baseMin, center * 0.04, 1);
+    const span = baseSpan / nextZoom;
+    const minValue = Math.max(0.0001, center - span / 2);
+    const maxValue = center + span / 2;
+    series.applyOptions({
+      autoscaleInfoProvider: () => ({
+        priceRange: { minValue, maxValue },
+        margins: { above: 10, below: 10 },
+      }),
+    });
+    setPriceZoom(nextZoom);
+    window.requestAnimationFrame(updateAlertLinePosition);
+  }
+
+  function resetPriceScale() {
+    candleSeriesRef.current?.applyOptions?.({ autoscaleInfoProvider: undefined });
+    setPriceZoom(1);
+    window.requestAnimationFrame(updateAlertLinePosition);
+  }
+
+  function handlePriceWheel(event: React.WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const nextZoom = clamp(priceZoom * (event.deltaY < 0 ? 1.18 : 0.85), 0.35, 8);
+    applyManualPriceScale(nextZoom);
   }
 
   function handleAlertPointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -2578,6 +2633,8 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
           rightPriceScale: {
             borderColor: "rgba(255, 255, 255, 0.18)",
             scaleMargins: { top: 0.12, bottom: 0.12 },
+            autoScale: true,
+            entireTextOnly: false,
           },
           timeScale: {
             borderColor: "rgba(255, 255, 255, 0.18)",
@@ -2593,8 +2650,18 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
             vertLine: { color: "rgba(255, 255, 255, 0.32)", width: 1, style: 2 },
             horzLine: { color: "rgba(255, 255, 255, 0.32)", width: 1, style: 2 },
           },
-          handleScroll: true,
-          handleScale: true,
+          handleScroll: {
+            mouseWheel: true,
+            pressedMouseMove: true,
+            horzTouchDrag: true,
+            vertTouchDrag: true,
+          },
+          handleScale: {
+            axisPressedMouseMove: { time: true, price: true },
+            axisDoubleClickReset: { time: true, price: true },
+            mouseWheel: true,
+            pinch: true,
+          },
         });
 
         const candleSeries = chart.addCandlestickSeries({
@@ -2659,13 +2726,18 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
     async function loadCandles() {
       try {
         setStatus("loading");
+        setHover(null);
+        setCandles([]);
+        setPriceZoom(1);
+        candleSeriesRef.current?.applyOptions?.({ autoscaleInfoProvider: undefined });
+        candleSeriesRef.current?.setData?.([]);
         const now = Date.now();
         const payload = await postInfo({
           type: "candleSnapshot",
           req: {
             coin: "HYPE",
             interval: alertCandleInterval(range),
-            startTime: now - rangeMs(range),
+            startTime: range === "all" ? HYPE_GENESIS_TIME : now - rangeMs(range),
             endTime: now,
           },
         });
@@ -2754,8 +2826,13 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
           <button className={range === item ? "active" : ""} key={item} onClick={() => setRange(item)}>{item}</button>
         ))}
         <button onClick={() => chartApiRef.current?.timeScale?.().fitContent?.()}>Fit</button>
+        <span className="tv-row-separator" />
+        <button onClick={() => applyManualPriceScale(clamp(priceZoom * 0.85, 0.35, 8))}>Price -</button>
+        <button onClick={() => applyManualPriceScale(clamp(priceZoom * 1.18, 0.35, 8))}>Price +</button>
+        <button onClick={resetPriceScale}>Auto</button>
       </div>
       <div className="tv-chart-wrap" ref={containerRef}>
+        <div className="tv-price-wheel-zone" onWheel={handlePriceWheel} title="Mouse wheel here changes price scale" />
         {lineY !== null ? (
           <div
             className="tv-alert-drag-line"
