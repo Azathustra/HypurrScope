@@ -1413,6 +1413,7 @@ export default function Page() {
   const [buybackStatus, setBuybackStatus] = useState<Status>("loading");
   const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
   const [selectedClauseId, setSelectedClauseId] = useState("draft-custom-1");
+  const [activePresetKind, setActivePresetKind] = useState<AlertPresetKind | null>(null);
   const [draftRule, setDraftRule] = useState<AlertRule>({
     id: "draft",
     name: "My custom alert",
@@ -1810,6 +1811,7 @@ export default function Page() {
   ];
 
   function updateDraftClause(clauseId: string, patch: Partial<AlertClause>) {
+    setActivePresetKind(null);
     setDraftRule((current: AlertRule) => ({
       ...current,
       clauses: current.clauses.map((clause: AlertClause) => (clause.id === clauseId ? { ...clause, ...patch } : clause)),
@@ -1817,6 +1819,7 @@ export default function Page() {
   }
 
   function removeDraftClause(clauseId: string) {
+    setActivePresetKind(null);
     setDraftRule((current: AlertRule) => ({
       ...current,
       clauses: current.clauses.length > 1 ? current.clauses.filter((clause: AlertClause) => clause.id !== clauseId) : current.clauses,
@@ -1824,6 +1827,7 @@ export default function Page() {
   }
 
   function addDraftClause() {
+    setActivePresetKind(null);
     const nextClause = makeClause({ metric: "hypeOpenInterest", condition: "gt", value: 1_000_000_000 });
     setDraftRule((current: AlertRule) => ({
       ...current,
@@ -1884,7 +1888,7 @@ export default function Page() {
     },
   ];
 
-  function loadPreset(kind: AlertPresetKind) {
+  function applyPreset(kind: AlertPresetKind) {
     const presets: Record<AlertPresetKind, AlertRule> = {
       freshLongs: makePresetRule("Fresh longs detected", [
         ...liquidMarketClauses,
@@ -1920,11 +1924,22 @@ export default function Page() {
     setSelectedClauseId(preset.clauses[0]?.id || "");
   }
 
+  function loadPreset(kind: AlertPresetKind) {
+    setActivePresetKind(kind);
+    applyPreset(kind);
+  }
+
   function createCustomRule() {
+    setActivePresetKind(null);
     const custom = { ...makeCustomDraftRule(alertSnapshot), id: "draft" };
     setDraftRule(custom);
     setSelectedClauseId(custom.clauses[0]?.id || "");
   }
+
+  useEffect(() => {
+    if (!activePresetKind) return;
+    applyPreset(activePresetKind);
+  }, [activePresetKind, coin, presetCalibration.flow5m, presetCalibration.oi15m, presetCalibration.oi4h]);
 
   return (
     <main className={`hs-shell ${theme === "light" ? "theme-light" : ""}`}>
