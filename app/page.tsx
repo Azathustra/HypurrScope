@@ -542,8 +542,13 @@ function alertSummary(rule: AlertRule, snapshot: MetricSnapshot) {
   return rule.clauses.map((clause: AlertClause, index: number) => `${index ? `${clause.join} ` : ""}${explainClause(clause, snapshot)}`).join(" | ");
 }
 
-function metricStep(unit: MetricMeta["unit"], span: number) {
+function metricStep(unit: MetricMeta["unit"], span: number, metric?: AlertMetricKey) {
   if (unit === "usd") {
+    if (metric === "hypePrice") {
+      if (span >= 20) return 0.25;
+      if (span >= 5) return 0.05;
+      return 0.01;
+    }
     if (span >= 1_000_000_000) return 10_000_000;
     if (span >= 100_000_000) return 1_000_000;
     if (span >= 10_000_000) return 100_000;
@@ -567,6 +572,25 @@ function roundMetricThreshold(value: number, unit: MetricMeta["unit"], span: num
   if (unit === "usd") return Number(rounded.toFixed(step < 1 ? 2 : 0));
   if (unit === "pct") return Number(rounded.toFixed(step < 0.01 ? 4 : 2));
   return Number(rounded.toFixed(step < 1 ? 1 : 0));
+}
+
+function roundAlertThreshold(value: number, metric: AlertMetricKey, unit: MetricMeta["unit"], span: number) {
+  const step = metricStep(unit, span, metric);
+  const rounded = Math.round(value / step) * step;
+  if (unit === "usd") return Number(rounded.toFixed(step < 1 ? 2 : 0));
+  if (unit === "pct") return Number(rounded.toFixed(step < 0.01 ? 4 : 2));
+  return Number(rounded.toFixed(step < 1 ? 1 : 0));
+}
+
+function minimumChartSpan(metric: AlertMetricKey, unit: MetricMeta["unit"], currentValue: number) {
+  const abs = Math.abs(currentValue);
+  if (metric === "hypePrice") return Math.max(abs * 0.018, 0.35);
+  if (metric === "hypeVolume" || metric === "hypeOpenInterest" || metric === "twapNet" || metric === "twapSell" || metric === "etfNetFlow") {
+    return Math.max(abs * 0.08, 100_000);
+  }
+  if (unit === "usd") return Math.max(abs * 0.08, 1);
+  if (unit === "pct") return metric === "hypeFunding" ? 0.01 : 0.08;
+  return 2;
 }
 
 function defaultAlertValue(metric: AlertMetricKey, snapshot: MetricSnapshot) {
@@ -2437,10 +2461,11 @@ function ThresholdPicker({
     .concat(currentValue, thresholdEnabled ? thresholdValue : currentValue, clause.condition === "absGt" ? -thresholdValue : currentValue);
   const rawMin = Math.min(...values);
   const rawMax = Math.max(...values);
-  const rawSpan = Math.max(Math.abs(rawMax - rawMin), meta.unit === "pct" ? 0.04 : meta.unit === "usd" ? 20_000 : 2);
+  const minChartSpan = minimumChartSpan(clause.metric, meta.unit, currentValue);
+  const rawSpan = Math.max(Math.abs(rawMax - rawMin), minChartSpan);
   const zoomFactor = zoomLevel === 0 ? 1 : zoomLevel === 1 ? 0.62 : 0.38;
   const center = thresholdEnabled ? (currentValue + thresholdValue) / 2 : currentValue;
-  const halfSpan = Math.max(rawSpan * (0.62 * zoomFactor), meta.unit === "pct" ? 0.015 : meta.unit === "usd" ? 5_000 : 0.75);
+  const halfSpan = Math.max(rawSpan * (0.62 * zoomFactor), minChartSpan * 0.35);
   const min = Math.min(rawMin, center - halfSpan);
   const max = Math.max(rawMax, center + halfSpan);
   const span = Math.max(0.000001, max - min);
@@ -2503,6 +2528,14 @@ function ThresholdPicker({
     };
   }, [clause.metric, range]);
 
+  useEffect(() => {
+    if (clause.metric !== "hypePrice" || !thresholdEnabled || currentValue <= 0) return;
+    const tooFar = Math.abs(thresholdValue - currentValue) > Math.max(currentValue * 0.25, 5);
+    if (thresholdValue <= 0 || tooFar) {
+      onChange(defaultAlertValue("hypePrice", snapshot));
+    }
+  }, [clause.metric, thresholdEnabled, thresholdValue, currentValue, onChange, snapshot]);
+
   function pointToChart(point: MetricPoint, index: number) {
     const x = plot.left + (series.length > 1 ? (index / (series.length - 1)) * plotWidth : 0);
     const y = plot.top + ((max - point.value) / span) * plotHeight;
@@ -2526,7 +2559,7 @@ function ThresholdPicker({
     const svgY = ((event.clientY - rect.top) / Math.max(1, rect.height)) * 260;
     const y = clamp(svgY, plot.top, plot.bottom);
     const nextValue = max - ((y - plot.top) / plotHeight) * span;
-    const rounded = roundMetricThreshold(nextValue, meta.unit, span);
+    const rounded = roundAlertThreshold(nextValue, clause.metric, meta.unit, span);
     onChange(clause.condition === "absGt" ? Math.abs(rounded) : rounded);
   }
 
@@ -2557,7 +2590,7 @@ function ThresholdPicker({
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     if (!thresholdEnabled) return;
-    const step = metricStep(meta.unit, span);
+    const step = metricStep(meta.unit, span, clause.metric);
     let nextValue = thresholdValue;
     if (event.key === "ArrowUp") nextValue += step;
     else if (event.key === "ArrowDown") nextValue -= step;
@@ -2567,7 +2600,7 @@ function ThresholdPicker({
     else if (event.key === "End") nextValue = max;
     else return;
     event.preventDefault();
-    const rounded = roundMetricThreshold(clamp(nextValue, min, max), meta.unit, span);
+    const rounded = roundAlertThreshold(clamp(nextValue, min, max), clause.metric, meta.unit, span);
     onChange(clause.condition === "absGt" ? Math.abs(rounded) : rounded);
   }
 
