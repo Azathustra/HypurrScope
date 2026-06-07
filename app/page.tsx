@@ -530,6 +530,17 @@ function makePresetRule(name: string, clauses: AlertClause[]): AlertRule {
   };
 }
 
+function makeCustomDraftRule(snapshot?: MetricSnapshot): AlertRule {
+  return makePresetRule("My custom alert", [
+    makeClause({
+      metric: "hypePrice",
+      condition: "gt",
+      value: snapshot ? defaultAlertValue("hypePrice", snapshot) : 50,
+      join: "AND",
+    }),
+  ]);
+}
+
 function evaluateClause(clause: AlertClause, snapshot: MetricSnapshot) {
   const value = snapshot[clause.metric];
   if (clause.condition === "gt") return value > clause.value;
@@ -1184,14 +1195,12 @@ export default function Page() {
   const [buyback, setBuyback] = useState<BuybackData>(EMPTY_BUYBACK);
   const [buybackStatus, setBuybackStatus] = useState<Status>("loading");
   const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
-  const [selectedClauseId, setSelectedClauseId] = useState("draft-1");
+  const [selectedClauseId, setSelectedClauseId] = useState("draft-custom-1");
   const [draftRule, setDraftRule] = useState<AlertRule>({
     id: "draft",
-    name: "Crowded long unwind risk",
+    name: "My custom alert",
     clauses: [
-      { id: "draft-1", metric: "hypeFunding", condition: "gt", value: 0.05, join: "AND" },
-      { id: "draft-2", metric: "twapNet", condition: "lt", value: -2_000_000, join: "AND" },
-      { id: "draft-3", metric: "hypeVsBtc30d", condition: "lt", value: 0, join: "AND" },
+      { id: "draft-custom-1", metric: "hypePrice", condition: "gt", value: 50, join: "AND" },
     ],
     enabled: true,
     cooldownMinutes: 15,
@@ -1554,6 +1563,12 @@ export default function Page() {
     setSelectedClauseId(preset.clauses[0]?.id || "");
   }
 
+  function createCustomRule() {
+    const custom = { ...makeCustomDraftRule(alertSnapshot), id: "draft" };
+    setDraftRule(custom);
+    setSelectedClauseId(custom.clauses[0]?.id || "");
+  }
+
   return (
     <main className={`hs-shell ${theme === "light" ? "theme-light" : ""}`}>
       <aside className="hs-rail">
@@ -1693,6 +1708,15 @@ export default function Page() {
                       </ul>
                     </button>
                   ))}
+                </div>
+
+                <div className="create-own-card">
+                  <div>
+                    <span>Start clean</span>
+                    <strong>Create your own alert</strong>
+                    <p>Reset the builder to one simple WHEN condition, then add your own AND / OR filters.</p>
+                  </div>
+                  <button className="secondary" onClick={createCustomRule}>Create your own</button>
                 </div>
 
                 <div className="custom-builder-head">
@@ -2540,6 +2564,7 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
   const thresholdRef = useRef(clause.value);
   const priceZoomRef = useRef(1);
   const priceAxisDragRef = useRef<{ y: number; zoom: number } | null>(null);
+  const chartPanRef = useRef<{ x: number; from: number; to: number; width: number } | null>(null);
   const [range, setRange] = useState<AlertChartRange>("all");
   const [status, setStatus] = useState<AlertChartStatus>("loading");
   const [chartReady, setChartReady] = useState(false);
@@ -2640,6 +2665,43 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     priceAxisDragRef.current = null;
+  }
+
+  function handleChartPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest(".tv-alert-drag-line") || target?.closest(".tv-price-axis-hitbox")) return;
+    const logicalRange = chartApiRef.current?.timeScale?.().getVisibleLogicalRange?.();
+    if (!logicalRange || !Number.isFinite(logicalRange.from) || !Number.isFinite(logicalRange.to)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    chartPanRef.current = {
+      x: event.clientX,
+      from: Number(logicalRange.from),
+      to: Number(logicalRange.to),
+      width: Math.max(1, event.currentTarget.clientWidth),
+    };
+  }
+
+  function handleChartPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const pan = chartPanRef.current;
+    if (!pan) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const span = Math.max(1, pan.to - pan.from);
+    const barsMoved = ((event.clientX - pan.x) / pan.width) * span;
+    chartApiRef.current?.timeScale?.().setVisibleLogicalRange?.({
+      from: pan.from - barsMoved,
+      to: pan.to - barsMoved,
+    });
+    window.requestAnimationFrame(updateAlertLinePosition);
+  }
+
+  function handleChartPointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    chartPanRef.current = null;
   }
 
   function handleAlertPointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -2906,7 +2968,14 @@ function HypePriceAlertChart({ clause, snapshot, onChange }: ThresholdPickerProp
         <button onClick={() => applyManualPriceScale(clamp(priceZoom * 1.18, 0.35, 8))}>Price +</button>
         <button onClick={resetPriceScale}>Auto</button>
       </div>
-      <div className="tv-chart-wrap" ref={containerRef}>
+      <div
+        className="tv-chart-wrap"
+        ref={containerRef}
+        onPointerDownCapture={handleChartPointerDown}
+        onPointerMoveCapture={handleChartPointerMove}
+        onPointerUpCapture={handleChartPointerUp}
+        onPointerCancelCapture={handleChartPointerUp}
+      >
         {lineY !== null ? (
           <div
             className="tv-alert-drag-line"

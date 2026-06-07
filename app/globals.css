@@ -1544,6 +1544,46 @@ td {
   padding-left: 2px;
 }
 
+.create-own-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px dashed rgba(124, 247, 199, 0.34);
+  border-radius: 8px;
+  background: rgba(124, 247, 199, 0.045);
+}
+
+.create-own-card div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.create-own-card span {
+  color: var(--mint);
+  font-size: 0.72rem;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.create-own-card strong {
+  font-size: 1rem;
+}
+
+.create-own-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.42;
+}
+
+.create-own-card button {
+  flex: 0 0 auto;
+}
+
 .custom-builder-head {
   display: flex;
   align-items: flex-end;
@@ -2332,6 +2372,15 @@ td {
   .custom-builder-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .create-own-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .create-own-card button {
+    width: 100%;
   }
 
   .custom-builder-head strong {
