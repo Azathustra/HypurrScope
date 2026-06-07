@@ -1609,7 +1609,9 @@ td {
   white-space: nowrap;
 }
 
+.threshold-mode,
 .threshold-ranges,
+.threshold-pan,
 .threshold-zoom {
   display: flex;
   align-items: center;
@@ -1621,7 +1623,9 @@ td {
   padding-bottom: 2px;
 }
 
+.threshold-mode button,
 .threshold-ranges button,
+.threshold-pan button,
 .threshold-zoom button {
   min-height: 32px;
   padding: 0 10px;
@@ -1633,14 +1637,18 @@ td {
   font-weight: 820;
 }
 
+.threshold-mode button.active,
 .threshold-ranges button.active,
+.threshold-mode button:hover,
 .threshold-ranges button:hover,
+.threshold-pan button:hover,
 .threshold-zoom button:hover {
   border-color: rgba(124, 247, 199, 0.44);
   background: rgba(124, 247, 199, 0.1);
   color: var(--text);
 }
 
+.threshold-mode,
 .threshold-zoom {
   flex: 0 0 auto;
   padding: 3px;
@@ -1702,6 +1710,14 @@ td {
   touch-action: auto;
 }
 
+.threshold-chart.pan-mode {
+  cursor: grab;
+}
+
+.threshold-chart.pan-mode:active {
+  cursor: grabbing;
+}
+
 .threshold-chart svg {
   display: block;
   width: 100%;
@@ -1739,6 +1755,27 @@ td {
   stroke: var(--amber);
   stroke-width: 4;
   vector-effect: non-scaling-stroke;
+}
+
+.price-candles .candle line {
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.price-candles .candle rect {
+  vector-effect: non-scaling-stroke;
+}
+
+.price-candles .candle.up line,
+.price-candles .candle.up rect {
+  fill: rgba(124, 247, 199, 0.72);
+  stroke: var(--mint);
+}
+
+.price-candles .candle.down line,
+.price-candles .candle.down rect {
+  fill: rgba(255, 122, 141, 0.7);
+  stroke: var(--red);
 }
 
 .threshold-rule {
@@ -2029,6 +2066,16 @@ td {
 
   .threshold-ranges {
     width: 100%;
+  }
+
+  .threshold-mode,
+  .threshold-pan {
+    width: 100%;
+  }
+
+  .threshold-mode button,
+  .threshold-pan button {
+    flex: 1;
   }
 
   .threshold-readout {

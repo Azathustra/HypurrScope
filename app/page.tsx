@@ -20,6 +20,9 @@ type Market = {
 
 type Candle = {
   time: number;
+  open?: number;
+  high?: number;
+  low?: number;
   close: number;
   volume: number;
 };
@@ -359,9 +362,16 @@ function makeFallbackCandles(coin: string): Candle[] {
   const base = coin === "BTC" ? 104_800 : coin === "ETH" ? 5_930 : coin === "SOL" ? 238 : 58.4;
   return Array.from({ length: 80 }, (_, index) => {
     const wave = Math.sin(index / 4) * 0.9 + Math.cos(index / 9) * 0.45 + index * 0.01;
+    const close = base + wave;
+    const open = close - Math.sin(index / 3) * 0.28;
+    const high = Math.max(open, close) + 0.16 + Math.abs(Math.cos(index / 5)) * 0.18;
+    const low = Math.min(open, close) - 0.16 - Math.abs(Math.sin(index / 6)) * 0.18;
     return {
       time: Date.now() - (79 - index) * 15 * 60_000,
-      close: base + wave,
+      open,
+      high,
+      low,
+      close,
       volume: 520_000 + Math.abs(Math.sin(index / 3)) * 1_600_000,
     };
   });
@@ -373,8 +383,14 @@ function makeFallbackDailyCandles(coin: string): Candle[] {
     const trend = coin === "HYPE" ? index * 0.018 : index * 0.006;
     const wave = Math.sin(index / 2.8) * (coin === "BTC" ? 1800 : 1.4) + Math.cos(index / 5.2) * (coin === "BTC" ? 900 : 0.8);
     const close = base * (1 + trend / 10) + wave;
+    const open = close - Math.sin(index / 2.4) * (coin === "BTC" ? 700 : 0.55);
+    const high = Math.max(open, close) + (coin === "BTC" ? 450 : 0.35);
+    const low = Math.min(open, close) - (coin === "BTC" ? 450 : 0.35);
     return {
       time: Date.now() - (29 - index) * 24 * 60 * 60_000,
+      open,
+      high,
+      low,
       close,
       volume: (coin === "BTC" ? 1_800_000_000 : 620_000_000) * (0.76 + Math.abs(Math.sin(index / 3)) * 0.52),
     };
@@ -827,11 +843,20 @@ function normalizeCandles(payload: unknown): Candle[] {
       ? payload
       : [];
   const candles: Candle[] = rows
-    .map((row: any) => ({
-      time: n(row.t || row.time || row.timestamp),
-      close: n(row.c || row.close),
-      volume: n(row.v || row.volume),
-    }))
+    .map((row: any) => {
+      const close = n(row.c || row.close);
+      const open = n(row.o || row.open) || close;
+      const high = n(row.h || row.high) || Math.max(open, close);
+      const low = n(row.l || row.low) || Math.min(open, close);
+      return {
+        time: n(row.t || row.time || row.timestamp),
+        open,
+        high,
+        low,
+        close,
+        volume: n(row.v || row.volume),
+      } satisfies Candle;
+    })
     .filter((row: Candle) => row.time > 0 && row.close > 0)
     .sort((a: Candle, b: Candle) => a.time - b.time)
     .slice(-96);
@@ -2441,8 +2466,12 @@ function ThresholdPicker({
   const chartRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const [range, setRange] = useState<AlertChartRange>("1d");
-  const [zoomLevel, setZoomLevel] = useState(0);
+  const [timeZoom, setTimeZoom] = useState(1);
+  const [panOffset, setPanOffset] = useState(0);
+  const [panMode, setPanMode] = useState(false);
+  const panStartRef = useRef<{ x: number; offset: number } | null>(null);
   const [liveSeries, setLiveSeries] = useState<MetricPoint[]>([]);
+  const [liveCandles, setLiveCandles] = useState<Candle[]>([]);
   const [chartStatus, setChartStatus] = useState<AlertChartStatus>("fallback");
   const [hover, setHover] = useState<ChartHover | null>(null);
   const meta = metricMeta(clause.metric);
@@ -2453,17 +2482,30 @@ function ThresholdPicker({
     metricPoint(Date.now() - rangeMs(range), currentValue, "Waiting"),
     metricPoint(Date.now(), currentValue, "Now"),
   ];
-  const series = liveSeries.length ? liveSeries : needsLiveCandles ? flatCurrentSeries : staticSeries;
+  const fullSeries = liveSeries.length ? liveSeries : needsLiveCandles ? flatCurrentSeries : staticSeries;
+  const visibleCount = Math.max(8, Math.min(fullSeries.length, Math.round(fullSeries.length / timeZoom)));
+  const maxPanOffset = Math.max(0, fullSeries.length - visibleCount);
+  const safePanOffset = Math.min(panOffset, maxPanOffset);
+  const visibleStart = Math.max(0, fullSeries.length - visibleCount - safePanOffset);
+  const visibleEnd = visibleStart + visibleCount;
+  const series = fullSeries.slice(visibleStart, visibleEnd);
+  const visibleLiveCandles = liveCandles.slice(visibleStart, visibleEnd);
   const thresholdEnabled = clause.condition !== "isPositive" && clause.condition !== "isNegative";
   const thresholdValue = clause.condition === "absGt" ? Math.abs(clause.value) : clause.value;
+  const candleScaleValues = visibleLiveCandles.flatMap((candle: Candle) => [
+    candle.high ?? candle.close,
+    candle.low ?? candle.close,
+    candle.open ?? candle.close,
+    candle.close,
+  ]);
   const values = series
     .map((point: MetricPoint) => point.value)
-    .concat(currentValue, thresholdEnabled ? thresholdValue : currentValue, clause.condition === "absGt" ? -thresholdValue : currentValue);
+    .concat(candleScaleValues, currentValue, thresholdEnabled ? thresholdValue : currentValue, clause.condition === "absGt" ? -thresholdValue : currentValue);
   const rawMin = Math.min(...values);
   const rawMax = Math.max(...values);
   const minChartSpan = minimumChartSpan(clause.metric, meta.unit, currentValue);
   const rawSpan = Math.max(Math.abs(rawMax - rawMin), minChartSpan);
-  const zoomFactor = zoomLevel === 0 ? 1 : zoomLevel === 1 ? 0.62 : 0.38;
+  const zoomFactor = 1;
   const center = thresholdEnabled ? (currentValue + thresholdValue) / 2 : currentValue;
   const halfSpan = Math.max(rawSpan * (0.62 * zoomFactor), minChartSpan * 0.35);
   const min = Math.min(rawMin, center - halfSpan);
@@ -2472,16 +2514,17 @@ function ThresholdPicker({
   const plot = { left: 76, right: 970, top: 24, bottom: 230 };
   const plotWidth = plot.right - plot.left;
   const plotHeight = plot.bottom - plot.top;
+  const yFor = (value: number) => clamp(plot.top + ((max - value) / span) * plotHeight, plot.top, plot.bottom);
   const points = series
     .map((point: MetricPoint, index: number) => {
       const x = plot.left + (series.length > 1 ? (index / (series.length - 1)) * plotWidth : 0);
-      const y = plot.top + ((max - point.value) / span) * plotHeight;
-      return `${x},${clamp(y, plot.top, plot.bottom)}`;
+      return `${x},${yFor(point.value)}`;
     })
     .join(" ");
-  const thresholdY = clamp(plot.top + ((max - thresholdValue) / span) * plotHeight, plot.top, plot.bottom);
-  const mirrorY = clamp(plot.top + ((max + thresholdValue) / span) * plotHeight, plot.top, plot.bottom);
-  const currentY = clamp(plot.top + ((max - currentValue) / span) * plotHeight, plot.top, plot.bottom);
+  const candleWidth = clamp((plotWidth / Math.max(1, series.length)) * 0.62, 3, 14);
+  const thresholdY = yFor(thresholdValue);
+  const mirrorY = yFor(-thresholdValue);
+  const currentY = yFor(currentValue);
   const midValue = min + span / 2;
   const firstPoint = series[0];
   const middlePoint = series[Math.floor(series.length / 2)];
@@ -2495,6 +2538,7 @@ function ThresholdPicker({
       setHover(null);
       if (!isLiveCandleMetric(clause.metric)) {
         setLiveSeries([]);
+        setLiveCandles([]);
         setChartStatus("fallback");
         return;
       }
@@ -2513,11 +2557,13 @@ function ThresholdPicker({
         if (cancelled) return;
         const nextCandles = normalizeCandles(payload);
         const nextSeries = candlesToMetricSeries(clause.metric, nextCandles, range);
+        setLiveCandles(clause.metric === "hypePrice" ? nextCandles : []);
         setLiveSeries(nextSeries);
         setChartStatus(nextSeries.length ? "live" : "fallback");
       } catch {
         if (!cancelled) {
           setLiveSeries([]);
+          setLiveCandles([]);
           setChartStatus("fallback");
         }
       }
@@ -2529,17 +2575,18 @@ function ThresholdPicker({
   }, [clause.metric, range]);
 
   useEffect(() => {
-    if (clause.metric !== "hypePrice" || !thresholdEnabled || currentValue <= 0) return;
-    const tooFar = Math.abs(thresholdValue - currentValue) > Math.max(currentValue * 0.25, 5);
-    if (thresholdValue <= 0 || tooFar) {
-      onChange(defaultAlertValue("hypePrice", snapshot));
-    }
-  }, [clause.metric, thresholdEnabled, thresholdValue, currentValue, onChange, snapshot]);
+    setPanOffset(0);
+    setTimeZoom(1);
+    setHover(null);
+  }, [clause.metric, range]);
+
+  useEffect(() => {
+    setPanOffset((current: number) => clamp(current, 0, maxPanOffset));
+  }, [maxPanOffset]);
 
   function pointToChart(point: MetricPoint, index: number) {
     const x = plot.left + (series.length > 1 ? (index / (series.length - 1)) * plotWidth : 0);
-    const y = plot.top + ((max - point.value) / span) * plotHeight;
-    return { x, y: clamp(y, plot.top, plot.bottom) };
+    return { x, y: yFor(point.value) };
   }
 
   function updateHoverFromPointer(event: React.PointerEvent<HTMLDivElement>) {
@@ -2563,9 +2610,31 @@ function ThresholdPicker({
     onChange(clause.condition === "absGt" ? Math.abs(rounded) : rounded);
   }
 
+  function shiftChart(delta: number) {
+    setPanOffset((current: number) => clamp(current + delta, 0, maxPanOffset));
+  }
+
+  function zoomTime(nextZoom: number) {
+    setTimeZoom(clamp(nextZoom, 1, 8));
+    setPanOffset((current: number) => clamp(current, 0, maxPanOffset));
+  }
+
+  function handleWheel(event: React.WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    if (Math.abs(event.deltaY) >= Math.abs(event.deltaX)) {
+      zoomTime(timeZoom + (event.deltaY < 0 ? 0.5 : -0.5));
+    } else {
+      shiftChart(event.deltaX > 0 ? -3 : 3);
+    }
+  }
+
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    if (!thresholdEnabled) return;
     event.currentTarget.setPointerCapture(event.pointerId);
+    if (panMode) {
+      panStartRef.current = { x: event.clientX, offset: safePanOffset };
+      return;
+    }
+    if (!thresholdEnabled) return;
     setDragging(true);
     updateHoverFromPointer(event);
     updateFromPointer(event);
@@ -2573,6 +2642,12 @@ function ThresholdPicker({
 
   function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
     updateHoverFromPointer(event);
+    if (panMode && panStartRef.current) {
+      const deltaPx = event.clientX - panStartRef.current.x;
+      const candlesMoved = Math.round((deltaPx / Math.max(1, chartRef.current?.clientWidth || 1)) * visibleCount);
+      setPanOffset(clamp(panStartRef.current.offset + candlesMoved, 0, maxPanOffset));
+      return;
+    }
     if (!dragging) return;
     updateFromPointer(event);
   }
@@ -2581,6 +2656,7 @@ function ThresholdPicker({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    panStartRef.current = null;
     setDragging(false);
   }
 
@@ -2626,21 +2702,30 @@ function ThresholdPicker({
       </div>
 
       <div className="threshold-tools" aria-label="Chart controls">
+        <div className="threshold-mode">
+          <button className={!panMode ? "active" : ""} onClick={() => setPanMode(false)}>Set alert</button>
+          <button className={panMode ? "active" : ""} onClick={() => setPanMode(true)}>Move chart</button>
+        </div>
         <div className="threshold-ranges">
           {ALERT_CHART_RANGES.map((item: AlertChartRange) => (
             <button className={range === item ? "active" : ""} key={item} onClick={() => setRange(item)}>{item}</button>
           ))}
         </div>
+        <div className="threshold-pan">
+          <button onClick={() => shiftChart(8)}>Left</button>
+          <button onClick={() => shiftChart(-8)}>Right</button>
+        </div>
         <div className="threshold-zoom">
-          <button onClick={() => setZoomLevel((current: number) => Math.max(0, current - 1))}>-</button>
-          <span>{zoomLevel === 0 ? "Fit" : `${zoomLevel + 1}x`}</span>
-          <button onClick={() => setZoomLevel((current: number) => Math.min(2, current + 1))}>+</button>
+          <button onClick={() => zoomTime(timeZoom - 0.5)}>Time -</button>
+          <span>{timeZoom === 1 ? "Full" : `${timeZoom.toFixed(1)}x`}</span>
+          <button onClick={() => zoomTime(timeZoom + 0.5)}>Time +</button>
         </div>
       </div>
 
       <div
-        className={thresholdEnabled ? "threshold-chart" : "threshold-chart disabled"}
+        className={`${thresholdEnabled ? "threshold-chart" : "threshold-chart disabled"} ${panMode ? "pan-mode" : ""}`}
         ref={chartRef}
+        onWheel={handleWheel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -2661,7 +2746,31 @@ function ThresholdPicker({
           <line x1={plot.left} x2={plot.right} y1={plot.bottom} y2={plot.bottom} className="grid-line" />
           <line x1={plot.left} x2={plot.left} y1={plot.top} y2={plot.bottom} className="axis-line" />
           <line x1={plot.left} x2={plot.right} y1={plot.bottom} y2={plot.bottom} className="axis-line" />
-          <polyline points={points} className="threshold-series" />
+          {clause.metric === "hypePrice" && visibleLiveCandles.length ? (
+            <g className="price-candles">
+              {visibleLiveCandles.map((candle: Candle, index: number) => {
+                const x = plot.left + (visibleLiveCandles.length > 1 ? (index / (visibleLiveCandles.length - 1)) * plotWidth : 0);
+                const open = candle.open ?? candle.close;
+                const high = candle.high ?? Math.max(open, candle.close);
+                const low = candle.low ?? Math.min(open, candle.close);
+                const yOpen = yFor(open);
+                const yClose = yFor(candle.close);
+                const yHigh = yFor(high);
+                const yLow = yFor(low);
+                const bodyTop = Math.min(yOpen, yClose);
+                const bodyHeight = Math.max(2, Math.abs(yClose - yOpen));
+                const up = candle.close >= open;
+                return (
+                  <g className={up ? "candle up" : "candle down"} key={`${candle.time}-${index}`}>
+                    <line x1={x} x2={x} y1={yHigh} y2={yLow} />
+                    <rect x={x - candleWidth / 2} y={bodyTop} width={candleWidth} height={bodyHeight} rx="1.5" />
+                  </g>
+                );
+              })}
+            </g>
+          ) : (
+            <polyline points={points} className="threshold-series" />
+          )}
           {clause.condition === "absGt" ? <line x1={plot.left} x2={plot.right} y1={mirrorY} y2={mirrorY} className="threshold-mirror" /> : null}
           {thresholdEnabled ? <line x1={plot.left} x2={plot.right} y1={thresholdY} y2={thresholdY} className="threshold-rule" /> : null}
           <line x1={plot.left} x2={plot.right} y1={currentY} y2={currentY} className="threshold-current" />
@@ -2692,7 +2801,7 @@ function ThresholdPicker({
         </div>
         <div>
           <span>X axis</span>
-          <strong>{rangeLabel(range)} / {series.length} candles</strong>
+          <strong>{rangeLabel(range)} / {series.length} of {fullSeries.length}</strong>
         </div>
         <div>
           <span>Condition</span>
