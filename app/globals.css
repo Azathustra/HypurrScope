@@ -247,10 +247,16 @@ button {
   color: var(--green);
 }
 
-.data-pill.fallback,
-.data-pill.error {
+.data-pill.stale,
+.data-pill.demo,
+.data-pill.unavailable {
   border-color: rgba(242, 198, 109, 0.42);
   color: var(--amber);
+}
+
+.data-pill.unavailable {
+  border-color: rgba(255, 88, 110, 0.42);
+  color: var(--red);
 }
 
 .fallback-banner {
@@ -261,6 +267,12 @@ button {
   background: rgba(242, 198, 109, 0.08);
   color: var(--amber);
   font-size: 0.8rem;
+}
+
+.fallback-banner.warning {
+  border-color: rgba(255, 88, 110, 0.32);
+  background: rgba(255, 88, 110, 0.08);
+  color: var(--red);
 }
 
 .controls label {
@@ -642,9 +654,9 @@ h2 {
 }
 
 .regime-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding: 10px;
   border: 1px solid var(--line);
@@ -653,9 +665,14 @@ h2 {
 }
 
 .regime-row span,
+.regime-row small,
 .feed-empty {
   color: var(--muted);
   font-size: 0.78rem;
+}
+
+.regime-row small {
+  grid-column: 2;
 }
 
 .regime-card p {
@@ -693,7 +710,7 @@ h2 {
 }
 
 .terminal-kpis {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .compact-hero {
