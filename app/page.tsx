@@ -2,8 +2,12 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-type View = "overview" | "markets" | "asset" | "alerts" | "flow" | "wallet" | "fundamentals" | "ecosystem" | "settings";
+type View = "overview" | "markets" | "asset" | "alerts" | "flow" | "wallet" | "fundamentals" | "ecosystem" | "etfDats" | "nfts" | "settings";
 type Status = "loading" | "live" | "fallback" | "error";
+type SignalTab = "fresh" | "crowding" | "funding" | "liquidity";
+type FlowTab = "large" | "bursts" | "oi" | "funding" | "twap";
+type ScreenerFilter = "top10" | "top30" | "liquid" | "fresh" | "crowding" | "funding" | "liquidOnly";
+type AssetBucketFilter = "all" | "majors" | "ethSol" | "highBeta" | "small";
 
 type Market = {
   symbol: string;
@@ -300,8 +304,13 @@ type ScreenerRow = {
   signal: string;
   flow5m: number;
   oi15m: number;
+  oi4h: number;
   fundingPct: number;
   price15m: number;
+  takerBuyRatio: number | null;
+  fundingPercentile14d: number | null;
+  bucket: AssetBucketFilter;
+  dataQuality: "native" | "selected-live" | "unavailable";
 };
 
 const HYPE_SUPPLY = 1_000_000_000;
@@ -311,17 +320,24 @@ const LIGHTWEIGHT_CHARTS_URL = "https://unpkg.com/lightweight-charts@4.2.3/dist/
 const HYPE_GENESIS_TIME = Date.UTC(2024, 10, 29);
 let lightweightChartsLoader: Promise<any> | null = null;
 
-const NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
+const PRIMARY_NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
   { id: "overview", label: "Overview", description: "Global Hyperliquid" },
-  { id: "markets", label: "Markets Screener", description: "Signals by asset" },
+  { id: "markets", label: "Market Screener", description: "Signals by asset" },
   { id: "asset", label: "Asset Desk", description: "BTC / ETH / HYPE" },
-  { id: "alerts", label: "Alerts", description: "Rules + backtests" },
+  { id: "alerts", label: "Alert Studio", description: "Rules + backtests" },
   { id: "flow", label: "Flow Tape", description: "Trades + TWAPs" },
   { id: "wallet", label: "Wallet Scanner", description: "Position risk" },
+];
+
+const MORE_NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
   { id: "fundamentals", label: "HYPE Fundamentals", description: "Fees + demand" },
-  { id: "ecosystem", label: "Ecosystem", description: "ETF / DATs / NFTs" },
+  { id: "ecosystem", label: "Ecosystem", description: "Venue context" },
+  { id: "etfDats", label: "ETF / DATs", description: "TradFi + treasuries" },
+  { id: "nfts", label: "Hypurr NFTs", description: "Floor + sales" },
   { id: "settings", label: "Settings", description: "Account + Telegram" },
 ];
+
+const NAV_ITEMS = PRIMARY_NAV_ITEMS.concat(MORE_NAV_ITEMS);
 
 const ALERT_METRICS: MetricMeta[] = [
   { key: "hypePrice", label: "Asset price", unit: "usd", description: "Current selected asset mark price." },
@@ -832,12 +848,6 @@ function estimateSlippagePct(book: Book | null, notionalUsd: number) {
   return ((averageFill - book.bestAsk) / book.bestAsk) * 100;
 }
 
-function scoreTone(score: number) {
-  if (score >= 75) return "good";
-  if (score >= 45) return "watch";
-  return "risk";
-}
-
 function buildFreshLeverageScore(input: { flowUsd: number; flowThreshold: number; ratio: number; oi15m: number; oiThreshold: number; price15m: number; priceThreshold: number }) {
   const flowScore = clamp((input.flowUsd / Math.max(1, input.flowThreshold)) * 100, 0, 100);
   const ratioScore = clamp((input.ratio / Math.max(1, input.ratio >= 50 ? 68 : 32)) * 100, 0, 100);
@@ -867,6 +877,24 @@ function classifyMarketState(metrics: AssetTerminalMetrics) {
   if (metrics.oiChange1h < -1.5 && metrics.priceChange1h < -0.4) return "deleveraging";
   if (metrics.freshLeverageScore >= 65 && metrics.priceChange15m > 0) return "risk-on";
   return "neutral";
+}
+
+function assetBucket(symbol: string, rank: number): AssetBucketFilter {
+  if (symbol === "BTC") return "majors";
+  if (symbol === "ETH" || symbol === "SOL") return "ethSol";
+  if (symbol === "HYPE" || rank <= 30) return "highBeta";
+  return "small";
+}
+
+function dash(value: number | null | undefined, formatter: (value: number) => string) {
+  return Number.isFinite(value as number) ? formatter(value as number) : "-";
+}
+
+function readinessStatus(score: number) {
+  if (score >= 85) return "Active";
+  if (score >= 65) return "Close";
+  if (score >= 35) return "Watching";
+  return "Inactive";
 }
 
 function evaluateClause(clause: AlertClause, snapshot: MetricSnapshot) {
@@ -1587,8 +1615,13 @@ export default function Page() {
   const [statsStatus, setStatsStatus] = useState<Status>("fallback");
   const [book, setBook] = useState<Book | null>(makeFallbackBook("HYPE"));
   const [marketStatus, setMarketStatus] = useState<Status>("fallback");
+  const [dataUpdatedAt, setDataUpdatedAt] = useState<Date | null>(null);
   const [chartMode, setChartMode] = useState<"price" | "oi" | "cvd" | "funding">("oi");
-  const [screenerSort, setScreenerSort] = useState<"fresh" | "crowding" | "liquidity" | "anomaly" | "volume">("fresh");
+  const [signalTab, setSignalTab] = useState<SignalTab>("fresh");
+  const [flowTab, setFlowTab] = useState<FlowTab>("large");
+  const [screenerFilter, setScreenerFilter] = useState<ScreenerFilter>("top30");
+  const [bucketFilter, setBucketFilter] = useState<AssetBucketFilter>("all");
+  const [moreOpen, setMoreOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState("");
   const [walletStatus, setWalletStatus] = useState("Paste an address to analyze perp exposure.");
   const [positions, setPositions] = useState<Position[]>([]);
@@ -1715,10 +1748,12 @@ export default function Page() {
       if (nextMarkets.length) setMarkets(nextMarkets);
       if (nextCandles.length) setCandles(nextCandles);
       if (nextBook) setBook(nextBook);
+      setDataUpdatedAt(new Date());
       setMarketStatus("live");
     } catch {
       setCandles(makeFallbackCandles(coin));
       setBook(makeFallbackBook(coin));
+      setDataUpdatedAt(new Date());
       setMarketStatus("fallback");
     }
   }
@@ -1893,7 +1928,6 @@ export default function Page() {
   const relativeStrength = assetReturn30d - benchmarkReturn30d;
   const estimatedRevenue30d = revenueSeries.reduce((sum: number, item: Candle) => sum + item.close, 0);
   const avgDailyRevenue = revenueSeries.length ? estimatedRevenue30d / revenueSeries.length : 0;
-  const estimatedRevenue24h = avgDailyRevenue || totalVolume * 0.0002;
   const priceChange15m = priceChangeFromCandles(candles, 15 * 60_000);
   const priceChange1h = priceChangeFromCandles(candles, 60 * 60_000);
   const priceChange4h = priceChangeFromCandles(candles, 4 * 60 * 60_000);
@@ -1933,6 +1967,24 @@ export default function Page() {
     price15m: priceChange15m,
     priceThreshold: 0.35,
   });
+  const freshLongScore = buildFreshLeverageScore({
+    flowUsd: takerBuyUsd5m,
+    flowThreshold: presetCalibration.flow5m,
+    ratio: takerBuyRatio5m,
+    oi15m: oiChange15m,
+    oiThreshold: presetCalibration.oi15m,
+    price15m: Math.max(0, priceChange15m),
+    priceThreshold: 0.35,
+  });
+  const freshShortScore = buildFreshLeverageScore({
+    flowUsd: takerSellUsd5m,
+    flowThreshold: presetCalibration.flow5m,
+    ratio: takerSellRatio5m,
+    oi15m: oiChange15m,
+    oiThreshold: presetCalibration.oi15m,
+    price15m: Math.max(0, -priceChange15m),
+    priceThreshold: 0.35,
+  });
   const crowdingScore = buildCrowdingScore({
     fundingPct,
     oiChangePct: oiChange4h,
@@ -1942,6 +1994,8 @@ export default function Page() {
   });
   const liquidityScore = buildLiquidityScore({ volumeRank: assetVolumeRank, spreadBps, depth50Bps, slippage100kPct });
   const anomalyScore = buildAnomalyScore({ relativeVolume5m, price15m: priceChange15m, oi15m: oiChange15m, largeTradeCount5m });
+  const crowdedLongScore = fundingPct > 0 ? crowdingScore : Math.round(crowdingScore * 0.35);
+  const crowdedShortScore = fundingPct < 0 ? crowdingScore : Math.round(crowdingScore * 0.35);
   const terminalMetrics: AssetTerminalMetrics = {
     priceChange15m,
     priceChange1h,
@@ -2011,14 +2065,10 @@ export default function Page() {
     nftSales24h: Number(nftStats.sales24h.replace(/,/g, "")) || 0,
   };
   const activeAlertCount = alertRules.filter((rule: AlertRule) => evaluateRule(rule, alertSnapshot)).length;
-  const enabledRuleCount = alertRules.filter((rule: AlertRule) => rule.enabled).length;
   const accountName = userProfile.displayName.trim() || userProfile.email.trim() || "Guest";
   const telegramHandle = userProfile.telegram.trim().replace(/^@/, "");
   const isAccountReady = Boolean(userProfile.displayName.trim() || userProfile.email.trim());
   const selectedDraftClause = draftRule.clauses.find((clause: AlertClause) => clause.id === selectedClauseId) || draftRule.clauses[0];
-  const baselineSampleLabel = baselineStatus === "live"
-    ? `${historicalBaselines.sampleSizes.candles5m} 5m candles, ${historicalBaselines.sampleSizes.funding} funding prints`
-    : "Historical baselines loading/fallback";
   const liquidMarketClauses = [
     makeClause({ metric: "hypeVolume", condition: "gt", value: 25_000_000, join: "AND" }),
     makeClause({ metric: "assetVolumeRank", condition: "lte", value: 30, join: "AND" }),
@@ -2028,40 +2078,43 @@ export default function Page() {
     const sortedByVolume = [...markets].sort((a: Market, b: Market) => b.volumeUsd - a.volumeUsd);
     return sortedByVolume.slice(0, 40).map((market: Market, index: number) => {
       const calibration = ASSET_PRESET_CALIBRATIONS[market.symbol] || ASSET_PRESET_CALIBRATIONS.HYPE;
-      const simulatedFlow = market.symbol === coin ? dominantFlow : Math.max(100_000, market.volumeUsd / 288 * (0.55 + ((index % 7) * 0.12)));
-      const simulatedOi15m = market.symbol === coin ? oiChange15m : clamp((simulatedFlow / Math.max(1, market.oiUsd)) * 100 * 3, 0, 12);
-      const simulatedPrice15m = market.symbol === coin ? priceChange15m : clamp(market.changePct / 18, -2.5, 2.5);
+      const isSelected = market.symbol === coin;
+      const flow5m = isSelected ? dominantFlow : 0;
+      const rowOi15m = isSelected ? oiChange15m : 0;
+      const rowOi4h = isSelected ? oiChange4h : 0;
+      const rowPrice15m = isSelected ? priceChange15m : 0;
       const fundingPctRow = market.funding * 100;
+      const rowFundingPercentile = percentileFromValue(fundingPctRow, historicalBaselines.percentiles.fundingAbsP95 || 0.035);
       const freshScore = buildFreshLeverageScore({
-        flowUsd: simulatedFlow,
+        flowUsd: flow5m,
         flowThreshold: calibration.flow5m,
-        ratio: market.symbol === coin ? Math.max(takerBuyRatio5m, takerSellRatio5m) : 52 + (index % 24),
-        oi15m: simulatedOi15m,
+        ratio: isSelected ? Math.max(takerBuyRatio5m, takerSellRatio5m) : 0,
+        oi15m: rowOi15m,
         oiThreshold: calibration.oi15m,
-        price15m: simulatedPrice15m,
+        price15m: rowPrice15m,
         priceThreshold: 0.35,
       });
       const crowdedScore = buildCrowdingScore({
         fundingPct: fundingPctRow,
-        oiChangePct: market.symbol === coin ? oiChange4h : clamp(simulatedOi15m * 2.4, 0, 15),
-        priceChangePct: market.symbol === coin ? priceChange4h : clamp(market.changePct / 5, -4, 4),
+        oiChangePct: isSelected ? rowOi4h : 0,
+        priceChangePct: isSelected ? priceChange4h : 0,
         volumeUsd: market.volumeUsd,
         oiUsd: market.oiUsd,
       });
       const liquidity = buildLiquidityScore({
         volumeRank: index + 1,
-        spreadBps: market.symbol === coin ? spreadBps : 2 + index * 0.15,
-        depth50Bps: market.symbol === coin ? depth50Bps : Math.max(500_000, market.volumeUsd / 500),
-        slippage100kPct: market.symbol === coin ? slippage100kPct : clamp(0.01 + index * 0.002, 0.01, 0.35),
+        spreadBps: isSelected ? spreadBps : 0,
+        depth50Bps: isSelected ? depth50Bps : 0,
+        slippage100kPct: isSelected ? slippage100kPct : 0,
       });
       const anomaly = buildAnomalyScore({
-        relativeVolume5m: market.symbol === coin ? relativeVolume5m : clamp(simulatedFlow / Math.max(1, market.volumeUsd / 288), 0.1, 6),
-        price15m: simulatedPrice15m,
-        oi15m: simulatedOi15m,
-        largeTradeCount5m: market.symbol === coin ? largeTradeCount5m : Math.round(clamp(simulatedFlow / 1_000_000, 0, 12)),
+        relativeVolume5m: isSelected ? relativeVolume5m : 0,
+        price15m: rowPrice15m,
+        oi15m: rowOi15m,
+        largeTradeCount5m: isSelected ? largeTradeCount5m : 0,
       });
       const signal = freshScore >= 70
-        ? (simulatedPrice15m >= 0 ? "Fresh longs" : "Fresh shorts")
+        ? (rowPrice15m >= 0 ? "Fresh longs" : "Fresh shorts")
         : crowdedScore >= 70
           ? (fundingPctRow >= 0 ? "Crowded longs" : "Crowded shorts")
           : anomaly >= 72
@@ -2075,25 +2128,72 @@ export default function Page() {
         liquidityScore: liquidity,
         anomalyScore: anomaly,
         signal,
-        flow5m: simulatedFlow,
-        oi15m: simulatedOi15m,
+        flow5m,
+        oi15m: rowOi15m,
+        oi4h: rowOi4h,
         fundingPct: fundingPctRow,
-        price15m: simulatedPrice15m,
+        price15m: rowPrice15m,
+        takerBuyRatio: isSelected ? takerBuyRatio5m : null,
+        fundingPercentile14d: rowFundingPercentile,
+        bucket: assetBucket(market.symbol, index + 1),
+        dataQuality: isSelected ? "selected-live" : "native",
       };
-    }).sort((a: ScreenerRow, b: ScreenerRow) => {
-      if (screenerSort === "crowding") return b.crowdingScore - a.crowdingScore;
-      if (screenerSort === "liquidity") return b.liquidityScore - a.liquidityScore;
-      if (screenerSort === "anomaly") return b.anomalyScore - a.anomalyScore;
-      if (screenerSort === "volume") return b.market.volumeUsd - a.market.volumeUsd;
-      return b.freshLeverageScore - a.freshLeverageScore;
-    });
-  }, [markets, coin, dominantFlow, oiChange15m, oiChange4h, priceChange15m, priceChange4h, takerBuyRatio5m, takerSellRatio5m, spreadBps, depth50Bps, slippage100kPct, relativeVolume5m, largeTradeCount5m, screenerSort]);
+    }).sort((a: ScreenerRow, b: ScreenerRow) => Math.max(b.freshLeverageScore, b.crowdingScore) - Math.max(a.freshLeverageScore, a.crowdingScore));
+  }, [markets, coin, dominantFlow, oiChange15m, oiChange4h, priceChange15m, priceChange4h, takerBuyRatio5m, takerSellRatio5m, spreadBps, depth50Bps, slippage100kPct, relativeVolume5m, largeTradeCount5m, historicalBaselines.percentiles.fundingAbsP95]);
   const highSignalRows = screenerRows.filter((row: ScreenerRow) => row.signal !== "Neutral");
   const globalRegime = highSignalRows.filter((row: ScreenerRow) => row.crowdingScore >= 70).length >= 3
     ? "crowded"
     : highSignalRows.filter((row: ScreenerRow) => row.freshLeverageScore >= 70).length >= 3
       ? "risk-on"
       : "neutral";
+  const dataAgeSeconds = dataUpdatedAt ? Math.max(0, Math.round((Date.now() - dataUpdatedAt.getTime()) / 1000)) : null;
+  const dataStatusText = marketStatus === "live"
+    ? `Live - updated ${dataAgeSeconds ?? 0}s ago`
+    : marketStatus === "loading"
+      ? "Loading"
+      : marketStatus === "fallback"
+        ? "Fallback - demo data"
+        : "Stale";
+  const fundingPositivePct = markets.length ? (markets.filter((market: Market) => market.funding > 0).length / markets.length) * 100 : 0;
+  const fundingBias = fundingPositivePct > 58 ? "Longs paying" : fundingPositivePct < 42 ? "Shorts paying" : "Neutral";
+  const totalOi4hChange = oiChange4h;
+  const activeSignalCount = highSignalRows.length;
+  const filteredScreenerRows = screenerRows
+    .filter((row: ScreenerRow) => (bucketFilter === "all" ? true : row.bucket === bucketFilter))
+    .filter((row: ScreenerRow) => {
+      if (screenerFilter === "top10") return row.rank <= 10;
+      if (screenerFilter === "top30") return row.rank <= 30;
+      if (screenerFilter === "liquid" || screenerFilter === "liquidOnly") return row.market.volumeUsd > 25_000_000 && row.rank <= 30;
+      if (screenerFilter === "fresh") return row.freshLeverageScore >= 65;
+      if (screenerFilter === "crowding") return row.crowdingScore >= 65;
+      if (screenerFilter === "funding") return Math.abs(row.fundingPct) >= 0.010 || (row.fundingPercentile14d || 0) >= 90;
+      return true;
+    })
+    .sort((a: ScreenerRow, b: ScreenerRow) => Math.max(b.freshLeverageScore, b.crowdingScore) - Math.max(a.freshLeverageScore, a.crowdingScore));
+  const signalRows = screenerRows
+    .map((row: ScreenerRow) => {
+      const readiness =
+        signalTab === "fresh" ? row.freshLeverageScore :
+        signalTab === "crowding" ? row.crowdingScore :
+        signalTab === "funding" ? row.fundingPercentile14d || 0 :
+        row.liquidityScore;
+      const active =
+        signalTab === "fresh" ? row.freshLeverageScore >= 70 :
+        signalTab === "crowding" ? row.crowdingScore >= 70 :
+        signalTab === "funding" ? Math.abs(row.fundingPct) >= 0.010 || (row.fundingPercentile14d || 0) >= 90 :
+        row.liquidityScore < 45;
+      const signal =
+        signalTab === "fresh" ? (row.price15m < 0 ? "Fresh Shorts" : "Fresh Longs") :
+        signalTab === "crowding" ? (row.fundingPct < 0 ? "Crowded Shorts" : "Crowded Longs") :
+        signalTab === "funding" ? "Funding Stress" :
+        "Liquidity Risk";
+      return { ...row, readiness, active, signal };
+    })
+    .filter((row) => signalTab === "liquidity" ? row.readiness < 70 : row.readiness > 0)
+    .sort((a, b) => signalTab === "liquidity" ? a.readiness - b.readiness : b.readiness - a.readiness);
+  const activeFeedRows = signalRows.filter((row) => row.active);
+  const feedRows = activeFeedRows.length ? activeFeedRows.slice(0, 8) : signalRows.slice(0, 3);
+  const regimeSummary = `Market is ${globalRegime}: funding is ${fundingBias.toLowerCase()}, OI expansion is ${oiChange4h > 4 ? "elevated" : "moderate"}, ${activeSignalCount ? `${activeSignalCount} active signal${activeSignalCount > 1 ? "s" : ""} detected` : "no broad leverage spike detected"}.`;
 
   function updateDraftClause(clauseId: string, patch: Partial<AlertClause>) {
     setActivePresetKind(null);
@@ -2142,17 +2242,13 @@ export default function Page() {
     setAlertRules((current: AlertRule[]) => current.filter((rule: AlertRule) => rule.id !== ruleId));
   }
 
-  const alertPresetCards: Array<{ kind: AlertPresetKind; title: string; tag: string; body: string; checks: string[]; likelihood: string; lastTriggered: string; triggered7d: number; avgMove: string }> = [
+  const alertPresetCards: Array<{ kind: AlertPresetKind; title: string; tag: string; body: string; checks: string[] }> = [
     {
       kind: "freshLongs",
       title: "Fresh longs detected",
       tag: "New leverage",
       body: "Detects when aggressive buyers are likely opening fresh leveraged long exposure, not just chasing a green candle.",
       checks: ["24h volume > $25M + rank <= 30", `${presetCalibration.family}: ${presetCalibration.examples}`, `Buy flow 5m > ${formatUsd(presetCalibration.flow5m)}`, `OI 15m > ${formatPct(presetCalibration.oi15m, 2, false)} + price > +0.35%`, "Cooldown 20m"],
-      likelihood: freshLeverageScore >= 70 && netTakerDelta5m > 0 ? "High" : freshLeverageScore >= 45 ? "Medium" : "Low",
-      lastTriggered: freshLeverageScore >= 70 && netTakerDelta5m > 0 ? "Now" : "2h ago",
-      triggered7d: Math.max(1, Math.round(freshLeverageScore / 18)),
-      avgMove: "+1.8% over 2h",
     },
     {
       kind: "freshShorts",
@@ -2160,10 +2256,6 @@ export default function Page() {
       tag: "New leverage",
       body: "Detects aggressive sell flow with OI expansion and bearish price confirmation.",
       checks: ["24h volume > $25M + rank <= 30", `${presetCalibration.family}: ${presetCalibration.examples}`, `Sell flow 5m > ${formatUsd(presetCalibration.flow5m)}`, `OI 15m > ${formatPct(presetCalibration.oi15m, 2, false)} + price < -0.35%`, "Cooldown 20m"],
-      likelihood: freshLeverageScore >= 70 && netTakerDelta5m < 0 ? "High" : freshLeverageScore >= 45 ? "Medium" : "Low",
-      lastTriggered: freshLeverageScore >= 70 && netTakerDelta5m < 0 ? "Now" : "5h ago",
-      triggered7d: Math.max(1, Math.round((100 - netTakerDelta5m / Math.max(1, dominantFlow) * 40) / 25)),
-      avgMove: "-1.4% over 2h",
     },
     {
       kind: "crowdedLongs",
@@ -2171,10 +2263,6 @@ export default function Page() {
       tag: "Squeeze setup",
       body: "Detects when longs are paying expensive funding while OI expands and price stops following.",
       checks: ["24h volume > $25M + rank <= 30", `${presetCalibration.family}: ${presetCalibration.examples}`, "Hourly funding > +0.010%", `OI 4h > ${formatPct(presetCalibration.oi4h, 2, false)} + price stalled`, "Cooldown 2h"],
-      likelihood: crowdingScore >= 70 && fundingPct > 0 ? "High" : crowdingScore >= 45 ? "Medium" : "Low",
-      lastTriggered: crowdingScore >= 70 && fundingPct > 0 ? "Now" : "11h ago",
-      triggered7d: Math.max(1, Math.round(crowdingScore / 22)),
-      avgMove: "-2.1% unwind risk",
     },
     {
       kind: "crowdedShorts",
@@ -2182,10 +2270,6 @@ export default function Page() {
       tag: "Squeeze setup",
       body: "Detects when shorts become crowded, funding is deeply negative, and downside momentum stalls.",
       checks: ["24h volume > $25M + rank <= 30", `${presetCalibration.family}: ${presetCalibration.examples}`, "Hourly funding < -0.010%", `OI 4h > ${formatPct(presetCalibration.oi4h, 2, false)} + price stalled`, "Cooldown 2h"],
-      likelihood: crowdingScore >= 70 && fundingPct < 0 ? "High" : crowdingScore >= 45 ? "Medium" : "Low",
-      lastTriggered: crowdingScore >= 70 && fundingPct < 0 ? "Now" : "1d ago",
-      triggered7d: Math.max(1, Math.round(crowdingScore / 24)),
-      avgMove: "+2.4% squeeze risk",
     },
     {
       kind: "oiCompression",
@@ -2193,10 +2277,6 @@ export default function Page() {
       tag: "Compression",
       body: "Detects leverage entering while price barely moves, a setup that can precede a sharp break.",
       checks: ["24h volume > $25M + rank <= 30", "OI 1h > +3%", "Price 1h between -0.30% and +0.30%", "Cooldown 45m"],
-      likelihood: oiChange1h > 3 && Math.abs(priceChange1h) < 0.3 ? "High" : oiChange1h > 1.5 ? "Medium" : "Low",
-      lastTriggered: "3h ago",
-      triggered7d: Math.max(1, Math.round(oiChange1h + 2)),
-      avgMove: "+/-1.1% breakout",
     },
     {
       kind: "liquidityVacuum",
@@ -2204,10 +2284,6 @@ export default function Page() {
       tag: "Fragile book",
       body: "Detects when the book becomes thin and spread widens, increasing wick risk.",
       checks: ["Depth +/-0.5% weak", "Spread > normal", "Slippage rising", "Cooldown 30m"],
-      likelihood: liquidityScore < 45 ? "High" : liquidityScore < 70 ? "Medium" : "Low",
-      lastTriggered: liquidityScore < 45 ? "Now" : "9h ago",
-      triggered7d: Math.max(1, Math.round((100 - liquidityScore) / 20)),
-      avgMove: "Higher wick risk",
     },
   ];
 
@@ -2286,16 +2362,29 @@ export default function Page() {
           </div>
         </div>
         <nav>
-          {NAV_ITEMS.map((item: { id: View; label: string; description: string }) => (
+          {PRIMARY_NAV_ITEMS.map((item: { id: View; label: string; description: string }) => (
             <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => setView(item.id)}>
               <strong>{item.label}</strong>
               <small>{item.description}</small>
             </button>
           ))}
+          <button className={MORE_NAV_ITEMS.some((item) => item.id === view) ? "active" : ""} onClick={() => setMoreOpen((current) => !current)}>
+            <strong>More</strong>
+            <small>Fundamentals, ecosystem, settings</small>
+          </button>
+          {moreOpen || MORE_NAV_ITEMS.some((item) => item.id === view) ? (
+            <div className="more-nav">
+              {MORE_NAV_ITEMS.map((item) => (
+                <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => setView(item.id)}>
+                  <strong>{item.label}</strong>
+                  <small>{item.description}</small>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </nav>
         <div className="rail-footer">
-          <span className={marketStatus === "live" ? "status live" : "status"}>{sourceLabel(marketStatus)} market data</span>
-          <p>Read-only. No wallet connection. Not affiliated with Hyperliquid.</p>
+          <p>Read-only. No wallet permissions.</p>
         </div>
       </aside>
 
@@ -2306,6 +2395,7 @@ export default function Page() {
             <strong>HypurrScope</strong>
           </div>
           <div className="controls">
+            <span className={`data-pill ${marketStatus}`}>{dataStatusText}</span>
             <label>
               Asset
               <select value={coin} onChange={(event) => setCoin(event.target.value)}>
@@ -2333,89 +2423,94 @@ export default function Page() {
             <button className="icon-btn" onClick={loadMarketData} aria-label="Refresh">R</button>
           </div>
           <nav className="mobile-tabs">
-            {NAV_ITEMS.map((item: { id: View; label: string; description: string }) => (
+            {PRIMARY_NAV_ITEMS.concat(MORE_NAV_ITEMS).map((item: { id: View; label: string; description: string }) => (
               <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => setView(item.id)}>{item.label}</button>
             ))}
           </nav>
         </header>
+        {marketStatus === "fallback" ? <div className="fallback-banner">Demo data shown. Live Hyperliquid data was not reachable.</div> : null}
 
         {view === "overview" && (
           <>
-            <section className="hero">
+            <section className="pulse-head">
               <div>
-                <p className="eyebrow">Global Hyperliquid overview</p>
-                <h1>What is moving on Hyperliquid right now.</h1>
-                <p>
-                  A simplified Bloomberg-style terminal for leverage, crowding, funding, liquidity and alert opportunities
-                  across the Hyperliquid perps universe.
-                </p>
-                <div className="actions">
-                  <button className="primary" onClick={() => setView("markets")}>Open markets screener</button>
-                  <button className="secondary" onClick={() => setView("asset")}>Open {coin} desk</button>
+                <h1>Hyperliquid Market Pulse</h1>
+                <p>Live structure, leverage and crowding signals across perps.</p>
+              </div>
+              <div className="pulse-actions">
+                <span className={`data-pill ${marketStatus}`}>{dataStatusText}</span>
+                <span className="count-pill">Top {Math.min(30, screenerRows.length)} perps</span>
+                <select value={coin} onChange={(event) => setCoin(event.target.value)}>
+                  {marketOptions.map((symbol: string) => <option value={symbol} key={symbol}>{symbol}</option>)}
+                </select>
+              </div>
+            </section>
+
+            <section className="kpi-grid pulse-kpis">
+              <Kpi label="24h Volume" value={formatUsd(totalVolume)} detail="All loaded perps" />
+              <Kpi label="Total Open Interest" value={formatUsd(totalOi)} detail={`4h change: ${formatPct(totalOi4hChange, 2)}`} />
+              <Kpi label="Active Signals" value={String(activeSignalCount)} detail="fresh / crowding / funding" />
+              <Kpi label="Funding Bias" value={fundingBias} detail={`${fundingPositivePct.toFixed(0)}% assets positive`} />
+              <Kpi label="HYPE" value={formatUsd(markets.find((market: Market) => market.symbol === "HYPE")?.price || selected?.price || 0)} detail={`24h ${formatPct(markets.find((market: Market) => market.symbol === "HYPE")?.changePct || 0)} - OI ${formatUsd(markets.find((market: Market) => market.symbol === "HYPE")?.oiUsd || 0)}`} />
+            </section>
+
+            <section className="pulse-grid">
+              <Panel title="Signal Feed" subtitle="">
+                <div className="segments compact-tabs">
+                  {[
+                    ["fresh", "Fresh Leverage"],
+                    ["crowding", "Crowding"],
+                    ["funding", "Funding Stress"],
+                    ["liquidity", "Liquidity Risk"],
+                  ].map(([key, label]) => (
+                    <button className={signalTab === key ? "active" : ""} key={key} onClick={() => setSignalTab(key as SignalTab)}>{label}</button>
+                  ))}
                 </div>
-              </div>
-              <div className="snapshot">
-                <div><span>Regime</span><strong>{globalRegime}</strong></div>
-                <div><span>Markets scanned</span><strong>{screenerRows.length}</strong></div>
-                <div><span>Data</span><strong>{sourceLabel(marketStatus)}</strong></div>
-              </div>
-            </section>
-
-            <section className="kpi-grid">
-              <Kpi label="Total Hyperliquid 24h volume" value={formatUsd(totalVolume)} detail="Sum of loaded perp markets" />
-              <Kpi label="Total open interest" value={formatUsd(totalOi)} detail="Notional OI across loaded assets" />
-              <Kpi label="Total fees / revenue 24h" value={formatUsd(estimatedRevenue24h)} detail="Transparent volume-based estimate" />
-              <Kpi label="HYPE price" value={formatUsd(markets.find((market: Market) => market.symbol === "HYPE")?.price || selected?.price || 0)} detail={`24h ${formatPct(markets.find((market: Market) => market.symbol === "HYPE")?.changePct || selected?.changePct || 0)}`} />
-              <Kpi label="HYPE open interest" value={formatUsd(markets.find((market: Market) => market.symbol === "HYPE")?.oiUsd || selected?.oiUsd || 0)} detail="Native asset perp OI" />
-              <Kpi label="Market regime" value={globalRegime} detail={`${highSignalRows.length} active market-structure signals`} tone={globalRegime === "risk-on" ? "positive" : globalRegime === "crowded" ? "negative" : "watch"} />
-            </section>
-
-            <section className="terminal-grid">
-              <Panel title="Fresh leverage detected" subtitle="Assets where flow, OI and price are lining up.">
-                <SignalTable rows={screenerRows.filter((row: ScreenerRow) => row.freshLeverageScore >= 55).slice(0, 6)} />
+                <SignalFeed rows={feedRows} activeCount={activeFeedRows.length} onCreate={(symbol: string) => { if (DEFAULT_COINS.includes(symbol)) setCoin(symbol); setView("alerts"); }} />
               </Panel>
-              <Panel title="Crowded markets" subtitle="Funding is stretched, OI is high, and price follow-through is weak.">
-                <SignalTable rows={screenerRows.filter((row: ScreenerRow) => row.crowdingScore >= 50).sort((a, b) => b.crowdingScore - a.crowdingScore).slice(0, 6)} />
-              </Panel>
-              <Panel title="Funding extremes" subtitle="Assets with stretched funding percentile or directional crowding.">
-                <SignalTable rows={[...screenerRows].sort((a, b) => Math.abs(b.fundingPct) - Math.abs(a.fundingPct)).slice(0, 6)} />
-              </Panel>
-              <Panel title="Liquidity / volatility anomalies" subtitle="Unusual volume, price, OI or large-trade activity.">
-                <SignalTable rows={screenerRows.filter((row: ScreenerRow) => row.anomalyScore >= 45).slice(0, 6)} />
+              <Panel title="Market Regime" subtitle="">
+                <div className="regime-card">
+                  <RegimeRow label="Leverage" value={oiChange4h > 4 ? "Expanding" : oiChange4h < -1 ? "Deleveraging" : "Neutral"} />
+                  <RegimeRow label="Funding" value={fundingBias} />
+                  <RegimeRow label="Liquidity" value={liquidityScore >= 70 ? "Healthy" : liquidityScore >= 45 ? "Thin" : "Risky"} />
+                  <RegimeRow label="Volatility" value={anomalyScore >= 75 ? "Extreme" : anomalyScore >= 45 ? "Elevated" : "Normal"} />
+                  <p>{regimeSummary}</p>
+                </div>
               </Panel>
             </section>
 
-            <section className="module-grid lean">
-              <MiniModule title="Markets Screener" value="Find signals" detail="Fresh leverage, crowding, liquidity, anomaly scores" onClick={() => setView("markets")} />
-              <MiniModule title="Asset Desk" value={`${coin} detail`} detail="Price, OI, funding, pressure and liquidity" onClick={() => setView("asset")} />
-              <MiniModule title="Alerts" value="Create rules" detail="Presets, explanations and simple backtests" onClick={() => setView("alerts")} />
-            </section>
+            <Panel title="Top movers by structure" subtitle="">
+              <StructureMoversTable rows={screenerRows.slice(0, 8)} onAction={(symbol: string) => { if (DEFAULT_COINS.includes(symbol)) setCoin(symbol); setView("asset"); }} />
+            </Panel>
           </>
         )}
 
         {view === "markets" && (
           <>
-            <ViewHeader eyebrow="Markets Screener" title="Hyperliquid signal radar" />
-            <section className="kpi-grid">
-              <Kpi label="Assets scanned" value={String(screenerRows.length)} detail="Ranked by live volume and signal scores" />
-              <Kpi label="Fresh leverage candidates" value={String(screenerRows.filter((row: ScreenerRow) => row.freshLeverageScore >= 70).length)} detail="Flow + OI + price confirmation" tone="positive" />
-              <Kpi label="Crowded candidates" value={String(screenerRows.filter((row: ScreenerRow) => row.crowdingScore >= 70).length)} detail="Funding + OI + price stall" tone="negative" />
-              <Kpi label="High liquidity assets" value={String(screenerRows.filter((row: ScreenerRow) => row.liquidityScore >= 75).length)} detail="Rank, spread, depth and slippage" />
-            </section>
+            <ViewHeader eyebrow="Market Screener" title="Hyperliquid signal table" />
             <div className="toolbar">
               <div className="segments">
                 {[
-                  ["fresh", "Fresh leverage"],
-                  ["crowding", "Crowding"],
-                  ["liquidity", "Liquidity"],
-                  ["anomaly", "Anomaly"],
-                  ["volume", "Volume"],
+                  ["top10", "Top 10"],
+                  ["top30", "Top 30"],
+                  ["liquid", "All liquid"],
+                  ["fresh", "Fresh only"],
+                  ["crowding", "Crowding only"],
+                  ["funding", "Funding extremes"],
+                  ["liquidOnly", "Liquid markets"],
                 ].map(([key, label]) => (
-                  <button className={screenerSort === key ? "active" : ""} key={key} onClick={() => setScreenerSort(key as typeof screenerSort)}>{label}</button>
+                  <button className={screenerFilter === key ? "active" : ""} key={key} onClick={() => setScreenerFilter(key as ScreenerFilter)}>{label}</button>
                 ))}
               </div>
+              <select value={bucketFilter} onChange={(event) => setBucketFilter(event.target.value as AssetBucketFilter)}>
+                <option value="all">All buckets</option>
+                <option value="majors">BTC</option>
+                <option value="ethSol">ETH / SOL</option>
+                <option value="highBeta">HYPE / high-beta</option>
+                <option value="small">Small caps</option>
+              </select>
             </div>
-            <ScreenerTable rows={screenerRows} onOpenAsset={(symbol: string) => { if (DEFAULT_COINS.includes(symbol)) setCoin(symbol); setView("asset"); }} />
+            <ScreenerTable rows={filteredScreenerRows} onOpenAsset={(symbol: string) => { if (DEFAULT_COINS.includes(symbol)) setCoin(symbol); setView("asset"); }} />
           </>
         )}
 
@@ -2432,21 +2527,19 @@ export default function Page() {
                 </div>
               </div>
               <div className="snapshot">
-                <div><span>Selected asset</span><strong>{coin}</strong></div>
-                <div><span>Market family</span><strong>{presetCalibration.family}</strong></div>
-                <div><span>Data</span><strong>{sourceLabel(marketStatus)}</strong></div>
+                <div><span>Bucket</span><strong>{presetCalibration.family}</strong></div>
+                <div><span>Data</span><strong>{dataStatusText}</strong></div>
+                <div><span>Updated</span><strong>{dataAgeSeconds ?? 0}s ago</strong></div>
               </div>
             </section>
 
             <section className="kpi-grid terminal-kpis">
-              <Kpi label="Price" value={formatUsd(selected?.price || 0)} detail={`15m ${formatPct(priceChange15m, 2)} / 1h ${formatPct(priceChange1h, 2)} / 4h ${formatPct(priceChange4h, 2)} / 24h ${formatPct(selected?.changePct || 0, 2)}`} tone={(selected?.changePct || 0) >= 0 ? "positive" : "negative"} />
+              <Kpi label="Price" value={formatUsd(selected?.price || 0)} detail={`15m ${formatPct(priceChange15m, 2)} - 1h ${formatPct(priceChange1h, 2)} - 24h ${formatPct(selected?.changePct || 0, 2)}`} tone={(selected?.changePct || 0) >= 0 ? "positive" : "negative"} />
               <Kpi label="24h volume" value={formatUsd(selected?.volumeUsd || 0)} detail={`Rank #${assetVolumeRank === 999 ? "--" : assetVolumeRank} / 5m volume ${terminalMetrics.relativeVolume5m.toFixed(2)}x average`} />
               <Kpi label="Open Interest" value={formatUsd(selected?.oiUsd || 0)} detail={`15m ${formatPct(oiChange15m, 2)} / 1h ${formatPct(oiChange1h, 2)} / 4h ${formatPct(oiChange4h, 2)}`} />
               <Kpi label="Hourly funding" value={formatPct(fundingPct, 4)} detail={`Annualized ${formatPct(fundingAnnualizedPct, 1)} / 14d percentile ${fundingPercentile14d}%`} tone={fundingPct >= 0 ? "positive" : "negative"} />
-              <Kpi label="Mark / Oracle premium" value={formatPct(markOraclePremiumPct, 4)} detail="Perp mark compared with oracle price" tone={markOraclePremiumPct >= 0 ? "positive" : "negative"} />
-              <Kpi label="Taker pressure 5m" value={formatUsd(netTakerDelta5m)} detail={`Buy ${formatUsd(takerBuyUsd5m)} / Sell ${formatUsd(takerSellUsd5m)} / Ratio ${formatPct(takerBuyRatio5m, 1, false)}`} tone={netTakerDelta5m >= 0 ? "positive" : "negative"} />
-              <Kpi label="Liquidity" value={`${spreadBps.toFixed(2)} bps`} detail={`Depth +/-0.5% ${formatUsd(depth50Bps)} / $100k slip ${formatPct(slippage100kPct, 3, false)}`} />
-              <Kpi label="Relative strength" value={formatPct(relativeStrengthVsBtc24h, 2)} detail={`vs BTC 24h / vs ETH ${formatPct(relativeStrengthVsEth24h, 2)}`} tone={relativeStrengthVsBtc24h >= 0 ? "positive" : "negative"} />
+              <Kpi label="Taker Pressure" value={`Buy ratio ${formatPct(takerBuyRatio5m, 1, false)}`} detail={`Buy ${formatUsd(takerBuyUsd5m)} - Sell ${formatUsd(takerSellUsd5m)} - Net ${formatUsd(netTakerDelta5m)}`} tone={netTakerDelta5m >= 0 ? "positive" : "negative"} />
+              <Kpi label="Liquidity" value={`Spread ${spreadBps.toFixed(2)} bps`} detail={`Depth +/-0.5% ${formatUsd(depth50Bps)}`} />
             </section>
 
             <section className="overview-market terminal-desk">
@@ -2463,72 +2556,64 @@ export default function Page() {
                 </div>
                 <MarketCandleChart candles={candles} asset={coin} mode={chartMode} metrics={terminalMetrics} />
               </Panel>
-              <Panel title="Market structure scores" subtitle="Each score explains which condition is missing before an alert becomes useful.">
+              <Panel title="Signal Readiness" subtitle="">
                 <div className="score-stack">
-                  <ScoreCard title="Fresh leverage" score={freshLeverageScore} status={freshLeverageScore >= 70 ? "Near trigger" : "Below threshold"} tone={scoreTone(freshLeverageScore)} rows={[
-                    `Flow 5m: ${formatUsd(dominantFlow)} / ${formatUsd(presetCalibration.flow5m)} required`,
-                    `Buy ratio: ${formatPct(takerBuyRatio5m, 1, false)} / 68% required`,
-                    `OI 15m: ${formatPct(oiChange15m, 2)} / ${formatPct(presetCalibration.oi15m, 2, false)} required`,
-                    `Price 15m: ${formatPct(priceChange15m, 2)} / +/-0.35% confirmation`,
+                  <ReadinessCard title="Fresh Longs" score={freshLongScore} onCreate={() => { loadPreset("freshLongs"); setView("alerts"); }} checks={[
+                    { label: `Buy ratio > 68%`, ok: takerBuyRatio5m > 68 },
+                    { label: `Price 15m > 0.35%`, ok: priceChange15m > 0.35 },
+                    { label: `Buy flow 5m: ${formatUsd(takerBuyUsd5m)} / ${formatUsd(presetCalibration.flow5m)}`, ok: takerBuyUsd5m > presetCalibration.flow5m },
+                    { label: `OI 15m: ${formatPct(oiChange15m, 2)} / ${formatPct(presetCalibration.oi15m, 2, false)}`, ok: oiChange15m > presetCalibration.oi15m },
                   ]} />
-                  <ScoreCard title="OI expansion" score={Math.round(clamp((oiChange4h / Math.max(0.1, presetCalibration.oi4h)) * 100, 0, 100))} status={oiChange4h >= presetCalibration.oi4h ? "Expansion high" : "Moderate"} tone={oiChange4h >= presetCalibration.oi4h ? "watch" : "good"} rows={[
-                    `15m: ${formatPct(oiChange15m, 2)}`,
-                    `1h: ${formatPct(oiChange1h, 2)}`,
-                    `4h: ${formatPct(oiChange4h, 2)}`,
+                  <ReadinessCard title="Fresh Shorts" score={freshShortScore} onCreate={() => { loadPreset("freshShorts"); setView("alerts"); }} checks={[
+                    { label: `Sell ratio > 68%`, ok: takerSellRatio5m > 68 },
+                    { label: `Price 15m < -0.35%`, ok: priceChange15m < -0.35 },
+                    { label: `Sell flow 5m: ${formatUsd(takerSellUsd5m)} / ${formatUsd(presetCalibration.flow5m)}`, ok: takerSellUsd5m > presetCalibration.flow5m },
+                    { label: `OI 15m: ${formatPct(oiChange15m, 2)} / ${formatPct(presetCalibration.oi15m, 2, false)}`, ok: oiChange15m > presetCalibration.oi15m },
                   ]} />
-                  <ScoreCard title="Crowding" score={crowdingScore} status={crowdingScore >= 70 ? "Crowded" : "Not crowded yet"} tone={scoreTone(crowdingScore)} rows={[
-                    `Funding: ${formatPct(fundingPct, 4)}`,
-                    `Funding percentile: ${fundingPercentile14d}%`,
-                    `OI 4h: ${formatPct(oiChange4h, 2)}`,
-                    `Price 4h: ${formatPct(priceChange4h, 2)}`,
+                  <ReadinessCard title="Crowded Longs" score={crowdedLongScore} onCreate={() => { loadPreset("crowdedLongs"); setView("alerts"); }} checks={[
+                    { label: `Funding > 0.010%`, ok: fundingPct > 0.010 },
+                    { label: `OI 4h: ${formatPct(oiChange4h, 2)} / ${formatPct(presetCalibration.oi4h, 2, false)}`, ok: oiChange4h > presetCalibration.oi4h },
+                    { label: `Price 4h < 1.25%`, ok: priceChange4h < 1.25 },
+                    { label: `Price 4h > -0.75%`, ok: priceChange4h > -0.75 },
                   ]} />
-                  <ScoreCard title="Liquidity" score={liquidityScore} status={liquidityScore >= 70 ? "Tradable" : "Fragile"} tone={scoreTone(liquidityScore)} rows={[
-                    `24h volume: ${(selected?.volumeUsd || 0) > 25_000_000 ? "pass" : "fail"}`,
-                    `Rank: ${assetVolumeRank <= 30 ? "pass" : "fail"}`,
-                    `Spread: ${spreadBps < 3 ? "pass" : "watch"}`,
-                    `Depth: ${depth50Bps > 2_000_000 ? "pass" : "watch"}`,
+                  <ReadinessCard title="Crowded Shorts" score={crowdedShortScore} onCreate={() => { loadPreset("crowdedShorts"); setView("alerts"); }} checks={[
+                    { label: `Funding < -0.010%`, ok: fundingPct < -0.010 },
+                    { label: `OI 4h: ${formatPct(oiChange4h, 2)} / ${formatPct(presetCalibration.oi4h, 2, false)}`, ok: oiChange4h > presetCalibration.oi4h },
+                    { label: `Price 4h > -1.25%`, ok: priceChange4h > -1.25 },
+                    { label: `Price 4h < 0.75%`, ok: priceChange4h < 0.75 },
                   ]} />
                 </div>
               </Panel>
             </section>
 
-            <section className="module-grid lean">
-              {alertPresetCards.slice(0, 4).map((preset) => (
-                <MiniModule key={preset.kind} title={preset.title} value={preset.kind.includes("crowded") ? `${crowdingScore}/100` : `${freshLeverageScore}/100`} detail="Open preset in Alert Studio" onClick={() => { loadPreset(preset.kind); setView("alerts"); }} />
-              ))}
+            <section className="two-col asset-bottom">
+              <Panel title="Recent Flow Events" subtitle="">
+                <FlowEventTable rows={trades.slice(0, 8)} twapNet={twapNet} onAction={() => setView("alerts")} />
+              </Panel>
+              <Panel title="Large Trades" subtitle="">
+                <LargeTradesTable rows={largeTrades.slice(0, 8)} />
+              </Panel>
             </section>
           </>
         )}
 
         {view === "alerts" && (
           <>
-            <ViewHeader eyebrow="No-code alert engine" title="HypurrScope Alert Studio" />
-            <section className="kpi-grid">
-              <Kpi label="Saved rules" value={String(alertRules.length)} detail={isAccountReady ? `Local account: ${accountName}` : "Create an account below"} />
-              <Kpi label="Triggered now" value={String(activeAlertCount)} detail="Evaluated against the current market snapshot" tone={activeAlertCount ? "negative" : "positive"} />
-              <Kpi label="Metrics available" value={String(ALERT_METRICS.length)} detail="Taker flow, funding, OI, TWAP, liquidity, ETF, NFT, relative strength" />
-              <Kpi label="Preset family" value={presetCalibration.family} detail={`${presetCalibration.examples}: ${formatUsd(presetCalibration.flow5m)} flow / ${formatPct(presetCalibration.oi15m, 2, false)} OI 15m`} />
-              <Kpi label="Historical P95" value={baselineStatus === "live" ? "Live" : sourceLabel(baselineStatus)} detail={baselineSampleLabel} tone={baselineStatus === "live" ? "positive" : "negative"} />
-              <Kpi label="Delivery" value={telegramHandle ? "Telegram ready" : "Browser now"} detail={telegramHandle ? `@${telegramHandle} linked locally` : "Add Telegram below"} />
-            </section>
+            <ViewHeader eyebrow="Alert Studio" title="Create market-structure alerts" />
 
             <section className="alert-layout">
-              <Panel title={`Recommended alerts for ${coin}`} subtitle="Each preset explains why it exists, how close it is to triggering, and what condition is missing.">
+              <Panel title="Recommended presets" subtitle="">
                 <div className="featured-presets">
-                  {alertPresetCards.map((preset) => (
-                    <button className="preset-card" key={preset.kind} onClick={() => loadPreset(preset.kind)}>
+                  {alertPresetCards.slice(0, 4).map((preset) => (
+                    <button className="preset-card compact-preset" key={preset.kind} onClick={() => loadPreset(preset.kind)}>
                       <span>{preset.tag}</span>
                       <strong>{preset.title}</strong>
                       <p>{preset.body}</p>
-                      <div className="preset-backtest">
-                        <span>Trigger likelihood: {preset.likelihood}</span>
-                        <span>Last triggered: {preset.lastTriggered}</span>
-                        <span>Triggered 7d: {preset.triggered7d} times</span>
-                        <span>Average move: {preset.avgMove}</span>
+                      <div className="preset-meta">
+                        <span>Best: {coin}</span>
+                        <span>7d triggers: {baselineStatus === "live" ? "available soon" : "unavailable"}</span>
                       </div>
-                      <ul>
-                        {preset.checks.map((check) => <li key={check}>{check}</li>)}
-                      </ul>
+                      <b>Create alert</b>
                     </button>
                   ))}
                 </div>
@@ -2632,7 +2717,7 @@ export default function Page() {
             </section>
 
             <section className="alert-layout lower">
-              <Panel title="My alerts" subtitle={isAccountReady ? `${enabledRuleCount} enabled rules attached to ${accountName}.` : "Create a local account to make this feel like a personal alert desk."}>
+              <Panel title="My active alerts" subtitle="">
                 <div className="saved-rules">
                   {alertRules.length ? alertRules.map((rule: AlertRule) => (
                     <SavedRuleCard
@@ -2646,43 +2731,14 @@ export default function Page() {
                 </div>
               </Panel>
 
-              <Panel title="Account & Telegram" subtitle="Local account now, backend-ready flow later: Supabase user, Telegram chat_id, scheduled alert worker.">
-                <div className="account-card" ref={accountPanelRef}>
-                  <div className="account-summary">
-                    <span>{isAccountReady ? "Connected locally" : "Guest mode"}</span>
-                    <strong>{accountName}</strong>
-                    <small>{telegramHandle ? `Telegram: @${telegramHandle}` : "Telegram not linked yet"}</small>
-                  </div>
-                  <label>
-                    Display name
-                    <input
-                      placeholder="Azathustra"
-                      value={userProfile.displayName}
-                      onChange={(event) => setUserProfile((current) => ({ ...current, displayName: event.target.value }))}
-                    />
-                  </label>
-                  <label>
-                    Email
-                    <input
-                      type="email"
-                      placeholder="you@example.com"
-                      value={userProfile.email}
-                      onChange={(event) => setUserProfile((current) => ({ ...current, email: event.target.value }))}
-                    />
-                  </label>
-                  <label>
-                    Telegram username
-                    <input
-                      placeholder="@username"
-                      value={userProfile.telegram}
-                      onChange={(event) => setUserProfile((current) => ({ ...current, telegram: event.target.value }))}
-                    />
-                  </label>
-                  <div className="account-flow">
-                    <div><strong>1. Account</strong><span>Rules are tied to this local profile for the MVP.</span></div>
-                    <div><strong>2. Telegram</strong><span>Username is stored now; production stores chat_id after bot verification.</span></div>
-                    <div><strong>3. Alerts</strong><span>Saved rules become server-side checks every minute.</span></div>
-                  </div>
+              <Panel title="Backtest" subtitle="">
+                <div className="backtest-box">
+                  <select value={coin} onChange={(event) => setCoin(event.target.value)}>{marketOptions.map((symbol) => <option value={symbol} key={symbol}>{symbol}</option>)}</select>
+                  <select value={activePresetKind || "freshLongs"} onChange={(event) => loadPreset(event.target.value as AlertPresetKind)}>
+                    {alertPresetCards.slice(0, 4).map((preset) => <option value={preset.kind} key={preset.kind}>{preset.title}</option>)}
+                  </select>
+                  <select defaultValue="14d"><option value="7d">7d</option><option value="14d">14d</option><option value="30d">30d</option></select>
+                  <div className="empty compact">Backtest unavailable. Historical trigger archive is not connected yet.</div>
                 </div>
               </Panel>
             </section>
@@ -2723,51 +2779,48 @@ export default function Page() {
         {view === "flow" && (
           <>
             <ViewHeader eyebrow="Flow Tape" title="Large trades, taker pressure and TWAP-like activity" />
-            <section className="kpi-grid">
-              <Kpi label="Buy pressure" value={twapSummary?.buy10m || formatUsd(twapBuy)} detail="Detected clustered buy notional" tone="positive" />
-              <Kpi label="Sell pressure" value={twapSummary?.sell10m || formatUsd(twapSell)} detail="Detected clustered sell notional" tone="negative" />
-              <Kpi label="Net pressure" value={twapSummary?.netLabel || formatUsd(Math.abs(twapNet))} detail={twapSummary?.netSide || (twapNet >= 0 ? "Buy side" : "Sell side")} tone={twapNet >= 0 ? "positive" : "negative"} />
-              <Kpi label="Source" value={sourceLabel(twapStatus)} detail="Refreshes every 30 seconds" />
-            </section>
-            <section className="twap-layout">
-              <Panel title="Buy vs sell programs" subtitle="Large HYPE TWAP clusters separated by side so the balance is readable at a glance.">
-                <TwapPressureBoard twaps={twaps} buyTotal={twapBuy} sellTotal={twapSell} />
-              </Panel>
-              <Panel title="Recent tape" subtitle="Latest HYPE trades surfaced by the TWAP monitor.">
-                <div className="trade-list">
-                  {trades.length ? trades.slice(0, 14).map((trade) => <TradeLine trade={trade} key={trade.id} />) : <div className="empty compact">No live trades returned yet.</div>}
-                </div>
-              </Panel>
-            </section>
+            <div className="toolbar">
+              <div className="segments">
+                {[
+                  ["large", "Large trades"],
+                  ["bursts", "Taker bursts"],
+                  ["oi", "OI spikes"],
+                  ["funding", "Funding stress"],
+                  ["twap", "TWAP-like activity"],
+                ].map(([key, label]) => <button className={flowTab === key ? "active" : ""} key={key} onClick={() => setFlowTab(key as FlowTab)}>{label}</button>)}
+              </div>
+            </div>
+            <Panel title="Live event feed" subtitle="">
+              <FlowTapeTable tab={flowTab} trades={trades} twaps={twaps} metrics={terminalMetrics} twapNet={twapNet} asset={coin} onAction={() => setView("alerts")} />
+            </Panel>
           </>
         )}
 
         {view === "ecosystem" && (
           <>
-            <ViewHeader eyebrow="Ecosystem" title="ETF flows, DATs, NFTs and venue context" />
+            <ViewHeader eyebrow="Ecosystem" title="Venue and market context" />
             <section className="kpi-grid">
-              <Kpi label="ETF net flow" value={etfNetFlow ? formatUsd(etfNetFlow) : "--"} detail={`${sourceLabel(flowStatus)} / ${flowMeta.latestDate || "latest table date"}`} tone={etfNetFlow >= 0 ? "positive" : "negative"} />
-              <Kpi label="ETF products" value={String(flows.length)} detail={`Largest print ${formatUsd(largestEtfPrint)}`} />
-              <Kpi label="Hypurr NFT floor" value={nftStats.floor} detail={`${nftStats.sales24h} sales in the last day`} />
-              <Kpi label="NFT 24h volume" value={nftStats.volume24h} detail={`${nftStats.owners} owners`} />
-              <Kpi label="Tracked DATs" value={String(DAT_ROWS.length)} detail="BTC and ETH treasury vehicles" />
               <Kpi label="Hyperliquid volume" value={formatUsd(totalVolume)} detail="Live venue comparison leg" />
+              <Kpi label="Ranked venues" value={String(exchangeRows.length)} detail="CEX and DEX basket" />
+              <Kpi label="DEX share" value={formatPct(exchangeRows.find((row: ExchangeRow) => row.name === "Hyperliquid")?.marketShare || 0, 1, false)} detail="Comparison basket share" />
+              <Kpi label="Data" value={sourceLabel(marketStatus)} detail={dataStatusText} />
             </section>
-            <section className="two-col nfts-layout">
-              <Panel title="Latest Hypurr sales" subtitle={`${sourceLabel(nftStatus)} OpenSea feed with direct item links.`}>
-                <div className="nft-grid">
-                  {nftSales.length ? nftSales.map((sale) => <NftSaleCard sale={sale} key={`${sale.id}-${sale.price}`} />) : <div className="empty">No live sales returned. Add/refresh OpenSea API key if needed.</div>}
-                </div>
-              </Panel>
-              <Panel title="NFT liquidity read" subtitle="Floor, sales cadence, and volume show whether the collection has real bid activity.">
-                <div className="signals">
-                  <Signal label="Demand" value={nftStats.floor} body="Floor and recent sales show whether collectors are still bidding, not just listing." tone="good" />
-                  <Signal label="Liquidity check" value={nftStats.volume24h} body="Volume and recent sale cadence help separate actual bid activity from static floor listings." tone="watch" />
-                  <a className="external-card" href={OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer">Open collection on OpenSea -&gt;</a>
-                </div>
-              </Panel>
+            <Panel title="Hyperliquid vs venue volume" subtitle="">
+              <ExchangeComparison rows={exchangeRows} />
+            </Panel>
+          </>
+        )}
+
+        {view === "etfDats" && (
+          <>
+            <ViewHeader eyebrow="ETF / DATs" title="TradFi demand and treasury vehicles" />
+            <section className="kpi-grid">
+              <Kpi label="ETF net flow" value={etfNetFlow ? formatUsd(etfNetFlow) : "--"} detail={flowMeta.latestDate || "latest table date"} tone={etfNetFlow >= 0 ? "positive" : "negative"} />
+              <Kpi label="ETF products" value={String(flows.length)} detail={`Largest ${formatUsd(largestEtfPrint)}`} />
+              <Kpi label="Tracked DATs" value={String(DAT_ROWS.length)} detail="BTC and ETH treasuries" />
+              <Kpi label="Source" value={sourceLabel(flowStatus)} detail={flowMeta.source || "flow endpoint"} />
             </section>
-            <section className="two-col ecosystem-section">
+            <section className="two-col">
               <Panel title="Daily ETF / ETP net flow" subtitle={flowMeta.note || "Green bars are inflows; red bars are outflows. Latest flow is shown on the right."}>
                 <FlowBarChart days={flowDays} />
               </Panel>
@@ -2783,10 +2836,30 @@ export default function Page() {
                   {DAT_ROWS.map((row) => <DatCard row={row} key={`${row.ticker}-${row.asset}`} />)}
                 </div>
               </Panel>
-              <Panel title="Hyperliquid vs venue volume" subtitle="A compact exchange comparison to keep Hyperliquid in the wider perp market context.">
-                <ExchangeComparison rows={exchangeRows} />
+              <Panel title="DAT read" subtitle="">
+                <div className="signals">
+                  <Signal label="mNAV" value="Premium" body="Premium/discount is the core DAT signal." tone="watch" />
+                  <Signal label="Risk" value="Dilution" body="Debt and issuance can dominate crypto beta." tone="risk" />
+                </div>
               </Panel>
             </section>
+          </>
+        )}
+
+        {view === "nfts" && (
+          <>
+            <ViewHeader eyebrow="Hypurr NFTs" title="Collection pulse" />
+            <section className="kpi-grid">
+              <Kpi label="Floor" value={nftStats.floor} detail="OpenSea reported floor" />
+              <Kpi label="24h volume" value={nftStats.volume24h} detail={`${nftStats.sales24h} sales`} />
+              <Kpi label="Owners" value={nftStats.owners} detail="Collection holders" />
+              <Kpi label="Total volume" value={nftStats.totalVolume} detail="Lifetime reported volume" />
+            </section>
+            <Panel title="Latest Hypurr sales" subtitle="">
+              <div className="nft-grid">
+                {nftSales.length ? nftSales.map((sale) => <NftSaleCard sale={sale} key={`${sale.id}-${sale.price}`} />) : <div className="empty">No live sales returned.</div>}
+              </div>
+            </Panel>
           </>
         )}
 
@@ -2917,51 +2990,158 @@ function ViewHeader({ eyebrow, title }: { eyebrow: string; title: string }) {
   );
 }
 
-function MiniModule({ title, value, detail, onClick }: { title: string; value: string; detail: string; onClick: () => void }) {
+function ReadinessCard({ title, score, checks, onCreate }: { title: string; score: number; checks: Array<{ label: string; ok: boolean }>; onCreate: () => void }) {
+  const missing = checks.filter((check) => !check.ok).map((check) => check.label.split(":")[0].replace(/>|</g, "").trim());
   return (
-    <button className="mini-module" onClick={onClick}>
-      <span>{title}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
-    </button>
-  );
-}
-
-function ScoreCard({ title, score, status, tone, rows }: { title: string; score: number; status: string; tone: string; rows: string[] }) {
-  return (
-    <article className={`score-card ${tone}`}>
+    <article className="readiness-card">
       <div className="score-head">
         <div>
           <span>{title}</span>
-          <strong>{status}</strong>
+          <strong>{readinessStatus(score)}</strong>
         </div>
-        <b>{score}/100</b>
+        <b>{Math.round(score)}%</b>
       </div>
       <div className="score-track"><i style={{ width: `${clamp(score, 0, 100)}%` }} /></div>
-      <ul>
-        {rows.map((row: string) => <li key={row}>{row}</li>)}
+      <ul className="check-list">
+        {checks.map((check) => <li className={check.ok ? "ok" : "missing"} key={check.label}>{check.ok ? "OK" : "MISS"} {check.label}</li>)}
       </ul>
+      <small>{missing.length ? `Missing: ${missing.slice(0, 2).join(" and ")}.` : "Ready to trigger."}</small>
+      <button className="table-action" onClick={onCreate}>Create alert</button>
     </article>
   );
 }
 
-function SignalTable({ rows }: { rows: ScreenerRow[] }) {
-  if (!rows.length) return <div className="empty compact">No strong signal right now.</div>;
+function RegimeRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="signal-table">
+    <div className="regime-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function SignalFeed({ rows, activeCount, onCreate }: { rows: Array<ScreenerRow & { readiness: number; active: boolean; signal: string }>; activeCount: number; onCreate: (symbol: string) => void }) {
+  return (
+    <div className="signal-feed">
+      {!activeCount ? <div className="feed-empty">0 active signals. Closest setups:</div> : null}
       <table>
-        <thead><tr><th>Asset</th><th>Signal</th><th>Flow 5m</th><th>OI 15m</th><th>Funding</th><th>Price 15m</th></tr></thead>
+        <thead><tr><th>Asset</th><th>Signal</th><th>Readiness</th><th>Key metrics</th><th>CTA</th></tr></thead>
         <tbody>
-          {rows.map((row: ScreenerRow) => (
+          {rows.map((row) => (
             <tr key={`${row.market.symbol}-${row.signal}`}>
               <td><strong>{row.market.symbol}</strong></td>
               <td>{row.signal}</td>
-              <td>{formatUsd(row.flow5m)}</td>
-              <td className={row.oi15m >= 0 ? "positive" : "negative"}>{formatPct(row.oi15m, 2)}</td>
-              <td className={row.fundingPct >= 0 ? "positive" : "negative"}>{formatPct(row.fundingPct, 4)}</td>
-              <td className={row.price15m >= 0 ? "positive" : "negative"}>{formatPct(row.price15m, 2)}</td>
+              <td>{Math.round(row.readiness)}%</td>
+              <td>{`Flow ${row.flow5m ? formatUsd(row.flow5m) : "-"} - OI15 ${row.oi15m ? formatPct(row.oi15m, 2) : "-"} - Price15 ${row.price15m ? formatPct(row.price15m, 2) : "-"}`}</td>
+              <td><button className="table-action" onClick={() => onCreate(row.market.symbol)}>Create alert</button></td>
             </tr>
           ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function StructureMoversTable({ rows, onAction }: { rows: ScreenerRow[]; onAction: (symbol: string) => void }) {
+  return (
+    <div className="table-wrap compact-table">
+      <table>
+        <thead><tr><th>Asset</th><th>Price 15m</th><th>OI 15m</th><th>Funding</th><th>Taker buy %</th><th>Fresh</th><th>Crowding</th><th>Action</th></tr></thead>
+        <tbody>
+          {rows.map((row: ScreenerRow) => (
+            <tr key={row.market.symbol}>
+              <td><strong>{row.market.symbol}</strong></td>
+              <td>{row.price15m ? formatPct(row.price15m, 2) : "-"}</td>
+              <td>{row.oi15m ? formatPct(row.oi15m, 2) : "-"}</td>
+              <td>{formatPct(row.fundingPct, 4)}</td>
+              <td>{dash(row.takerBuyRatio, (value) => formatPct(value, 1, false))}</td>
+              <td>{row.freshLeverageScore}</td>
+              <td>{row.crowdingScore}</td>
+              <td><button className="table-action" onClick={() => onAction(row.market.symbol)}>View asset</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FlowEventTable({ rows, twapNet, onAction }: { rows: TradeRow[]; twapNet: number; onAction: () => void }) {
+  const events = rows.map((row: TradeRow) => ({
+    time: row.timeLabel,
+    event: (row.rawNotional || 0) >= 250_000 ? "Large trade" : "Trade",
+    value: row.notionalLabel,
+    context: `${row.side} at ${row.price}`,
+  }));
+  if (twapNet) events.unshift({ time: "recent", event: "TWAP-like pressure", value: formatUsd(Math.abs(twapNet)), context: twapNet >= 0 ? "Buy side" : "Sell side" });
+  return (
+    <div className="table-wrap compact-table">
+      <table>
+        <thead><tr><th>Time</th><th>Event</th><th>Value</th><th>Context</th><th></th></tr></thead>
+        <tbody>
+          {events.slice(0, 8).map((event, index) => (
+            <tr key={`${event.time}-${index}`}>
+              <td>{event.time}</td>
+              <td>{event.event}</td>
+              <td>{event.value}</td>
+              <td>{event.context}</td>
+              <td><button className="table-action" onClick={onAction}>Create alert</button></td>
+            </tr>
+          ))}
+          {!events.length ? <tr><td colSpan={5}>No live events.</td></tr> : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function LargeTradesTable({ rows }: { rows: TradeRow[] }) {
+  return (
+    <div className="table-wrap compact-table">
+      <table>
+        <thead><tr><th>Time</th><th>Side</th><th>Size USD</th><th>Price</th></tr></thead>
+        <tbody>
+          {rows.length ? rows.map((row: TradeRow) => (
+            <tr key={row.id}>
+              <td>{row.timeLabel}</td>
+              <td className={row.side === "Buy" ? "positive" : "negative"}>{row.side}</td>
+              <td>{row.notionalLabel}</td>
+              <td>{row.price}</td>
+            </tr>
+          )) : <tr><td colSpan={4}>No large trades.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FlowTapeTable({ tab, trades, twaps, metrics, twapNet, asset, onAction }: { tab: FlowTab; trades: TradeRow[]; twaps: TwapRow[]; metrics: AssetTerminalMetrics; twapNet: number; asset: string; onAction: () => void }) {
+  const tradeRows = trades.map((trade: TradeRow) => ({
+    time: trade.timeLabel,
+    asset,
+    event: (trade.rawNotional || 0) >= 250_000 ? "Large trade" : "Trade",
+    side: trade.side,
+    size: trade.notionalLabel,
+    context: `${trade.price}`,
+    action: "Create alert",
+  }));
+  const rows =
+    tab === "large" ? tradeRows.filter((row) => parseMoneyLabel(row.size) >= 250_000) :
+    tab === "bursts" ? [{ time: "recent", asset, event: "Taker burst", side: metrics.netTakerDelta5m >= 0 ? "Buy" : "Sell", size: formatUsd(Math.abs(metrics.netTakerDelta5m)), context: `Buy ratio ${formatPct(metrics.takerBuyRatio5m, 1, false)}`, action: "Create alert" }] :
+    tab === "oi" ? [{ time: "recent", asset, event: "OI spike", side: "-", size: formatPct(metrics.oiChange15m, 2), context: `4h ${formatPct(metrics.oiChange4h, 2)}`, action: "View asset" }] :
+    tab === "funding" ? [{ time: "recent", asset, event: "Funding stress", side: metrics.fundingPct >= 0 ? "Longs" : "Shorts", size: formatPct(metrics.fundingPct, 4), context: `Pctl ${metrics.fundingPercentile14d}%`, action: "Create alert" }] :
+    twaps.map((twap: TwapRow) => ({ time: twap.lastTrade, asset, event: "TWAP-like activity", side: twap.side, size: twap.notional, context: `${twap.slices} slices`, action: "Create alert" }));
+  return (
+    <div className="table-wrap compact-table">
+      <table>
+        <thead><tr><th>Time</th><th>Asset</th><th>Event</th><th>Side</th><th>Size</th><th>Context</th><th>Action</th></tr></thead>
+        <tbody>
+          {rows.length ? rows.slice(0, 16).map((row, index) => (
+            <tr key={`${row.event}-${index}`}>
+              <td>{row.time}</td><td>{row.asset}</td><td>{row.event}</td><td>{row.side}</td><td>{row.size}</td><td>{row.context}</td>
+              <td><button className="table-action" onClick={onAction}>{row.action}</button></td>
+            </tr>
+          )) : <tr><td colSpan={7}>No live events.</td></tr>}
         </tbody>
       </table>
     </div>
@@ -2980,22 +3160,26 @@ function ScreenerTable({ rows, onOpenAsset }: { rows: ScreenerRow[]; onOpenAsset
       <div className="table-wrap">
         <table>
           <thead>
-            <tr><th>Rank</th><th>Asset</th><th>Signal</th><th>Price</th><th>24h Volume</th><th>OI</th><th>Funding</th><th>Fresh</th><th>Crowding</th><th>Liquidity</th><th>Anomaly</th></tr>
+            <tr><th>Asset</th><th>Price</th><th>24h %</th><th>Volume 24h</th><th>Rank</th><th>RVOL 5m</th><th>OI 15m</th><th>OI 4h</th><th>Funding</th><th>Funding %ile</th><th>Taker buy %</th><th>Fresh</th><th>Crowding</th><th>Liquidity</th><th>Action</th></tr>
           </thead>
           <tbody>
             {rows.map((row: ScreenerRow) => (
               <tr key={row.market.symbol} onClick={() => onOpenAsset(row.market.symbol)}>
-                <td>#{row.rank}</td>
                 <td><strong>{row.market.symbol}</strong></td>
-                <td>{row.signal}</td>
                 <td>{formatUsd(row.market.price)}</td>
+                <td className={row.market.changePct >= 0 ? "positive" : "negative"}>{formatPct(row.market.changePct, 2)}</td>
                 <td>{formatUsd(row.market.volumeUsd)}</td>
-                <td>{formatUsd(row.market.oiUsd)}</td>
+                <td>#{row.rank}</td>
+                <td>{row.dataQuality === "selected-live" ? `${(row.flow5m / Math.max(1, row.market.volumeUsd / 288)).toFixed(2)}x` : "-"}</td>
+                <td>{row.oi15m ? formatPct(row.oi15m, 2) : "-"}</td>
+                <td>{row.oi4h ? formatPct(row.oi4h, 2) : "-"}</td>
                 <td className={row.fundingPct >= 0 ? "positive" : "negative"}>{formatPct(row.fundingPct, 4)}</td>
+                <td>{dash(row.fundingPercentile14d, (value) => `${Math.round(value)}%`)}</td>
+                <td>{dash(row.takerBuyRatio, (value) => formatPct(value, 1, false))}</td>
                 <td>{row.freshLeverageScore}</td>
                 <td>{row.crowdingScore}</td>
                 <td>{row.liquidityScore}</td>
-                <td>{row.anomalyScore}</td>
+                <td><button className="table-action" onClick={(event) => { event.stopPropagation(); onOpenAsset(row.market.symbol); }}>View asset</button></td>
               </tr>
             ))}
           </tbody>
@@ -3209,17 +3393,6 @@ function TwapCard({ row }: { row: TwapRow }) {
       </dl>
       <small>{row.confidence}</small>
     </article>
-  );
-}
-
-function TradeLine({ trade }: { trade: TradeRow }) {
-  return (
-    <div className="trade-line">
-      <span className={trade.side === "Buy" ? "positive" : "negative"}>{trade.side}</span>
-      <strong>{trade.notionalLabel}</strong>
-      <span>{trade.price}</span>
-      <span>{trade.timeLabel}</span>
-    </div>
   );
 }
 
