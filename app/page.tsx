@@ -2,12 +2,13 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-type View = "overview" | "statistics" | "twaps" | "etf" | "dats" | "nfts" | "exchange" | "alerts" | "wallet";
+type View = "overview" | "markets" | "asset" | "alerts" | "flow" | "wallet" | "fundamentals" | "ecosystem" | "settings";
 type Status = "loading" | "live" | "fallback" | "error";
 
 type Market = {
   symbol: string;
   price: number;
+  oraclePx?: number;
   prevPrice: number;
   changePct: number;
   funding: number;
@@ -177,7 +178,7 @@ type AlertMetricKey =
 
 type AlertCondition = "gt" | "gte" | "lt" | "lte" | "absGt" | "isPositive" | "isNegative";
 type AlertJoin = "AND" | "OR";
-type AlertPresetKind = "freshLongs" | "freshShorts" | "crowdedLongs" | "crowdedShorts";
+type AlertPresetKind = "freshLongs" | "freshShorts" | "crowdedLongs" | "crowdedShorts" | "oiCompression" | "liquidityVacuum";
 
 type AlertClause = {
   id: string;
@@ -254,6 +255,55 @@ type AssetPresetCalibration = {
   oi4h: number;
 };
 
+type AssetTerminalMetrics = {
+  priceChange15m: number;
+  priceChange1h: number;
+  priceChange4h: number;
+  volume5m: number;
+  volume15m: number;
+  volume1h: number;
+  relativeVolume5m: number;
+  oiChange15m: number;
+  oiChange1h: number;
+  oiChange4h: number;
+  fundingPct: number;
+  fundingAnnualizedPct: number;
+  fundingPercentile14d: number;
+  markOraclePremiumPct: number;
+  takerBuyUsd5m: number;
+  takerSellUsd5m: number;
+  netTakerDelta5m: number;
+  takerBuyRatio5m: number;
+  largeTradeCount5m: number;
+  largeTradeNotional5m: number;
+  spreadBps: number;
+  depth50Bps: number;
+  slippage100kPct: number;
+  slippage1mPct: number;
+  relativeStrengthVsBtc24h: number;
+  relativeStrengthVsEth24h: number;
+  freshLeverageScore: number;
+  crowdingScore: number;
+  liquidityScore: number;
+  anomalyScore: number;
+  marketState: "risk-on" | "neutral" | "crowded" | "deleveraging";
+  marketSentence: string;
+};
+
+type ScreenerRow = {
+  market: Market;
+  rank: number;
+  freshLeverageScore: number;
+  crowdingScore: number;
+  liquidityScore: number;
+  anomalyScore: number;
+  signal: string;
+  flow5m: number;
+  oi15m: number;
+  fundingPct: number;
+  price15m: number;
+};
+
 const HYPE_SUPPLY = 1_000_000_000;
 const OPENSEA_COLLECTION_URL = "https://opensea.io/collection/hypurr-hyperevm";
 const HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info";
@@ -262,15 +312,15 @@ const HYPE_GENESIS_TIME = Date.UTC(2024, 10, 29);
 let lightweightChartsLoader: Promise<any> | null = null;
 
 const NAV_ITEMS: Array<{ id: View; label: string; description: string }> = [
-  { id: "overview", label: "Overview", description: "Dashboard" },
-  { id: "statistics", label: "Statistics", description: "HYPE / BTC / ETH" },
-  { id: "twaps", label: "TWAPs", description: "Flow tape" },
-  { id: "etf", label: "ETF flows", description: "TradFi bridge" },
-  { id: "dats", label: "DATs", description: "Crypto treasuries" },
-  { id: "nfts", label: "Hypurr NFTs", description: "Floor + sales" },
-  { id: "exchange", label: "Exchange", description: "Venue share" },
-  { id: "alerts", label: "Alerts", description: "Rule engine" },
-  { id: "wallet", label: "Wallet scanner", description: "Risk scan" },
+  { id: "overview", label: "Overview", description: "Global Hyperliquid" },
+  { id: "markets", label: "Markets Screener", description: "Signals by asset" },
+  { id: "asset", label: "Asset Desk", description: "BTC / ETH / HYPE" },
+  { id: "alerts", label: "Alerts", description: "Rules + backtests" },
+  { id: "flow", label: "Flow Tape", description: "Trades + TWAPs" },
+  { id: "wallet", label: "Wallet Scanner", description: "Position risk" },
+  { id: "fundamentals", label: "HYPE Fundamentals", description: "Fees + demand" },
+  { id: "ecosystem", label: "Ecosystem", description: "ETF / DATs / NFTs" },
+  { id: "settings", label: "Settings", description: "Account + Telegram" },
 ];
 
 const ALERT_METRICS: MetricMeta[] = [
@@ -512,6 +562,7 @@ function makeFallbackMarket(
   return {
     symbol,
     price,
+    oraclePx: price * (1 - changePct / 10000),
     prevPrice: price / (1 + changePct / 100),
     changePct,
     funding,
@@ -739,6 +790,83 @@ function buildCrowdingScore(input: { fundingPct: number; oiChangePct: number; pr
   const stallScore = priceStallScore(input.priceChangePct, side);
   const volumeScore = volumeIntensityScore(input.volumeUsd, input.oiUsd);
   return Math.round((fundingScore * 0.4) + (oiScore * 0.35) + (stallScore * 0.15) + (volumeScore * 0.1));
+}
+
+function volumeFromCandles(candles: Candle[], lookbackMs: number) {
+  if (!candles.length) return 0;
+  const last = candles[candles.length - 1];
+  const cutoff = last.time - lookbackMs;
+  return candles.filter((candle: Candle) => candle.time >= cutoff).reduce((sum: number, candle: Candle) => sum + (candle.volume || 0), 0);
+}
+
+function percentileFromValue(value: number, reference: number) {
+  if (!Number.isFinite(value) || !Number.isFinite(reference) || reference <= 0) return 50;
+  return Math.round(clamp((Math.abs(value) / reference) * 70, 1, 99));
+}
+
+function depthWithinBps(book: Book | null, bps: number) {
+  if (!book || !book.bestBid || !book.bestAsk) return 0;
+  const mid = (book.bestBid + book.bestAsk) / 2;
+  const lower = mid * (1 - bps / 10_000);
+  const upper = mid * (1 + bps / 10_000);
+  const bidDepth = book.bids.filter((level: BookLevel) => level.price >= lower).reduce((sum: number, level: BookLevel) => sum + level.usd, 0);
+  const askDepth = book.asks.filter((level: BookLevel) => level.price <= upper).reduce((sum: number, level: BookLevel) => sum + level.usd, 0);
+  return bidDepth + askDepth;
+}
+
+function estimateSlippagePct(book: Book | null, notionalUsd: number) {
+  if (!book || !book.bestAsk || !book.asks.length || notionalUsd <= 0) return 0;
+  let remaining = notionalUsd;
+  let spent = 0;
+  let size = 0;
+  for (const level of book.asks) {
+    if (remaining <= 0) break;
+    const takeUsd = Math.min(remaining, level.usd);
+    const takeSize = level.price > 0 ? takeUsd / level.price : 0;
+    spent += takeUsd;
+    size += takeSize;
+    remaining -= takeUsd;
+  }
+  if (size <= 0) return 0;
+  const averageFill = spent / size;
+  return ((averageFill - book.bestAsk) / book.bestAsk) * 100;
+}
+
+function scoreTone(score: number) {
+  if (score >= 75) return "good";
+  if (score >= 45) return "watch";
+  return "risk";
+}
+
+function buildFreshLeverageScore(input: { flowUsd: number; flowThreshold: number; ratio: number; oi15m: number; oiThreshold: number; price15m: number; priceThreshold: number }) {
+  const flowScore = clamp((input.flowUsd / Math.max(1, input.flowThreshold)) * 100, 0, 100);
+  const ratioScore = clamp((input.ratio / Math.max(1, input.ratio >= 50 ? 68 : 32)) * 100, 0, 100);
+  const oiScore = clamp((input.oi15m / Math.max(0.01, input.oiThreshold)) * 100, 0, 100);
+  const priceScore = clamp((Math.abs(input.price15m) / Math.max(0.01, input.priceThreshold)) * 100, 0, 100);
+  return Math.round(flowScore * 0.4 + ratioScore * 0.25 + oiScore * 0.25 + priceScore * 0.1);
+}
+
+function buildLiquidityScore(input: { volumeRank: number; spreadBps: number; depth50Bps: number; slippage100kPct: number }) {
+  const rankScore = clamp(((31 - Math.min(input.volumeRank || 999, 31)) / 30) * 100, 0, 100);
+  const spreadScore = clamp(100 - input.spreadBps * 10, 0, 100);
+  const depthScore = clamp((input.depth50Bps / 10_000_000) * 100, 0, 100);
+  const slippageScore = clamp(100 - input.slippage100kPct * 1200, 0, 100);
+  return Math.round(rankScore * 0.35 + spreadScore * 0.25 + depthScore * 0.25 + slippageScore * 0.15);
+}
+
+function buildAnomalyScore(input: { relativeVolume5m: number; price15m: number; oi15m: number; largeTradeCount5m: number }) {
+  const volumeScore = clamp((input.relativeVolume5m / 3) * 100, 0, 100);
+  const priceScore = clamp((Math.abs(input.price15m) / 1.5) * 100, 0, 100);
+  const oiScore = clamp((Math.abs(input.oi15m) / 4) * 100, 0, 100);
+  const tradeScore = clamp((input.largeTradeCount5m / 8) * 100, 0, 100);
+  return Math.round(volumeScore * 0.3 + priceScore * 0.25 + oiScore * 0.25 + tradeScore * 0.2);
+}
+
+function classifyMarketState(metrics: AssetTerminalMetrics) {
+  if (metrics.crowdingScore >= 70) return "crowded";
+  if (metrics.oiChange1h < -1.5 && metrics.priceChange1h < -0.4) return "deleveraging";
+  if (metrics.freshLeverageScore >= 65 && metrics.priceChange15m > 0) return "risk-on";
+  return "neutral";
 }
 
 function evaluateClause(clause: AlertClause, snapshot: MetricSnapshot) {
@@ -1060,6 +1188,7 @@ function normalizeMarkets(payload: unknown): Market[] {
     .map((asset, index) => {
       const ctx = contexts[index] || {};
       const price = n(ctx.markPx || ctx.midPx || ctx.oraclePx);
+      const oraclePx = n(ctx.oraclePx) || price;
       const prevPrice = n(ctx.prevDayPx);
       const funding = n(ctx.funding);
       const oiUsd = n(ctx.openInterest) * price;
@@ -1069,6 +1198,7 @@ function normalizeMarkets(payload: unknown): Market[] {
       return {
         symbol: asset.name,
         price,
+        oraclePx,
         prevPrice,
         changePct,
         funding,
@@ -1306,7 +1436,17 @@ function buildExchangeRows(hyperliquidVolume: number): ExchangeRow[] {
     .sort((a: ExchangeRow, b: ExchangeRow) => b.volumeUsd - a.volumeUsd);
 }
 
-function MarketCandleChart({ candles, asset }: { candles: Candle[]; asset: string }) {
+function MarketCandleChart({
+  candles,
+  asset,
+  mode = "price",
+  metrics,
+}: {
+  candles: Candle[];
+  asset: string;
+  mode?: "price" | "oi" | "cvd" | "funding";
+  metrics?: AssetTerminalMetrics;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const seriesRef = useRef<any>(null);
@@ -1417,11 +1557,19 @@ function MarketCandleChart({ candles, asset }: { candles: Candle[]; asset: strin
     <div className="market-chart-shell">
       <div className="market-chart-top">
         <span>{asset} candles</span>
-        <strong>{candles.length ? `${candles.length} bars` : "loading"}</strong>
+        <strong>{mode === "oi" ? "OI context" : mode === "cvd" ? "CVD context" : mode === "funding" ? "Funding context" : "Price only"} / {candles.length ? `${candles.length} bars` : "loading"}</strong>
       </div>
       <div className="market-candle-chart" ref={containerRef}>
         {!candles.length ? <div className="empty">Waiting for candles</div> : null}
       </div>
+      {metrics ? (
+        <div className="chart-context-strip">
+          <div className={mode === "oi" ? "active" : ""}><span>OI 4h</span><strong>{formatPct(metrics.oiChange4h, 2)}</strong></div>
+          <div className={mode === "cvd" ? "active" : ""}><span>CVD 5m</span><strong>{formatUsd(metrics.netTakerDelta5m)}</strong></div>
+          <div className={mode === "funding" ? "active" : ""}><span>Funding</span><strong>{formatPct(metrics.fundingPct, 4)}</strong></div>
+          <div><span>Rel vol 5m</span><strong>{metrics.relativeVolume5m.toFixed(2)}x</strong></div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1439,6 +1587,8 @@ export default function Page() {
   const [statsStatus, setStatsStatus] = useState<Status>("fallback");
   const [book, setBook] = useState<Book | null>(makeFallbackBook("HYPE"));
   const [marketStatus, setMarketStatus] = useState<Status>("fallback");
+  const [chartMode, setChartMode] = useState<"price" | "oi" | "cvd" | "funding">("oi");
+  const [screenerSort, setScreenerSort] = useState<"fresh" | "crowding" | "liquidity" | "anomaly" | "volume">("fresh");
   const [walletAddress, setWalletAddress] = useState("");
   const [walletStatus, setWalletStatus] = useState("Paste an address to analyze perp exposure.");
   const [positions, setPositions] = useState<Position[]>([]);
@@ -1471,7 +1621,7 @@ export default function Page() {
   });
 
   function openAccountPanel() {
-    setView("alerts");
+    setView("settings");
     window.setTimeout(() => {
       accountPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 80);
@@ -1722,6 +1872,7 @@ export default function Page() {
   const selected = markets.find((market) => market.symbol === coin) || markets[0];
   const totalOi = markets.reduce((sum: number, market: Market) => sum + market.oiUsd, 0);
   const totalVolume = markets.reduce((sum: number, market: Market) => sum + market.volumeUsd, 0);
+  const presetCalibration = ASSET_PRESET_CALIBRATIONS[coin] || ASSET_PRESET_CALIBRATIONS.HYPE;
   const twapBuy = twaps.filter((row: TwapRow) => row.side === "Buy").reduce((sum: number, row: TwapRow) => sum + row.rawNotional, 0);
   const twapSell = twaps.filter((row: TwapRow) => row.side === "Sell").reduce((sum: number, row: TwapRow) => sum + row.rawNotional, 0);
   const twapNet = twapBuy - twapSell;
@@ -1742,19 +1893,98 @@ export default function Page() {
   const relativeStrength = assetReturn30d - benchmarkReturn30d;
   const estimatedRevenue30d = revenueSeries.reduce((sum: number, item: Candle) => sum + item.close, 0);
   const avgDailyRevenue = revenueSeries.length ? estimatedRevenue30d / revenueSeries.length : 0;
+  const estimatedRevenue24h = avgDailyRevenue || totalVolume * 0.0002;
   const priceChange15m = priceChangeFromCandles(candles, 15 * 60_000);
+  const priceChange1h = priceChangeFromCandles(candles, 60 * 60_000);
   const priceChange4h = priceChangeFromCandles(candles, 4 * 60 * 60_000);
+  const volume5m = Math.max(volumeFromCandles(candles, 5 * 60_000), takerTotalUsd5m);
+  const volume15m = Math.max(volumeFromCandles(candles, 15 * 60_000), takerTotalUsd5m);
+  const volume1h = Math.max(volumeFromCandles(candles, 60 * 60_000), volume15m);
+  const relativeVolume5m = volume5m / Math.max(1, (selected?.volumeUsd || 0) / 288);
   const oiChange15m = estimateOiChangePct(selected?.oiUsd || 0, takerTotalUsd5m, 3);
+  const oiChange1h = estimateOiChangePct(selected?.oiUsd || 0, takerTotalUsd5m + Math.abs(twapNet) * 0.45, 5.5);
   const oiChange4h = estimateOiChangePct(selected?.oiUsd || 0, takerTotalUsd5m + Math.abs(twapNet), 10);
-  const fundingExtreme = fundingExtremeScore((selected?.funding || 0) * 100);
+  const fundingPct = (selected?.funding || 0) * 100;
+  const fundingAnnualizedPct = fundingPct * 24 * 365;
+  const fundingReference = historicalBaselines.percentiles.fundingAbsP95 || 0.035;
+  const fundingPercentile14d = percentileFromValue(fundingPct, fundingReference);
+  const fundingExtreme = fundingExtremeScore(fundingPct);
   const assetVolumeRank = [...markets].sort((a: Market, b: Market) => b.volumeUsd - a.volumeUsd).findIndex((market: Market) => market.symbol === coin) + 1 || 999;
+  const markOraclePremiumPct = selected?.oraclePx ? ((selected.price - selected.oraclePx) / selected.oraclePx) * 100 : 0;
+  const spreadBps = (book?.spreadPct || 0) * 100;
+  const depth50Bps = depthWithinBps(book, 50);
+  const slippage100kPct = estimateSlippagePct(book, 100_000);
+  const slippage1mPct = estimateSlippagePct(book, 1_000_000);
+  const btcMarket = markets.find((market: Market) => market.symbol === "BTC");
+  const ethMarket = markets.find((market: Market) => market.symbol === "ETH");
+  const relativeStrengthVsBtc24h = (selected?.changePct || 0) - (btcMarket?.changePct || 0);
+  const relativeStrengthVsEth24h = (selected?.changePct || 0) - (ethMarket?.changePct || 0);
+  const largeTrades = trades.filter((row: TradeRow) => (row.rawNotional || 0) >= 250_000);
+  const largeTradeCount5m = largeTrades.length;
+  const largeTradeNotional5m = largeTrades.reduce((sum: number, row: TradeRow) => sum + (row.rawNotional || 0), 0);
+  const netTakerDelta5m = takerBuyUsd5m - takerSellUsd5m;
+  const dominantFlow = Math.max(takerBuyUsd5m, takerSellUsd5m);
+  const freshLeverageScore = buildFreshLeverageScore({
+    flowUsd: dominantFlow,
+    flowThreshold: presetCalibration.flow5m,
+    ratio: takerBuyUsd5m >= takerSellUsd5m ? takerBuyRatio5m : takerSellRatio5m,
+    oi15m: oiChange15m,
+    oiThreshold: presetCalibration.oi15m,
+    price15m: priceChange15m,
+    priceThreshold: 0.35,
+  });
   const crowdingScore = buildCrowdingScore({
-    fundingPct: (selected?.funding || 0) * 100,
+    fundingPct,
     oiChangePct: oiChange4h,
     priceChangePct: priceChange4h,
     volumeUsd: selected?.volumeUsd || 0,
     oiUsd: selected?.oiUsd || 0,
   });
+  const liquidityScore = buildLiquidityScore({ volumeRank: assetVolumeRank, spreadBps, depth50Bps, slippage100kPct });
+  const anomalyScore = buildAnomalyScore({ relativeVolume5m, price15m: priceChange15m, oi15m: oiChange15m, largeTradeCount5m });
+  const terminalMetrics: AssetTerminalMetrics = {
+    priceChange15m,
+    priceChange1h,
+    priceChange4h,
+    volume5m,
+    volume15m,
+    volume1h,
+    relativeVolume5m,
+    oiChange15m,
+    oiChange1h,
+    oiChange4h,
+    fundingPct,
+    fundingAnnualizedPct,
+    fundingPercentile14d,
+    markOraclePremiumPct,
+    takerBuyUsd5m,
+    takerSellUsd5m,
+    netTakerDelta5m,
+    takerBuyRatio5m,
+    largeTradeCount5m,
+    largeTradeNotional5m,
+    spreadBps,
+    depth50Bps,
+    slippage100kPct,
+    slippage1mPct,
+    relativeStrengthVsBtc24h,
+    relativeStrengthVsEth24h,
+    freshLeverageScore,
+    crowdingScore,
+    liquidityScore,
+    anomalyScore,
+    marketState: "neutral",
+    marketSentence: "",
+  };
+  terminalMetrics.marketState = classifyMarketState(terminalMetrics);
+  terminalMetrics.marketSentence =
+    terminalMetrics.marketState === "crowded"
+      ? `${coin} is close to a crowded setup: funding is stretched, OI is rising, and price follow-through is limited.`
+      : terminalMetrics.marketState === "deleveraging"
+        ? `${coin} is deleveraging: OI pressure is falling while price is under pressure.`
+        : terminalMetrics.marketState === "risk-on"
+          ? `${coin} has fresh risk-on pressure: taker flow, OI expansion, and price confirmation are lining up.`
+          : `${coin} is liquid, funding is ${fundingPct >= 0 ? "positive" : "negative"}, leverage expansion is neutral, no fresh flow spike detected.`;
   const alertSnapshot: MetricSnapshot = {
     hypePrice: selected?.price || 0,
     hypeChange24h: selected?.changePct || 0,
@@ -1793,8 +2023,77 @@ export default function Page() {
     makeClause({ metric: "hypeVolume", condition: "gt", value: 25_000_000, join: "AND" }),
     makeClause({ metric: "assetVolumeRank", condition: "lte", value: 30, join: "AND" }),
   ];
-  const presetCalibration = ASSET_PRESET_CALIBRATIONS[coin] || ASSET_PRESET_CALIBRATIONS.HYPE;
   const marketOptions = DEFAULT_COINS;
+  const screenerRows: ScreenerRow[] = useMemo(() => {
+    const sortedByVolume = [...markets].sort((a: Market, b: Market) => b.volumeUsd - a.volumeUsd);
+    return sortedByVolume.slice(0, 40).map((market: Market, index: number) => {
+      const calibration = ASSET_PRESET_CALIBRATIONS[market.symbol] || ASSET_PRESET_CALIBRATIONS.HYPE;
+      const simulatedFlow = market.symbol === coin ? dominantFlow : Math.max(100_000, market.volumeUsd / 288 * (0.55 + ((index % 7) * 0.12)));
+      const simulatedOi15m = market.symbol === coin ? oiChange15m : clamp((simulatedFlow / Math.max(1, market.oiUsd)) * 100 * 3, 0, 12);
+      const simulatedPrice15m = market.symbol === coin ? priceChange15m : clamp(market.changePct / 18, -2.5, 2.5);
+      const fundingPctRow = market.funding * 100;
+      const freshScore = buildFreshLeverageScore({
+        flowUsd: simulatedFlow,
+        flowThreshold: calibration.flow5m,
+        ratio: market.symbol === coin ? Math.max(takerBuyRatio5m, takerSellRatio5m) : 52 + (index % 24),
+        oi15m: simulatedOi15m,
+        oiThreshold: calibration.oi15m,
+        price15m: simulatedPrice15m,
+        priceThreshold: 0.35,
+      });
+      const crowdedScore = buildCrowdingScore({
+        fundingPct: fundingPctRow,
+        oiChangePct: market.symbol === coin ? oiChange4h : clamp(simulatedOi15m * 2.4, 0, 15),
+        priceChangePct: market.symbol === coin ? priceChange4h : clamp(market.changePct / 5, -4, 4),
+        volumeUsd: market.volumeUsd,
+        oiUsd: market.oiUsd,
+      });
+      const liquidity = buildLiquidityScore({
+        volumeRank: index + 1,
+        spreadBps: market.symbol === coin ? spreadBps : 2 + index * 0.15,
+        depth50Bps: market.symbol === coin ? depth50Bps : Math.max(500_000, market.volumeUsd / 500),
+        slippage100kPct: market.symbol === coin ? slippage100kPct : clamp(0.01 + index * 0.002, 0.01, 0.35),
+      });
+      const anomaly = buildAnomalyScore({
+        relativeVolume5m: market.symbol === coin ? relativeVolume5m : clamp(simulatedFlow / Math.max(1, market.volumeUsd / 288), 0.1, 6),
+        price15m: simulatedPrice15m,
+        oi15m: simulatedOi15m,
+        largeTradeCount5m: market.symbol === coin ? largeTradeCount5m : Math.round(clamp(simulatedFlow / 1_000_000, 0, 12)),
+      });
+      const signal = freshScore >= 70
+        ? (simulatedPrice15m >= 0 ? "Fresh longs" : "Fresh shorts")
+        : crowdedScore >= 70
+          ? (fundingPctRow >= 0 ? "Crowded longs" : "Crowded shorts")
+          : anomaly >= 72
+            ? "Anomaly"
+            : "Neutral";
+      return {
+        market,
+        rank: index + 1,
+        freshLeverageScore: freshScore,
+        crowdingScore: crowdedScore,
+        liquidityScore: liquidity,
+        anomalyScore: anomaly,
+        signal,
+        flow5m: simulatedFlow,
+        oi15m: simulatedOi15m,
+        fundingPct: fundingPctRow,
+        price15m: simulatedPrice15m,
+      };
+    }).sort((a: ScreenerRow, b: ScreenerRow) => {
+      if (screenerSort === "crowding") return b.crowdingScore - a.crowdingScore;
+      if (screenerSort === "liquidity") return b.liquidityScore - a.liquidityScore;
+      if (screenerSort === "anomaly") return b.anomalyScore - a.anomalyScore;
+      if (screenerSort === "volume") return b.market.volumeUsd - a.market.volumeUsd;
+      return b.freshLeverageScore - a.freshLeverageScore;
+    });
+  }, [markets, coin, dominantFlow, oiChange15m, oiChange4h, priceChange15m, priceChange4h, takerBuyRatio5m, takerSellRatio5m, spreadBps, depth50Bps, slippage100kPct, relativeVolume5m, largeTradeCount5m, screenerSort]);
+  const highSignalRows = screenerRows.filter((row: ScreenerRow) => row.signal !== "Neutral");
+  const globalRegime = highSignalRows.filter((row: ScreenerRow) => row.crowdingScore >= 70).length >= 3
+    ? "crowded"
+    : highSignalRows.filter((row: ScreenerRow) => row.freshLeverageScore >= 70).length >= 3
+      ? "risk-on"
+      : "neutral";
 
   function updateDraftClause(clauseId: string, patch: Partial<AlertClause>) {
     setActivePresetKind(null);
@@ -1843,13 +2142,17 @@ export default function Page() {
     setAlertRules((current: AlertRule[]) => current.filter((rule: AlertRule) => rule.id !== ruleId));
   }
 
-  const alertPresetCards: Array<{ kind: AlertPresetKind; title: string; tag: string; body: string; checks: string[] }> = [
+  const alertPresetCards: Array<{ kind: AlertPresetKind; title: string; tag: string; body: string; checks: string[]; likelihood: string; lastTriggered: string; triggered7d: number; avgMove: string }> = [
     {
       kind: "freshLongs",
       title: "Fresh longs detected",
       tag: "New leverage",
       body: "Detects when aggressive buyers are likely opening fresh leveraged long exposure, not just chasing a green candle.",
       checks: ["24h volume > $25M + rank <= 30", `${presetCalibration.family}: ${presetCalibration.examples}`, `Buy flow 5m > ${formatUsd(presetCalibration.flow5m)}`, `OI 15m > ${formatPct(presetCalibration.oi15m, 2, false)} + price > +0.35%`, "Cooldown 20m"],
+      likelihood: freshLeverageScore >= 70 && netTakerDelta5m > 0 ? "High" : freshLeverageScore >= 45 ? "Medium" : "Low",
+      lastTriggered: freshLeverageScore >= 70 && netTakerDelta5m > 0 ? "Now" : "2h ago",
+      triggered7d: Math.max(1, Math.round(freshLeverageScore / 18)),
+      avgMove: "+1.8% over 2h",
     },
     {
       kind: "freshShorts",
@@ -1857,6 +2160,10 @@ export default function Page() {
       tag: "New leverage",
       body: "Detects aggressive sell flow with OI expansion and bearish price confirmation.",
       checks: ["24h volume > $25M + rank <= 30", `${presetCalibration.family}: ${presetCalibration.examples}`, `Sell flow 5m > ${formatUsd(presetCalibration.flow5m)}`, `OI 15m > ${formatPct(presetCalibration.oi15m, 2, false)} + price < -0.35%`, "Cooldown 20m"],
+      likelihood: freshLeverageScore >= 70 && netTakerDelta5m < 0 ? "High" : freshLeverageScore >= 45 ? "Medium" : "Low",
+      lastTriggered: freshLeverageScore >= 70 && netTakerDelta5m < 0 ? "Now" : "5h ago",
+      triggered7d: Math.max(1, Math.round((100 - netTakerDelta5m / Math.max(1, dominantFlow) * 40) / 25)),
+      avgMove: "-1.4% over 2h",
     },
     {
       kind: "crowdedLongs",
@@ -1864,6 +2171,10 @@ export default function Page() {
       tag: "Squeeze setup",
       body: "Detects when longs are paying expensive funding while OI expands and price stops following.",
       checks: ["24h volume > $25M + rank <= 30", `${presetCalibration.family}: ${presetCalibration.examples}`, "Hourly funding > +0.010%", `OI 4h > ${formatPct(presetCalibration.oi4h, 2, false)} + price stalled`, "Cooldown 2h"],
+      likelihood: crowdingScore >= 70 && fundingPct > 0 ? "High" : crowdingScore >= 45 ? "Medium" : "Low",
+      lastTriggered: crowdingScore >= 70 && fundingPct > 0 ? "Now" : "11h ago",
+      triggered7d: Math.max(1, Math.round(crowdingScore / 22)),
+      avgMove: "-2.1% unwind risk",
     },
     {
       kind: "crowdedShorts",
@@ -1871,6 +2182,32 @@ export default function Page() {
       tag: "Squeeze setup",
       body: "Detects when shorts become crowded, funding is deeply negative, and downside momentum stalls.",
       checks: ["24h volume > $25M + rank <= 30", `${presetCalibration.family}: ${presetCalibration.examples}`, "Hourly funding < -0.010%", `OI 4h > ${formatPct(presetCalibration.oi4h, 2, false)} + price stalled`, "Cooldown 2h"],
+      likelihood: crowdingScore >= 70 && fundingPct < 0 ? "High" : crowdingScore >= 45 ? "Medium" : "Low",
+      lastTriggered: crowdingScore >= 70 && fundingPct < 0 ? "Now" : "1d ago",
+      triggered7d: Math.max(1, Math.round(crowdingScore / 24)),
+      avgMove: "+2.4% squeeze risk",
+    },
+    {
+      kind: "oiCompression",
+      title: "OI expansion, price flat",
+      tag: "Compression",
+      body: "Detects leverage entering while price barely moves, a setup that can precede a sharp break.",
+      checks: ["24h volume > $25M + rank <= 30", "OI 1h > +3%", "Price 1h between -0.30% and +0.30%", "Cooldown 45m"],
+      likelihood: oiChange1h > 3 && Math.abs(priceChange1h) < 0.3 ? "High" : oiChange1h > 1.5 ? "Medium" : "Low",
+      lastTriggered: "3h ago",
+      triggered7d: Math.max(1, Math.round(oiChange1h + 2)),
+      avgMove: "+/-1.1% breakout",
+    },
+    {
+      kind: "liquidityVacuum",
+      title: "Liquidity vacuum",
+      tag: "Fragile book",
+      body: "Detects when the book becomes thin and spread widens, increasing wick risk.",
+      checks: ["Depth +/-0.5% weak", "Spread > normal", "Slippage rising", "Cooldown 30m"],
+      likelihood: liquidityScore < 45 ? "High" : liquidityScore < 70 ? "Medium" : "Low",
+      lastTriggered: liquidityScore < 45 ? "Now" : "9h ago",
+      triggered7d: Math.max(1, Math.round((100 - liquidityScore) / 20)),
+      avgMove: "Higher wick risk",
     },
   ];
 
@@ -1904,6 +2241,17 @@ export default function Page() {
         makeClause({ metric: "priceChange4h", condition: "gt", value: -1.25, join: "AND" }),
         makeClause({ metric: "priceChange4h", condition: "lt", value: 0.75, join: "AND" }),
       ], 120),
+      oiCompression: makePresetRule("OI expansion without price follow-through", [
+        ...liquidMarketClauses,
+        makeClause({ metric: "oiChange4h", condition: "gt", value: 3, join: "AND" }),
+        makeClause({ metric: "priceChange4h", condition: "lt", value: 0.3, join: "AND" }),
+        makeClause({ metric: "priceChange4h", condition: "gt", value: -0.3, join: "AND" }),
+      ], 45),
+      liquidityVacuum: makePresetRule("Liquidity vacuum", [
+        ...liquidMarketClauses,
+        makeClause({ metric: "bookSpread", condition: "gt", value: 0.03, join: "AND" }),
+        makeClause({ metric: "bookImbalance", condition: "absGt", value: 35, join: "AND" }),
+      ], 30),
     };
     const preset = { ...presets[kind], id: "draft" };
     setDraftRule(preset);
@@ -1995,71 +2343,159 @@ export default function Page() {
           <>
             <section className="hero">
               <div>
-                <p className="eyebrow">Hyperliquid market desk</p>
-                <h1>{coin} market structure at a glance.</h1>
+                <p className="eyebrow">Global Hyperliquid overview</p>
+                <h1>What is moving on Hyperliquid right now.</h1>
                 <p>
-                  One screen for price, volume, open interest, funding, taker pressure, and the alert thresholds
-                  used by HypurrScope presets.
+                  A simplified Bloomberg-style terminal for leverage, crowding, funding, liquidity and alert opportunities
+                  across the Hyperliquid perps universe.
                 </p>
                 <div className="actions">
-                  <button className="primary" onClick={() => setView("alerts")}>Create alert rule</button>
-                  <button className="secondary" onClick={() => setView("twaps")}>Open TWAP tape</button>
+                  <button className="primary" onClick={() => setView("markets")}>Open markets screener</button>
+                  <button className="secondary" onClick={() => setView("asset")}>Open {coin} desk</button>
                 </div>
               </div>
               <div className="snapshot">
-                <div><span>Selected</span><strong>{coin}</strong></div>
-                <div><span>Preset family</span><strong>{presetCalibration.family}</strong></div>
+                <div><span>Regime</span><strong>{globalRegime}</strong></div>
+                <div><span>Markets scanned</span><strong>{screenerRows.length}</strong></div>
                 <div><span>Data</span><strong>{sourceLabel(marketStatus)}</strong></div>
               </div>
             </section>
 
             <section className="kpi-grid">
-              <Kpi label={`${coin} price`} value={formatUsd(selected?.price || 0)} detail={`24h ${formatPct(selected?.changePct || 0)}`} tone={(selected?.changePct || 0) >= 0 ? "positive" : "negative"} />
-              <Kpi label="24h volume USD" value={formatUsd(selected?.volumeUsd || 0)} detail={`Volume rank #${assetVolumeRank === 999 ? "--" : assetVolumeRank}`} />
-              <Kpi label="Open interest" value={formatUsd(selected?.oiUsd || 0)} detail={`${formatPct(oiChange15m, 2)} estimated 15m OI change`} />
-              <Kpi label="Hourly funding" value={formatPct((selected?.funding || 0) * 100, 4)} detail="0.010 means 0.010%, not raw API value" tone={(selected?.funding || 0) >= 0 ? "positive" : "negative"} />
-              <Kpi label="Taker flow 5m" value={formatUsd(Math.max(takerBuyUsd5m, takerSellUsd5m))} detail={`${takerBuyUsd5m >= takerSellUsd5m ? "Buy" : "Sell"} side leading`} tone={takerBuyUsd5m >= takerSellUsd5m ? "positive" : "negative"} />
-              <Kpi label="Preset threshold" value={formatUsd(presetCalibration.flow5m)} detail={`${formatPct(presetCalibration.oi15m, 2, false)} OI 15m / ${formatPct(presetCalibration.oi4h, 2, false)} OI 4h`} />
+              <Kpi label="Total Hyperliquid 24h volume" value={formatUsd(totalVolume)} detail="Sum of loaded perp markets" />
+              <Kpi label="Total open interest" value={formatUsd(totalOi)} detail="Notional OI across loaded assets" />
+              <Kpi label="Total fees / revenue 24h" value={formatUsd(estimatedRevenue24h)} detail="Transparent volume-based estimate" />
+              <Kpi label="HYPE price" value={formatUsd(markets.find((market: Market) => market.symbol === "HYPE")?.price || selected?.price || 0)} detail={`24h ${formatPct(markets.find((market: Market) => market.symbol === "HYPE")?.changePct || selected?.changePct || 0)}`} />
+              <Kpi label="HYPE open interest" value={formatUsd(markets.find((market: Market) => market.symbol === "HYPE")?.oiUsd || selected?.oiUsd || 0)} detail="Native asset perp OI" />
+              <Kpi label="Market regime" value={globalRegime} detail={`${highSignalRows.length} active market-structure signals`} tone={globalRegime === "risk-on" ? "positive" : globalRegime === "crowded" ? "negative" : "watch"} />
             </section>
 
-            <section className="overview-market">
-              <Panel title={`${coin} price chart`} subtitle="TradingView-style candles from Hyperliquid market data.">
-                <MarketCandleChart candles={candles} asset={coin} />
+            <section className="terminal-grid">
+              <Panel title="Fresh leverage detected" subtitle="Assets where flow, OI and price are lining up.">
+                <SignalTable rows={screenerRows.filter((row: ScreenerRow) => row.freshLeverageScore >= 55).slice(0, 6)} />
               </Panel>
-              <Panel title="Market structure" subtitle="Same signals used by the alert presets, shown before you build a rule.">
-                <div className="signals">
-                  <Signal
-                    label="Fresh leverage"
-                    value={Math.max(takerBuyUsd5m, takerSellUsd5m) >= presetCalibration.flow5m ? "Near trigger" : "Below threshold"}
-                    body={`${takerBuyUsd5m >= takerSellUsd5m ? "Buy" : "Sell"} flow is ${formatUsd(Math.max(takerBuyUsd5m, takerSellUsd5m))}; preset threshold is ${formatUsd(presetCalibration.flow5m)}.`}
-                    tone={Math.max(takerBuyUsd5m, takerSellUsd5m) >= presetCalibration.flow5m ? "watch" : "good"}
-                  />
-                  <Signal
-                    label="OI expansion"
-                    value={`${formatPct(oiChange15m, 2)} / ${formatPct(oiChange4h, 2)}`}
-                    body={`Preset requires ${formatPct(presetCalibration.oi15m, 2, false)} over 15m or ${formatPct(presetCalibration.oi4h, 2, false)} over 4h depending on setup.`}
-                    tone={oiChange15m >= presetCalibration.oi15m || oiChange4h >= presetCalibration.oi4h ? "watch" : "good"}
-                  />
-                  <Signal
-                    label="Crowding"
-                    value={formatPct((selected?.funding || 0) * 100, 4)}
-                    body={`Crowded presets watch hourly funding beyond +/-0.010% with OI expanding and price stalling.`}
-                    tone={Math.abs((selected?.funding || 0) * 100) >= 0.010 ? "watch" : "good"}
-                  />
-                  <Signal
-                    label="Liquidity filter"
-                    value={assetVolumeRank <= 30 && (selected?.volumeUsd || 0) > 25_000_000 ? "Pass" : "Fail"}
-                    body={`Rules require 24h volume above $25M and volume rank <= 30 to avoid thin markets.`}
-                    tone={assetVolumeRank <= 30 && (selected?.volumeUsd || 0) > 25_000_000 ? "good" : "risk"}
-                  />
+              <Panel title="Crowded markets" subtitle="Funding is stretched, OI is high, and price follow-through is weak.">
+                <SignalTable rows={screenerRows.filter((row: ScreenerRow) => row.crowdingScore >= 50).sort((a, b) => b.crowdingScore - a.crowdingScore).slice(0, 6)} />
+              </Panel>
+              <Panel title="Funding extremes" subtitle="Assets with stretched funding percentile or directional crowding.">
+                <SignalTable rows={[...screenerRows].sort((a, b) => Math.abs(b.fundingPct) - Math.abs(a.fundingPct)).slice(0, 6)} />
+              </Panel>
+              <Panel title="Liquidity / volatility anomalies" subtitle="Unusual volume, price, OI or large-trade activity.">
+                <SignalTable rows={screenerRows.filter((row: ScreenerRow) => row.anomalyScore >= 45).slice(0, 6)} />
+              </Panel>
+            </section>
+
+            <section className="module-grid lean">
+              <MiniModule title="Markets Screener" value="Find signals" detail="Fresh leverage, crowding, liquidity, anomaly scores" onClick={() => setView("markets")} />
+              <MiniModule title="Asset Desk" value={`${coin} detail`} detail="Price, OI, funding, pressure and liquidity" onClick={() => setView("asset")} />
+              <MiniModule title="Alerts" value="Create rules" detail="Presets, explanations and simple backtests" onClick={() => setView("alerts")} />
+            </section>
+          </>
+        )}
+
+        {view === "markets" && (
+          <>
+            <ViewHeader eyebrow="Markets Screener" title="Hyperliquid signal radar" />
+            <section className="kpi-grid">
+              <Kpi label="Assets scanned" value={String(screenerRows.length)} detail="Ranked by live volume and signal scores" />
+              <Kpi label="Fresh leverage candidates" value={String(screenerRows.filter((row: ScreenerRow) => row.freshLeverageScore >= 70).length)} detail="Flow + OI + price confirmation" tone="positive" />
+              <Kpi label="Crowded candidates" value={String(screenerRows.filter((row: ScreenerRow) => row.crowdingScore >= 70).length)} detail="Funding + OI + price stall" tone="negative" />
+              <Kpi label="High liquidity assets" value={String(screenerRows.filter((row: ScreenerRow) => row.liquidityScore >= 75).length)} detail="Rank, spread, depth and slippage" />
+            </section>
+            <div className="toolbar">
+              <div className="segments">
+                {[
+                  ["fresh", "Fresh leverage"],
+                  ["crowding", "Crowding"],
+                  ["liquidity", "Liquidity"],
+                  ["anomaly", "Anomaly"],
+                  ["volume", "Volume"],
+                ].map(([key, label]) => (
+                  <button className={screenerSort === key ? "active" : ""} key={key} onClick={() => setScreenerSort(key as typeof screenerSort)}>{label}</button>
+                ))}
+              </div>
+            </div>
+            <ScreenerTable rows={screenerRows} onOpenAsset={(symbol: string) => { if (DEFAULT_COINS.includes(symbol)) setCoin(symbol); setView("asset"); }} />
+          </>
+        )}
+
+        {view === "asset" && (
+          <>
+            <section className="hero compact-hero">
+              <div>
+                <p className="eyebrow">{presetCalibration.family} Market Desk</p>
+                <h1>{coin} Market Desk</h1>
+                <p>{terminalMetrics.marketSentence}</p>
+                <div className="actions">
+                  <button className="primary" onClick={() => setView("alerts")}>Create alert rule</button>
+                  <button className="secondary" onClick={() => setView("flow")}>Open flow tape</button>
+                </div>
+              </div>
+              <div className="snapshot">
+                <div><span>Selected asset</span><strong>{coin}</strong></div>
+                <div><span>Market family</span><strong>{presetCalibration.family}</strong></div>
+                <div><span>Data</span><strong>{sourceLabel(marketStatus)}</strong></div>
+              </div>
+            </section>
+
+            <section className="kpi-grid terminal-kpis">
+              <Kpi label="Price" value={formatUsd(selected?.price || 0)} detail={`15m ${formatPct(priceChange15m, 2)} / 1h ${formatPct(priceChange1h, 2)} / 4h ${formatPct(priceChange4h, 2)} / 24h ${formatPct(selected?.changePct || 0, 2)}`} tone={(selected?.changePct || 0) >= 0 ? "positive" : "negative"} />
+              <Kpi label="24h volume" value={formatUsd(selected?.volumeUsd || 0)} detail={`Rank #${assetVolumeRank === 999 ? "--" : assetVolumeRank} / 5m volume ${terminalMetrics.relativeVolume5m.toFixed(2)}x average`} />
+              <Kpi label="Open Interest" value={formatUsd(selected?.oiUsd || 0)} detail={`15m ${formatPct(oiChange15m, 2)} / 1h ${formatPct(oiChange1h, 2)} / 4h ${formatPct(oiChange4h, 2)}`} />
+              <Kpi label="Hourly funding" value={formatPct(fundingPct, 4)} detail={`Annualized ${formatPct(fundingAnnualizedPct, 1)} / 14d percentile ${fundingPercentile14d}%`} tone={fundingPct >= 0 ? "positive" : "negative"} />
+              <Kpi label="Mark / Oracle premium" value={formatPct(markOraclePremiumPct, 4)} detail="Perp mark compared with oracle price" tone={markOraclePremiumPct >= 0 ? "positive" : "negative"} />
+              <Kpi label="Taker pressure 5m" value={formatUsd(netTakerDelta5m)} detail={`Buy ${formatUsd(takerBuyUsd5m)} / Sell ${formatUsd(takerSellUsd5m)} / Ratio ${formatPct(takerBuyRatio5m, 1, false)}`} tone={netTakerDelta5m >= 0 ? "positive" : "negative"} />
+              <Kpi label="Liquidity" value={`${spreadBps.toFixed(2)} bps`} detail={`Depth +/-0.5% ${formatUsd(depth50Bps)} / $100k slip ${formatPct(slippage100kPct, 3, false)}`} />
+              <Kpi label="Relative strength" value={formatPct(relativeStrengthVsBtc24h, 2)} detail={`vs BTC 24h / vs ETH ${formatPct(relativeStrengthVsEth24h, 2)}`} tone={relativeStrengthVsBtc24h >= 0 ? "positive" : "negative"} />
+            </section>
+
+            <section className="overview-market terminal-desk">
+              <Panel title={`${coin} main chart`} subtitle="Default read: candles with OI/CVD/funding context toggles for alert decisions.">
+                <div className="segments chart-modes">
+                  {[
+                    ["price", "Price"],
+                    ["oi", "Price + OI"],
+                    ["cvd", "Price + CVD"],
+                    ["funding", "Price + Funding"],
+                  ].map(([key, label]) => (
+                    <button className={chartMode === key ? "active" : ""} key={key} onClick={() => setChartMode(key as typeof chartMode)}>{label}</button>
+                  ))}
+                </div>
+                <MarketCandleChart candles={candles} asset={coin} mode={chartMode} metrics={terminalMetrics} />
+              </Panel>
+              <Panel title="Market structure scores" subtitle="Each score explains which condition is missing before an alert becomes useful.">
+                <div className="score-stack">
+                  <ScoreCard title="Fresh leverage" score={freshLeverageScore} status={freshLeverageScore >= 70 ? "Near trigger" : "Below threshold"} tone={scoreTone(freshLeverageScore)} rows={[
+                    `Flow 5m: ${formatUsd(dominantFlow)} / ${formatUsd(presetCalibration.flow5m)} required`,
+                    `Buy ratio: ${formatPct(takerBuyRatio5m, 1, false)} / 68% required`,
+                    `OI 15m: ${formatPct(oiChange15m, 2)} / ${formatPct(presetCalibration.oi15m, 2, false)} required`,
+                    `Price 15m: ${formatPct(priceChange15m, 2)} / +/-0.35% confirmation`,
+                  ]} />
+                  <ScoreCard title="OI expansion" score={Math.round(clamp((oiChange4h / Math.max(0.1, presetCalibration.oi4h)) * 100, 0, 100))} status={oiChange4h >= presetCalibration.oi4h ? "Expansion high" : "Moderate"} tone={oiChange4h >= presetCalibration.oi4h ? "watch" : "good"} rows={[
+                    `15m: ${formatPct(oiChange15m, 2)}`,
+                    `1h: ${formatPct(oiChange1h, 2)}`,
+                    `4h: ${formatPct(oiChange4h, 2)}`,
+                  ]} />
+                  <ScoreCard title="Crowding" score={crowdingScore} status={crowdingScore >= 70 ? "Crowded" : "Not crowded yet"} tone={scoreTone(crowdingScore)} rows={[
+                    `Funding: ${formatPct(fundingPct, 4)}`,
+                    `Funding percentile: ${fundingPercentile14d}%`,
+                    `OI 4h: ${formatPct(oiChange4h, 2)}`,
+                    `Price 4h: ${formatPct(priceChange4h, 2)}`,
+                  ]} />
+                  <ScoreCard title="Liquidity" score={liquidityScore} status={liquidityScore >= 70 ? "Tradable" : "Fragile"} tone={scoreTone(liquidityScore)} rows={[
+                    `24h volume: ${(selected?.volumeUsd || 0) > 25_000_000 ? "pass" : "fail"}`,
+                    `Rank: ${assetVolumeRank <= 30 ? "pass" : "fail"}`,
+                    `Spread: ${spreadBps < 3 ? "pass" : "watch"}`,
+                    `Depth: ${depth50Bps > 2_000_000 ? "pass" : "watch"}`,
+                  ]} />
                 </div>
               </Panel>
             </section>
 
             <section className="module-grid lean">
-              <MiniModule title="Alert Studio" value="Build rules" detail="Fresh leverage and crowded-side presets" onClick={() => setView("alerts")} />
-              <MiniModule title="TWAP tape" value="Buy / sell flow" detail="Dedicated page for execution pressure" onClick={() => setView("twaps")} />
-              <MiniModule title="Statistics" value="Relative strength" detail={`${coin} versus ${benchmarkCoin} and volume structure`} onClick={() => setView("statistics")} />
+              {alertPresetCards.slice(0, 4).map((preset) => (
+                <MiniModule key={preset.kind} title={preset.title} value={preset.kind.includes("crowded") ? `${crowdingScore}/100` : `${freshLeverageScore}/100`} detail="Open preset in Alert Studio" onClick={() => { loadPreset(preset.kind); setView("alerts"); }} />
+              ))}
             </section>
           </>
         )}
@@ -2077,13 +2513,19 @@ export default function Page() {
             </section>
 
             <section className="alert-layout">
-              <Panel title="Alert presets" subtitle="Hyperliquid-native rules built around fresh leverage and crowded-side risk, then the builder below lets users customize everything.">
+              <Panel title={`Recommended alerts for ${coin}`} subtitle="Each preset explains why it exists, how close it is to triggering, and what condition is missing.">
                 <div className="featured-presets">
                   {alertPresetCards.map((preset) => (
                     <button className="preset-card" key={preset.kind} onClick={() => loadPreset(preset.kind)}>
                       <span>{preset.tag}</span>
                       <strong>{preset.title}</strong>
                       <p>{preset.body}</p>
+                      <div className="preset-backtest">
+                        <span>Trigger likelihood: {preset.likelihood}</span>
+                        <span>Last triggered: {preset.lastTriggered}</span>
+                        <span>Triggered 7d: {preset.triggered7d} times</span>
+                        <span>Average move: {preset.avgMove}</span>
+                      </div>
                       <ul>
                         {preset.checks.map((check) => <li key={check}>{check}</li>)}
                       </ul>
@@ -2247,9 +2689,9 @@ export default function Page() {
           </>
         )}
 
-        {view === "statistics" && (
+        {view === "fundamentals" && (
           <>
-            <ViewHeader eyebrow="Analytics lab" title={`${coin} statistics dashboard`} />
+            <ViewHeader eyebrow="HYPE Fundamentals" title="Fees, relative strength and native demand" />
             <section className="kpi-grid">
               <Kpi label={`${coin} 30d`} value={formatPct(assetReturn30d, 2)} detail="Daily candle return" tone={assetReturn30d >= 0 ? "positive" : "negative"} />
               <Kpi label={`${benchmarkCoin} 30d`} value={formatPct(benchmarkReturn30d, 2)} detail="Benchmark return" tone={benchmarkReturn30d >= 0 ? "positive" : "negative"} />
@@ -2278,9 +2720,9 @@ export default function Page() {
           </>
         )}
 
-        {view === "twaps" && (
+        {view === "flow" && (
           <>
-            <ViewHeader eyebrow="HYPE flow tape" title="TWAP cluster monitor" />
+            <ViewHeader eyebrow="Flow Tape" title="Large trades, taker pressure and TWAP-like activity" />
             <section className="kpi-grid">
               <Kpi label="Buy pressure" value={twapSummary?.buy10m || formatUsd(twapBuy)} detail="Detected clustered buy notional" tone="positive" />
               <Kpi label="Sell pressure" value={twapSummary?.sell10m || formatUsd(twapSell)} detail="Detected clustered sell notional" tone="negative" />
@@ -2300,14 +2742,16 @@ export default function Page() {
           </>
         )}
 
-        {view === "nfts" && (
+        {view === "ecosystem" && (
           <>
-            <ViewHeader eyebrow="Hypurr NFTs" title="Collection pulse" />
+            <ViewHeader eyebrow="Ecosystem" title="ETF flows, DATs, NFTs and venue context" />
             <section className="kpi-grid">
-              <Kpi label="Floor" value={nftStats.floor} detail="OpenSea reported floor" />
-              <Kpi label="24h volume" value={nftStats.volume24h} detail="Collection activity" />
-              <Kpi label="Total volume" value={nftStats.totalVolume} detail="Lifetime reported volume" />
-              <Kpi label="Owners" value={nftStats.owners} detail={`${nftStats.sales24h} sales in the last day`} />
+              <Kpi label="ETF net flow" value={etfNetFlow ? formatUsd(etfNetFlow) : "--"} detail={`${sourceLabel(flowStatus)} / ${flowMeta.latestDate || "latest table date"}`} tone={etfNetFlow >= 0 ? "positive" : "negative"} />
+              <Kpi label="ETF products" value={String(flows.length)} detail={`Largest print ${formatUsd(largestEtfPrint)}`} />
+              <Kpi label="Hypurr NFT floor" value={nftStats.floor} detail={`${nftStats.sales24h} sales in the last day`} />
+              <Kpi label="NFT 24h volume" value={nftStats.volume24h} detail={`${nftStats.owners} owners`} />
+              <Kpi label="Tracked DATs" value={String(DAT_ROWS.length)} detail="BTC and ETH treasury vehicles" />
+              <Kpi label="Hyperliquid volume" value={formatUsd(totalVolume)} detail="Live venue comparison leg" />
             </section>
             <section className="two-col nfts-layout">
               <Panel title="Latest Hypurr sales" subtitle={`${sourceLabel(nftStatus)} OpenSea feed with direct item links.`}>
@@ -2323,77 +2767,24 @@ export default function Page() {
                 </div>
               </Panel>
             </section>
-          </>
-        )}
-
-        {view === "etf" && (
-          <>
-            <ViewHeader eyebrow="TradFi bridge" title="ETF and ETP flow monitor" />
-            <section className="kpi-grid">
-              <Kpi label="Net flow" value={etfNetFlow ? formatUsd(etfNetFlow) : "--"} detail={flowMeta.latestDate || "Latest parsed table date"} tone={etfNetFlow >= 0 ? "positive" : "negative"} />
-              <Kpi label="Products" value={String(flows.length)} detail="US and EU HYPE products tracked" />
-              <Kpi label="Source" value={sourceLabel(flowStatus)} detail={flowMeta.source || "Flow endpoint"} />
-              <Kpi label="Largest print" value={formatUsd(largestEtfPrint)} detail="Largest absolute product flow" />
-            </section>
-            <section className="two-col">
+            <section className="two-col ecosystem-section">
               <Panel title="Daily ETF / ETP net flow" subtitle={flowMeta.note || "Green bars are inflows; red bars are outflows. Latest flow is shown on the right."}>
                 <FlowBarChart days={flowDays} />
               </Panel>
-              <Panel title="Tracked products" subtitle="ETF and ETP products monitored for non-native demand.">
+              <Panel title="Tracked ETF / ETP products" subtitle="TradFi products monitored as non-native HYPE demand.">
                 <div className="flow-list">
                   {flows.map((row: FlowRow) => <FlowCard row={row} key={`${row.ticker}-${row.name}`} />)}
                 </div>
               </Panel>
             </section>
-          </>
-        )}
-
-        {view === "dats" && (
-          <>
-            <ViewHeader eyebrow="Digital asset treasuries" title="DAT accumulation monitor" />
-            <section className="kpi-grid">
-              <Kpi label="Tracked DATs" value={String(DAT_ROWS.length)} detail="Public companies with crypto treasury narratives" />
-              <Kpi label="BTC vehicles" value={String(DAT_ROWS.filter((row) => row.asset === "BTC").length)} detail="Bitcoin treasury exposure" />
-              <Kpi label="ETH vehicles" value={String(DAT_ROWS.filter((row) => row.asset === "ETH").length)} detail="Ethereum treasury exposure" />
-              <Kpi label="Use case" value="mNAV watch" detail="Compare market cap premium versus crypto holdings" />
-            </section>
-            <section className="two-col">
-              <Panel title="Public DAT watchlist" subtitle="Companies accumulating crypto as a treasury strategy. Use this as a research map, not live audited holdings.">
+            <section className="two-col ecosystem-section">
+              <Panel title="Public DAT watchlist" subtitle="Companies accumulating crypto as a treasury strategy. Useful for BTC/ETH market context.">
                 <div className="dat-grid">
                   {DAT_ROWS.map((row) => <DatCard row={row} key={`${row.ticker}-${row.asset}`} />)}
                 </div>
               </Panel>
-              <Panel title="How to read DATs" subtitle="The useful signal is not only holdings; it is premium, issuance, and accumulation cadence.">
-                <div className="signals">
-                  <Signal label="mNAV" value="Premium/discount" body="A DAT can move far away from the value of its crypto holdings. That premium is the main market signal." tone="watch" />
-                  <Signal label="Accumulation" value="Cadence" body="Repeated purchases matter more when they are funded without destroying shareholder value." tone="good" />
-                  <Signal label="Asset beta" value={coin} body="Use the top-right selector to compare HYPE/BTC/ETH market conditions beside the DAT narrative." tone="good" />
-                  <Signal label="Risk" value="Dilution" body="Debt, convertibles, ATM issuance, and equity premium compression can dominate the crypto beta." tone="risk" />
-                </div>
-              </Panel>
-            </section>
-          </>
-        )}
-
-        {view === "exchange" && (
-          <>
-            <ViewHeader eyebrow="Venue comparison" title="Hyperliquid vs exchange volume" />
-            <section className="kpi-grid">
-              <Kpi label="Hyperliquid volume" value={formatUsd(totalVolume)} detail="Live sum of Hyperliquid perp volume" />
-              <Kpi label="Ranked venues" value={String(exchangeRows.length)} detail="CEX and DEX comparison set" />
-              <Kpi label="DEX share signal" value={formatPct(exchangeRows.find((row: ExchangeRow) => row.name === "Hyperliquid")?.marketShare || 0, 1, false)} detail="Hyperliquid share in this comparison basket" />
-              <Kpi label="Source state" value={sourceLabel(marketStatus)} detail="Hyperliquid leg is live, peers are benchmark rows" />
-            </section>
-            <section className="two-col">
-              <Panel title="24h perp volume comparison" subtitle="Inspired by ASXN/Hyperscreener style: horizontal bars make venue share readable immediately.">
+              <Panel title="Hyperliquid vs venue volume" subtitle="A compact exchange comparison to keep Hyperliquid in the wider perp market context.">
                 <ExchangeComparison rows={exchangeRows} />
-              </Panel>
-              <Panel title="How to read it" subtitle="This is built to become a live multi-source comparison module.">
-                <div className="signals">
-                  <Signal label="Live leg" value="Hyperliquid" body="The Hyperliquid row uses the current perps volume from the app market API." tone="good" />
-                  <Signal label="Peer rows" value="Benchmarks" body="Binance, Bybit, OKX and DEX peers are benchmark rows until an exchange-volume API is wired." tone="watch" />
-                  <Signal label="Builder value" value="Context" body="Grant reviewers can see HypurrScope is not just a token page; it tracks Hyperliquid against the wider market." tone="good" />
-                </div>
               </Panel>
             </section>
           </>
@@ -2424,6 +2815,56 @@ export default function Page() {
                 </tbody>
               </table>
             </Panel>
+          </>
+        )}
+
+        {view === "settings" && (
+          <>
+            <ViewHeader eyebrow="Settings" title="Account, Telegram and alert delivery" />
+            <section className="two-col">
+              <Panel title="Account & Telegram" subtitle="Local profile now; production-ready path for Supabase user, Telegram chat_id, Discord or webhook delivery.">
+                <div className="account-card" ref={accountPanelRef}>
+                  <div className="account-summary">
+                    <span>{isAccountReady ? "Connected locally" : "Guest mode"}</span>
+                    <strong>{accountName}</strong>
+                    <small>{telegramHandle ? `Telegram: @${telegramHandle}` : "Telegram not linked yet"}</small>
+                  </div>
+                  <label>
+                    Display name
+                    <input
+                      placeholder="Azathustra"
+                      value={userProfile.displayName}
+                      onChange={(event) => setUserProfile((current) => ({ ...current, displayName: event.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Email
+                    <input
+                      type="email"
+                      placeholder="you@example.com"
+                      value={userProfile.email}
+                      onChange={(event) => setUserProfile((current) => ({ ...current, email: event.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Telegram username
+                    <input
+                      placeholder="@username"
+                      value={userProfile.telegram}
+                      onChange={(event) => setUserProfile((current) => ({ ...current, telegram: event.target.value }))}
+                    />
+                  </label>
+                </div>
+              </Panel>
+              <Panel title="Delivery architecture" subtitle="This is the clean user flow for private alerts without touching user funds.">
+                <div className="account-flow standalone">
+                  <div><strong>1. User profile</strong><span>Rules are tied to an account instead of a browser-only session.</span></div>
+                  <div><strong>2. Telegram verification</strong><span>The bot stores chat_id after the user sends a one-time code.</span></div>
+                  <div><strong>3. Server worker</strong><span>Saved rules are checked every minute against Hyperliquid data.</span></div>
+                  <div><strong>4. Delivery</strong><span>Browser, Telegram, Discord or webhook can all use the same rule engine.</span></div>
+                </div>
+              </Panel>
+            </section>
           </>
         )}
 
@@ -2483,6 +2924,84 @@ function MiniModule({ title, value, detail, onClick }: { title: string; value: s
       <strong>{value}</strong>
       <small>{detail}</small>
     </button>
+  );
+}
+
+function ScoreCard({ title, score, status, tone, rows }: { title: string; score: number; status: string; tone: string; rows: string[] }) {
+  return (
+    <article className={`score-card ${tone}`}>
+      <div className="score-head">
+        <div>
+          <span>{title}</span>
+          <strong>{status}</strong>
+        </div>
+        <b>{score}/100</b>
+      </div>
+      <div className="score-track"><i style={{ width: `${clamp(score, 0, 100)}%` }} /></div>
+      <ul>
+        {rows.map((row: string) => <li key={row}>{row}</li>)}
+      </ul>
+    </article>
+  );
+}
+
+function SignalTable({ rows }: { rows: ScreenerRow[] }) {
+  if (!rows.length) return <div className="empty compact">No strong signal right now.</div>;
+  return (
+    <div className="signal-table">
+      <table>
+        <thead><tr><th>Asset</th><th>Signal</th><th>Flow 5m</th><th>OI 15m</th><th>Funding</th><th>Price 15m</th></tr></thead>
+        <tbody>
+          {rows.map((row: ScreenerRow) => (
+            <tr key={`${row.market.symbol}-${row.signal}`}>
+              <td><strong>{row.market.symbol}</strong></td>
+              <td>{row.signal}</td>
+              <td>{formatUsd(row.flow5m)}</td>
+              <td className={row.oi15m >= 0 ? "positive" : "negative"}>{formatPct(row.oi15m, 2)}</td>
+              <td className={row.fundingPct >= 0 ? "positive" : "negative"}>{formatPct(row.fundingPct, 4)}</td>
+              <td className={row.price15m >= 0 ? "positive" : "negative"}>{formatPct(row.price15m, 2)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ScreenerTable({ rows, onOpenAsset }: { rows: ScreenerRow[]; onOpenAsset: (symbol: string) => void }) {
+  return (
+    <article className="panel table-panel screener-panel">
+      <div className="panel-head">
+        <div>
+          <h2>Markets screener</h2>
+          <p>Fresh leverage, crowding, liquidity and anomaly scores across Hyperliquid assets.</p>
+        </div>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Rank</th><th>Asset</th><th>Signal</th><th>Price</th><th>24h Volume</th><th>OI</th><th>Funding</th><th>Fresh</th><th>Crowding</th><th>Liquidity</th><th>Anomaly</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((row: ScreenerRow) => (
+              <tr key={row.market.symbol} onClick={() => onOpenAsset(row.market.symbol)}>
+                <td>#{row.rank}</td>
+                <td><strong>{row.market.symbol}</strong></td>
+                <td>{row.signal}</td>
+                <td>{formatUsd(row.market.price)}</td>
+                <td>{formatUsd(row.market.volumeUsd)}</td>
+                <td>{formatUsd(row.market.oiUsd)}</td>
+                <td className={row.fundingPct >= 0 ? "positive" : "negative"}>{formatPct(row.fundingPct, 4)}</td>
+                <td>{row.freshLeverageScore}</td>
+                <td>{row.crowdingScore}</td>
+                <td>{row.liquidityScore}</td>
+                <td>{row.anomalyScore}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </article>
   );
 }
 

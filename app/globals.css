@@ -542,6 +542,25 @@ h2 {
   margin-top: 18px;
 }
 
+.terminal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 28px 28px 0;
+}
+
+.terminal-kpis {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.compact-hero {
+  min-height: auto;
+}
+
+.ecosystem-section {
+  margin-top: 16px;
+}
+
 .alert-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
@@ -618,6 +637,141 @@ h2 {
   border: 1px solid rgba(40, 48, 44, 0.76);
   border-radius: 8px;
   background: #090d0b;
+}
+
+.chart-modes {
+  margin-bottom: 12px;
+}
+
+.chart-context-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.chart-context-strip div {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.chart-context-strip div.active {
+  border-color: rgba(124, 247, 199, 0.62);
+  background: rgba(124, 247, 199, 0.08);
+}
+
+.chart-context-strip span,
+.preset-backtest span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.chart-context-strip strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.95rem;
+}
+
+.signal-table {
+  overflow-x: auto;
+}
+
+.signal-table table,
+.screener-panel table {
+  min-width: 780px;
+}
+
+.screener-panel tbody tr {
+  cursor: pointer;
+}
+
+.screener-panel tbody tr:hover {
+  background: rgba(124, 247, 199, 0.05);
+}
+
+.score-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.score-card {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.score-card.good {
+  border-color: rgba(53, 213, 138, 0.38);
+}
+
+.score-card.watch {
+  border-color: rgba(242, 198, 109, 0.42);
+}
+
+.score-card.risk {
+  border-color: rgba(255, 88, 110, 0.42);
+}
+
+.score-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.score-head span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.score-head strong {
+  display: block;
+  margin-top: 4px;
+}
+
+.score-head b {
+  color: var(--mint);
+  font-size: 1.05rem;
+}
+
+.score-track {
+  height: 8px;
+  margin: 12px 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.score-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--mint);
+}
+
+.score-card ul,
+.preset-backtest {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.score-card li {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.preset-backtest {
+  padding: 10px;
+  border: 1px solid rgba(124, 247, 199, 0.18);
+  border-radius: 8px;
+  background: rgba(124, 247, 199, 0.05);
 }
 
 .positive-line {
@@ -2510,6 +2664,7 @@ td {
   .two-col,
   .two-col.lower,
   .overview-market,
+  .terminal-grid,
   .twap-layout,
   .alert-layout,
   .alert-layout.lower,
@@ -2543,6 +2698,7 @@ td {
   .view-head,
   .toolbar,
   .two-col,
+  .terminal-grid,
   .twap-layout,
   .alert-layout,
   .builder-grid,
@@ -2588,6 +2744,7 @@ td {
   .nft-grid,
   .dat-grid,
   .flow-summary,
+  .chart-context-strip,
   .featured-presets,
   .metric-grid,
   .hip-market-grid {
