@@ -49,7 +49,7 @@ button {
 
 .hs-shell {
   display: grid;
-  grid-template-columns: 284px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -118,7 +118,8 @@ button {
   font-size: 1rem;
 }
 
-.brand small {
+.brand small,
+.mobile-brand small {
   display: block;
   margin-top: 4px;
   color: var(--muted);
@@ -202,7 +203,8 @@ button {
   z-index: 20;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
+  gap: 18px;
   min-height: 72px;
   padding: 14px 28px;
   border-bottom: 1px solid rgba(40, 48, 44, 0.82);
@@ -210,7 +212,11 @@ button {
   backdrop-filter: blur(18px);
 }
 
-.mobile-brand,
+.mobile-brand {
+  display: flex;
+  min-width: 210px;
+}
+
 .mobile-tabs {
   display: none;
 }
@@ -219,13 +225,55 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
+  justify-content: flex-end;
+  min-width: 330px;
+}
+
+.top-nav {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.top-nav button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 820;
+}
+
+.top-nav button:hover,
+.top-nav button.active {
+  border-color: rgba(124, 247, 199, 0.25);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.top-more {
+  position: relative;
 }
 
 .more-nav {
+  position: absolute;
+  top: 42px;
+  right: 0;
+  z-index: 40;
   display: grid;
   gap: 6px;
-  padding-left: 10px;
-  border-left: 1px solid var(--line);
+  min-width: 190px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.35);
 }
 
 .data-pill,
@@ -259,7 +307,7 @@ button {
   color: var(--red);
 }
 
-.fallback-banner {
+.data-banner {
   margin: 12px 28px 0;
   padding: 9px 12px;
   border: 1px solid rgba(242, 198, 109, 0.38);
@@ -269,7 +317,7 @@ button {
   font-size: 0.8rem;
 }
 
-.fallback-banner.warning {
+.data-banner.warning {
   border-color: rgba(255, 88, 110, 0.32);
   background: rgba(255, 88, 110, 0.08);
   color: var(--red);
@@ -832,6 +880,19 @@ h2 {
   font-size: 0.72rem;
 }
 
+.preset-section-label {
+  margin: 4px 0 10px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.secondary-presets {
+  margin-top: 0;
+}
+
 .chart-context-strip strong {
   display: block;
   margin-top: 4px;
@@ -845,6 +906,38 @@ h2 {
 .signal-table table,
 .screener-panel table {
   min-width: 780px;
+}
+
+.screener-panel thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panel);
+}
+
+.sort-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: 820;
+  text-align: left;
+}
+
+.sort-header span {
+  min-width: 8px;
+  color: var(--mint);
+  font-size: 0.68rem;
+}
+
+.muted-value {
+  color: var(--muted);
 }
 
 .screener-panel tbody tr {
@@ -2743,11 +2836,7 @@ td {
   right: 0;
   left: 0;
   height: 2px;
-  background-image: repeating-linear-gradient(
-    90deg,
-    var(--mint) 0 9px,
-    transparent 9px 15px
-  );
+  background: var(--mint);
   content: "";
   filter: drop-shadow(0 0 8px rgba(124, 247, 199, 0.35));
 }
@@ -2770,11 +2859,7 @@ td {
 }
 
 .tv-alert-card.dragging .tv-alert-drag-line::before {
-  background-image: repeating-linear-gradient(
-    90deg,
-    #9effda 0 9px,
-    transparent 9px 15px
-  );
+  background: #9effda;
   filter: drop-shadow(0 0 14px rgba(124, 247, 199, 0.7));
 }
 
@@ -2857,28 +2942,16 @@ td {
     display: flex;
   }
 
-  .mobile-tabs {
-    display: flex;
+  .top-nav {
+    order: 3;
+    justify-content: flex-start;
     width: 100%;
-    gap: 8px;
     overflow-x: auto;
     padding-bottom: 4px;
   }
 
-  .mobile-tabs button {
-    min-height: 38px;
-    padding: 0 12px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: var(--panel);
-    color: var(--muted);
-    font-weight: 720;
-  }
-
-  .mobile-tabs button.active {
-    border-color: rgba(124, 247, 199, 0.42);
-    background: var(--panel-3);
-    color: var(--text);
+  .controls {
+    min-width: 0;
   }
 
   .two-col,
