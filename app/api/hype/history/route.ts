@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type ChartRange = "30d" | "90d" | "1y" | "all";
 
@@ -13,15 +14,6 @@ type HistoryCandle = {
   close: number;
   volume: number;
 };
-
-const HYPE_LAUNCH_SEED: HistoryCandle[] = [
-  { time: Date.UTC(2024, 10, 29), open: 3.2, high: 4.3, low: 2.9, close: 3.8, volume: 0 },
-  { time: Date.UTC(2024, 10, 30), open: 3.8, high: 5.6, low: 3.5, close: 5.1, volume: 0 },
-  { time: Date.UTC(2024, 11, 1), open: 5.1, high: 7.4, low: 4.8, close: 6.7, volume: 0 },
-  { time: Date.UTC(2024, 11, 2), open: 6.7, high: 9.2, low: 6.2, close: 8.5, volume: 0 },
-  { time: Date.UTC(2024, 11, 3), open: 8.5, high: 11.9, low: 8.0, close: 10.9, volume: 0 },
-  { time: Date.UTC(2024, 11, 4), open: 10.9, high: 14.5, low: 10.1, close: 13.5, volume: 0 },
-];
 
 function rangeStart(range: ChartRange) {
   const now = Math.floor(Date.now() / 1000);
@@ -63,19 +55,6 @@ function toCandles(prices: Array<[number, number]>, range: ChartRange): HistoryC
     .sort((a, b) => a.time - b.time);
 }
 
-function withLaunchSeed(candles: HistoryCandle[], range: ChartRange) {
-  if (range !== "all") return { candles, seeded: false };
-  const firstRealTime = candles[0]?.time ?? Number.POSITIVE_INFINITY;
-  const needsSeed = firstRealTime > HYPE_LAUNCH_SEED[0].time || (candles[0]?.open ?? 0) > 6;
-  if (!needsSeed) return { candles, seeded: false };
-
-  const seed = HYPE_LAUNCH_SEED.filter((candle) => candle.time < firstRealTime);
-  return {
-    candles: [...seed, ...candles].sort((a, b) => a.time - b.time),
-    seeded: seed.length > 0,
-  };
-}
-
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
@@ -85,7 +64,7 @@ export async function GET(request: Request) {
     const endpoint = `${COINGECKO_HYPE_URL}?vs_currency=usd&from=${rangeStart(safeRange)}&to=${now}`;
     const response = await fetch(endpoint, {
       headers: { accept: "application/json" },
-      next: { revalidate: 300 },
+      cache: "no-store",
     });
 
     if (!response.ok) {
@@ -94,14 +73,13 @@ export async function GET(request: Request) {
 
     const data = await response.json();
     const prices = Array.isArray(data?.prices) ? data.prices : [];
-    const history = withLaunchSeed(toCandles(prices, safeRange), safeRange);
     return Response.json(
       {
-        candles: history.candles,
-        source: history.seeded ? "coingecko+launch-seed" : "coingecko",
+        candles: toCandles(prices, safeRange),
+        source: "coingecko",
         range: safeRange,
       },
-      { headers: { "cache-control": "s-maxage=300, stale-while-revalidate=600" } },
+      { headers: { "cache-control": "no-store" } },
     );
   } catch {
     return Response.json({ candles: [], source: "coingecko", error: "history unavailable" }, { status: 502 });
