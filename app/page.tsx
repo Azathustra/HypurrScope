@@ -2076,7 +2076,7 @@ export default function Page() {
   const marketOptions = DEFAULT_COINS;
   const screenerRows: ScreenerRow[] = useMemo(() => {
     const sortedByVolume = [...markets].sort((a: Market, b: Market) => b.volumeUsd - a.volumeUsd);
-    return sortedByVolume.slice(0, 40).map((market: Market, index: number) => {
+    return sortedByVolume.slice(0, 40).map((market: Market, index: number): ScreenerRow => {
       const calibration = ASSET_PRESET_CALIBRATIONS[market.symbol] || ASSET_PRESET_CALIBRATIONS.HYPE;
       const isSelected = market.symbol === coin;
       const flow5m = isSelected ? dominantFlow : 0;
@@ -2120,6 +2120,7 @@ export default function Page() {
           : anomaly >= 72
             ? "Anomaly"
             : "Neutral";
+      const dataQuality: ScreenerRow["dataQuality"] = isSelected ? "selected-live" : "native";
       return {
         market,
         rank: index + 1,
@@ -2136,7 +2137,7 @@ export default function Page() {
         takerBuyRatio: isSelected ? takerBuyRatio5m : null,
         fundingPercentile14d: rowFundingPercentile,
         bucket: assetBucket(market.symbol, index + 1),
-        dataQuality: isSelected ? "selected-live" : "native",
+        dataQuality,
       };
     }).sort((a: ScreenerRow, b: ScreenerRow) => Math.max(b.freshLeverageScore, b.crowdingScore) - Math.max(a.freshLeverageScore, a.crowdingScore));
   }, [markets, coin, dominantFlow, oiChange15m, oiChange4h, priceChange15m, priceChange4h, takerBuyRatio5m, takerSellRatio5m, spreadBps, depth50Bps, slippage100kPct, relativeVolume5m, largeTradeCount5m, historicalBaselines.percentiles.fundingAbsP95]);
