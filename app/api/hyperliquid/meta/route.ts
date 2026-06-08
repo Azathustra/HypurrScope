@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info";
 

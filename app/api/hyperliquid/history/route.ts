@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info";
 const VALID_COINS = new Set(["HYPE", "BTC", "ETH"]);
@@ -56,7 +57,7 @@ async function postInfo(body: unknown) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-    next: { revalidate: 300 },
+    cache: "no-store",
   });
   if (!response.ok) throw new Error(`Hyperliquid info failed ${response.status}`);
   return response.json();
@@ -130,7 +131,7 @@ export async function GET(request: Request) {
           takerSideHistory: "Directional taker-flow percentiles need archived fills/trades or a database collector. This endpoint uses real candle volume percentiles as the historical threshold baseline.",
         },
       },
-      { headers: { "cache-control": "s-maxage=300, stale-while-revalidate=600" } },
+      { headers: { "cache-control": "no-store" } },
     );
   } catch {
     return Response.json({ error: "Unable to build Hyperliquid historical percentiles" }, { status: 502 });
