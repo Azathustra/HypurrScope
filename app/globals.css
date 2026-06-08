@@ -350,8 +350,9 @@ input:focus {
 .hero,
 .view-head,
 .toolbar,
-.two-col,
-.builder-grid,
+  .two-col,
+  .overview-market,
+  .builder-grid,
 .kpi-grid {
   margin: 28px 28px 0;
 }
@@ -503,6 +504,14 @@ h2 {
   gap: 16px;
 }
 
+.overview-market {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.65fr);
+  align-items: stretch;
+  gap: 16px;
+  margin: 28px 28px 0;
+}
+
 .two-col.lower {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.45fr);
 }
@@ -527,6 +536,10 @@ h2 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin: 16px 28px 0;
+}
+
+.module-grid.lean {
+  margin-top: 18px;
 }
 
 .alert-layout {
@@ -579,6 +592,32 @@ h2 {
 .chart-line {
   fill: none;
   stroke-width: 5;
+}
+
+.market-chart-shell {
+  display: grid;
+  gap: 12px;
+}
+
+.market-chart-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.market-chart-top strong {
+  color: var(--text);
+}
+
+.market-candle-chart {
+  position: relative;
+  min-height: 390px;
+  overflow: hidden;
+  border: 1px solid rgba(40, 48, 44, 0.76);
+  border-radius: 8px;
+  background: #090d0b;
 }
 
 .positive-line {
@@ -2470,6 +2509,7 @@ td {
 
   .two-col,
   .two-col.lower,
+  .overview-market,
   .twap-layout,
   .alert-layout,
   .alert-layout.lower,

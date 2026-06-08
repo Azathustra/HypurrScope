@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-type View = "overview" | "statistics" | "twaps" | "etf" | "dats" | "nfts" | "exchange" | "alerts" | "wallet" | "markets" | "liquidity" | "hip3" | "hip4" | "builder";
+type View = "overview" | "statistics" | "twaps" | "etf" | "dats" | "nfts" | "exchange" | "alerts" | "wallet";
 type Status = "loading" | "live" | "fallback" | "error";
 
 type Market = {
@@ -124,14 +124,6 @@ type FlowDay = {
   net: number;
   inflow: number;
   outflow: number;
-};
-
-type BuybackData = {
-  live?: boolean;
-  estimatedBuybackUsd24hLabel?: string;
-  estimatedBuybackHype24hLabel?: string;
-  totalFeeUsd24hLabel?: string;
-  note?: string;
 };
 
 type UserProfile = {
@@ -288,8 +280,8 @@ const ALERT_METRICS: MetricMeta[] = [
   { key: "hypeOpenInterest", label: "Asset open interest", unit: "usd", description: "Selected asset perp OI in dollars." },
   { key: "hypeVolume", label: "24h volume USD", unit: "usd", description: "Selected asset 24h perp notional volume in dollars." },
   { key: "assetVolumeRank", label: "Volume rank", unit: "number", description: "Rank by 24h perp volume across loaded Hyperliquid markets." },
-  { key: "takerBuyUsd5m", label: "Taker buy flow 5m", unit: "usd", description: "Aggressive buy-flow proxy from the latest execution tape." },
-  { key: "takerSellUsd5m", label: "Taker sell flow 5m", unit: "usd", description: "Aggressive sell-flow proxy from the latest execution tape." },
+  { key: "takerBuyUsd5m", label: "Taker buy flow 5m", unit: "usd", description: "Aggressive buy-flow estimate from the latest execution tape." },
+  { key: "takerSellUsd5m", label: "Taker sell flow 5m", unit: "usd", description: "Aggressive sell-flow estimate from the latest execution tape." },
   { key: "takerBuyRatio5m", label: "Taker buy ratio 5m", unit: "pct", description: "Share of recent aggressive notional that is buy-side." },
   { key: "takerSellRatio5m", label: "Taker sell ratio 5m", unit: "pct", description: "Share of recent aggressive notional that is sell-side." },
   { key: "oiChange15m", label: "OI change 15m", unit: "pct", description: "Short-window OI expansion normalized by current open interest." },
@@ -303,7 +295,7 @@ const ALERT_METRICS: MetricMeta[] = [
   { key: "bookSpread", label: "Book spread", unit: "pct", description: "Visible best bid/ask spread." },
   { key: "bookImbalance", label: "Book imbalance", unit: "pct", description: "Bid depth minus ask depth as percent." },
   { key: "hypeVsBtc30d", label: "Asset vs benchmark 30d", unit: "pct", description: "Selected asset return minus benchmark return." },
-  { key: "etfNetFlow", label: "ETF net flow", unit: "usd", description: "Latest ETF/ETP flow proxy." },
+  { key: "etfNetFlow", label: "ETF net flow", unit: "usd", description: "Latest ETF/ETP net flow." },
   { key: "nftSales24h", label: "Hypurr NFT sales", unit: "number", description: "Reported collection sales in 24h." },
 ];
 
@@ -419,7 +411,7 @@ const DAT_ROWS: DatRow[] = [
     name: "Strategy",
     ticker: "MSTR",
     asset: "BTC",
-    strategy: "Largest public BTC treasury proxy.",
+    strategy: "Largest public BTC treasury vehicle.",
     signal: "Watch BTC per share, mNAV, issuance, and leverage.",
     risk: "Premium compression and debt/refinancing sensitivity.",
     url: "https://www.strategy.com/",
@@ -461,13 +453,6 @@ const DAT_ROWS: DatRow[] = [
     url: "https://www.mara.com/",
   },
 ];
-
-const EMPTY_BUYBACK: BuybackData = {
-  live: false,
-  estimatedBuybackUsd24hLabel: "Loading",
-  estimatedBuybackHype24hLabel: "Loading",
-  note: "Loading fee-pressure estimate.",
-};
 
 const FALLBACK_EXCHANGES: ExchangeRow[] = [
   { name: "Binance Futures", category: "CEX", volumeUsd: 56_000_000_000, marketShare: 42, status: "CEX benchmark" },
@@ -1046,12 +1031,6 @@ function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-function riskColor(score: number) {
-  if (score >= 75) return "#ff7a8d";
-  if (score >= 55) return "#f2c66d";
-  return "#35d58a";
-}
-
 async function postInfo(body: unknown) {
   const request = {
     method: "POST",
@@ -1327,55 +1306,121 @@ function buildExchangeRows(hyperliquidVolume: number): ExchangeRow[] {
     .sort((a: ExchangeRow, b: ExchangeRow) => b.volumeUsd - a.volumeUsd);
 }
 
-function Sparkline({ candles }: { candles: Candle[] }) {
-  if (candles.length < 2) return <div className="empty">Waiting for candles</div>;
-  const values = candles.map((candle: Candle) => candle.close);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = Math.max(0.0001, max - min);
-  const points = candles
-    .map((candle, index) => {
-      const x = (index / (candles.length - 1)) * 1000;
-      const y = 260 - ((candle.close - min) / span) * 220;
-      return `${x},${y}`;
-    })
-    .join(" ");
-  const positive = candles[candles.length - 1].close >= candles[0].close;
+function MarketCandleChart({ candles, asset }: { candles: Candle[]; asset: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<any>(null);
+  const seriesRef = useRef<any>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+
+    async function setupChart() {
+      try {
+        const LightweightCharts = await loadLightweightCharts();
+        if (disposed || !containerRef.current) return;
+        const chart = LightweightCharts.createChart(containerRef.current, {
+          width: containerRef.current.clientWidth,
+          height: 390,
+          layout: {
+            background: { type: LightweightCharts.ColorType?.Solid || "solid", color: "#090d0b" },
+            textColor: "#c7d2cc",
+            fontSize: 12,
+          },
+          grid: {
+            vertLines: { color: "rgba(255, 255, 255, 0.06)" },
+            horzLines: { color: "rgba(255, 255, 255, 0.06)" },
+          },
+          rightPriceScale: {
+            borderColor: "rgba(255, 255, 255, 0.16)",
+            scaleMargins: { top: 0.12, bottom: 0.12 },
+          },
+          timeScale: {
+            borderColor: "rgba(255, 255, 255, 0.16)",
+            timeVisible: true,
+            secondsVisible: false,
+            rightOffset: 8,
+            barSpacing: 8,
+          },
+          crosshair: {
+            mode: 0,
+            vertLine: { color: "rgba(255, 255, 255, 0.3)", width: 1, style: 2 },
+            horzLine: { color: "rgba(255, 255, 255, 0.3)", width: 1, style: 2 },
+          },
+          handleScroll: {
+            mouseWheel: true,
+            pressedMouseMove: true,
+            horzTouchDrag: true,
+            vertTouchDrag: true,
+          },
+          handleScale: {
+            axisPressedMouseMove: { time: true, price: true },
+            axisDoubleClickReset: { time: true, price: true },
+            mouseWheel: true,
+            pinch: true,
+          },
+        });
+
+        const series = chart.addCandlestickSeries({
+          upColor: "#7cf7c7",
+          downColor: "#ff6b82",
+          borderUpColor: "#7cf7c7",
+          borderDownColor: "#ff6b82",
+          wickUpColor: "#7cf7c7",
+          wickDownColor: "#ff6b82",
+          priceFormat: { type: "price", precision: asset === "BTC" || asset === "ETH" ? 1 : 2, minMove: asset === "BTC" || asset === "ETH" ? 0.1 : 0.01 },
+          priceLineVisible: true,
+          lastValueVisible: true,
+        });
+
+        chartRef.current = chart;
+        seriesRef.current = series;
+        resizeObserverRef.current = new ResizeObserver(() => {
+          if (!containerRef.current) return;
+          chart.applyOptions({ width: containerRef.current.clientWidth });
+        });
+        resizeObserverRef.current.observe(containerRef.current);
+      } catch {
+        return;
+      }
+    }
+
+    setupChart();
+    return () => {
+      disposed = true;
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
+      chartRef.current?.remove?.();
+      chartRef.current = null;
+      seriesRef.current = null;
+    };
+  }, [asset]);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!series || !chart) return;
+    const data = candles
+      .map((candle: Candle) => ({
+        time: Math.floor(candle.time / 1000),
+        open: candle.open ?? candle.close,
+        high: candle.high ?? candle.close,
+        low: candle.low ?? candle.close,
+        close: candle.close,
+      }))
+      .filter((row) => row.time > 0 && row.close > 0);
+    series.setData(data);
+    if (data.length) chart.timeScale().fitContent();
+  }, [candles]);
 
   return (
-    <svg className="chart" viewBox="0 0 1000 300" role="img" aria-label="24 hour price chart">
-      <line x1="0" x2="1000" y1="40" y2="40" />
-      <line x1="0" x2="1000" y1="150" y2="150" />
-      <line x1="0" x2="1000" y1="260" y2="260" />
-      <polyline points={points} className={positive ? "chart-line positive-line" : "chart-line negative-line"} />
-      <text x="16" y="35">{formatUsd(max)}</text>
-      <text x="16" y="282">{formatUsd(min)}</text>
-    </svg>
-  );
-}
-
-function DepthBars({ book }: { book: Book | null }) {
-  if (!book) return <div className="empty">Waiting for order book</div>;
-  const maxUsd = Math.max(1, ...book.bids.map((level: BookLevel) => level.usd), ...book.asks.map((level: BookLevel) => level.usd));
-  return (
-    <div className="depth-bars">
-      <div>
-        <strong>Bids</strong>
-        {book.bids.slice(0, 14).map((level, index) => (
-          <div className="depth-row" key={`bid-${index}`}>
-            <span>{formatUsd(level.price)}</span>
-            <i className="bid" style={{ width: `${Math.max(4, (level.usd / maxUsd) * 100)}%` }} />
-          </div>
-        ))}
+    <div className="market-chart-shell">
+      <div className="market-chart-top">
+        <span>{asset} candles</span>
+        <strong>{candles.length ? `${candles.length} bars` : "loading"}</strong>
       </div>
-      <div>
-        <strong>Asks</strong>
-        {book.asks.slice(0, 14).map((level, index) => (
-          <div className="depth-row" key={`ask-${index}`}>
-            <span>{formatUsd(level.price)}</span>
-            <i className="ask" style={{ width: `${Math.max(4, (level.usd / maxUsd) * 100)}%` }} />
-          </div>
-        ))}
+      <div className="market-candle-chart" ref={containerRef}>
+        {!candles.length ? <div className="empty">Waiting for candles</div> : null}
       </div>
     </div>
   );
@@ -1394,9 +1439,6 @@ export default function Page() {
   const [statsStatus, setStatsStatus] = useState<Status>("fallback");
   const [book, setBook] = useState<Book | null>(makeFallbackBook("HYPE"));
   const [marketStatus, setMarketStatus] = useState<Status>("fallback");
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [marketSort, setMarketSort] = useState("oi");
-  const [search, setSearch] = useState("");
   const [walletAddress, setWalletAddress] = useState("");
   const [walletStatus, setWalletStatus] = useState("Paste an address to analyze perp exposure.");
   const [positions, setPositions] = useState<Position[]>([]);
@@ -1413,8 +1455,6 @@ export default function Page() {
   const [flowMeta, setFlowMeta] = useState({ source: "fallback", latestDate: "", note: "" });
   const [historicalBaselines, setHistoricalBaselines] = useState<HistoricalBaselines>(EMPTY_BASELINES);
   const [baselineStatus, setBaselineStatus] = useState<Status>("loading");
-  const [buyback, setBuyback] = useState<BuybackData>(EMPTY_BUYBACK);
-  const [buybackStatus, setBuybackStatus] = useState<Status>("loading");
   const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
   const [selectedClauseId, setSelectedClauseId] = useState("draft-custom-1");
   const [activePresetKind, setActivePresetKind] = useState<AlertPresetKind | null>(null);
@@ -1505,8 +1545,8 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    loadFlowsAndBuybacks();
-    const timer = window.setInterval(loadFlowsAndBuybacks, 90_000);
+    loadFlows();
+    const timer = window.setInterval(loadFlows, 90_000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -1525,13 +1565,11 @@ export default function Page() {
       if (nextMarkets.length) setMarkets(nextMarkets);
       if (nextCandles.length) setCandles(nextCandles);
       if (nextBook) setBook(nextBook);
-      setLastUpdate(new Date());
       setMarketStatus("live");
     } catch {
       setCandles(makeFallbackCandles(coin));
       setBook(makeFallbackBook(coin));
       setMarketStatus("fallback");
-      setLastUpdate(new Date());
     }
   }
 
@@ -1626,7 +1664,7 @@ export default function Page() {
     }
   }
 
-  async function loadFlowsAndBuybacks() {
+  async function loadFlows() {
     try {
       const response = await fetch("/api/tradfi/flows");
       if (!response.ok) throw new Error("Flow API failed");
@@ -1639,15 +1677,6 @@ export default function Page() {
       setFlows(FALLBACK_FLOWS);
       setFlowDays(synthesizeFlowDays(FALLBACK_FLOWS));
       setFlowStatus("fallback");
-    }
-
-    try {
-      const response = await fetch("/api/hyperliquid/buybacks");
-      if (!response.ok) throw new Error("Buyback API failed");
-      setBuyback(await response.json());
-      setBuybackStatus("live");
-    } catch {
-      setBuybackStatus("fallback");
     }
   }
 
@@ -1691,12 +1720,8 @@ export default function Page() {
   }
 
   const selected = markets.find((market) => market.symbol === coin) || markets[0];
-  const hype = markets.find((market) => market.symbol === "HYPE") || selected;
   const totalOi = markets.reduce((sum: number, market: Market) => sum + market.oiUsd, 0);
   const totalVolume = markets.reduce((sum: number, market: Market) => sum + market.volumeUsd, 0);
-  const weightedFunding = totalOi > 0 ? markets.reduce((sum: number, market: Market) => sum + market.funding * market.oiUsd, 0) / totalOi : 0;
-  const feePressure = parseMoneyLabel(buyback.estimatedBuybackUsd24hLabel) || (hype?.volumeUsd || 0) * 0.0002;
-  const topRisk = [...markets].sort((a: Market, b: Market) => b.risk - a.risk)[0];
   const twapBuy = twaps.filter((row: TwapRow) => row.side === "Buy").reduce((sum: number, row: TwapRow) => sum + row.rawNotional, 0);
   const twapSell = twaps.filter((row: TwapRow) => row.side === "Sell").reduce((sum: number, row: TwapRow) => sum + row.rawNotional, 0);
   const twapNet = twapBuy - twapSell;
@@ -1769,50 +1794,7 @@ export default function Page() {
     makeClause({ metric: "assetVolumeRank", condition: "lte", value: 30, join: "AND" }),
   ];
   const presetCalibration = ASSET_PRESET_CALIBRATIONS[coin] || ASSET_PRESET_CALIBRATIONS.HYPE;
-  const regimeScore = Math.round(
-    clamp(Math.abs(weightedFunding) * 60_000 + Math.abs(selected?.changePct || 0) * 2 + Math.abs(book?.imbalance || 0) * 0.2, 0, 99),
-  );
-  const regime = regimeScore > 65 ? "Volatile" : regimeScore > 35 ? "Active" : "Balanced";
   const marketOptions = DEFAULT_COINS;
-
-  const sortedMarkets = useMemo(() => {
-    const query = search.trim().toUpperCase();
-    const rows = markets.filter((market: Market) => !query || market.symbol.includes(query));
-    const sorters: Record<string, (a: Market, b: Market) => number> = {
-      oi: (a, b) => b.oiUsd - a.oiUsd,
-      risk: (a, b) => b.risk - a.risk,
-      funding: (a, b) => Math.abs(b.funding) - Math.abs(a.funding),
-      volume: (a, b) => b.volumeUsd - a.volumeUsd,
-    };
-    return rows.sort(sorters[marketSort] || sorters.oi).slice(0, 80);
-  }, [markets, search, marketSort]);
-
-  const overviewSignals = [
-    {
-      label: `${coin} 24h move`,
-      value: formatPct(selected?.changePct || 0, 2),
-      body: `${formatUsd(selected?.volumeUsd || 0)} volume and ${formatUsd(selected?.oiUsd || 0)} open interest.`,
-      tone: (selected?.changePct || 0) >= 0 ? "good" : "risk",
-    },
-    {
-      label: "Weighted funding",
-      value: formatPct(weightedFunding * 100, 4),
-      body: "Positive funding means longs are paying shorts; negative funding means shorts are paying longs.",
-      tone: Math.abs(weightedFunding) > 0.00025 ? "watch" : "good",
-    },
-    {
-      label: "TWAP net",
-      value: `${twapNet >= 0 ? "Buy" : "Sell"} ${formatUsd(Math.abs(twapNet))}`,
-      body: `${formatUsd(twapBuy)} buy pressure versus ${formatUsd(twapSell)} sell pressure from detected HYPE flow clusters.`,
-      tone: Math.abs(twapNet) > 2_000_000 ? "watch" : "good",
-    },
-    {
-      label: "ETF bridge",
-      value: etfNetFlow ? formatUsd(etfNetFlow) : sourceLabel(flowStatus),
-      body: flowMeta.latestDate ? `Latest parsed date: ${flowMeta.latestDate}.` : "TradFi products and flow table tracked through the app proxy.",
-      tone: etfNetFlow < 0 ? "risk" : "good",
-    },
-  ];
 
   function updateDraftClause(clauseId: string, patch: Partial<AlertClause>) {
     setActivePresetKind(null);
@@ -2013,63 +1995,71 @@ export default function Page() {
           <>
             <section className="hero">
               <div>
-                <p className="eyebrow">No-code Hyperliquid rule engine</p>
-                <h1>Build market-structure alerts from Hyperliquid data.</h1>
+                <p className="eyebrow">Hyperliquid market desk</p>
+                <h1>{coin} market structure at a glance.</h1>
                 <p>
-                  Combine funding, OI, TWAP pressure, liquidity, relative strength, ETF flow, and NFT demand into
-                  custom rules. HypurrScope is becoming an alert studio, not another passive dashboard.
+                  One screen for price, volume, open interest, funding, taker pressure, and the alert thresholds
+                  used by HypurrScope presets.
                 </p>
                 <div className="actions">
                   <button className="primary" onClick={() => setView("alerts")}>Create alert rule</button>
-                  <button className="secondary" onClick={() => setView("statistics")}>Open statistics</button>
+                  <button className="secondary" onClick={() => setView("twaps")}>Open TWAP tape</button>
                 </div>
               </div>
               <div className="snapshot">
                 <div><span>Selected</span><strong>{coin}</strong></div>
-                <div><span>Active rules</span><strong>{activeAlertCount}/{alertRules.length}</strong></div>
-                <div><span>Market state</span><strong>{regime} {regimeScore}</strong></div>
+                <div><span>Preset family</span><strong>{presetCalibration.family}</strong></div>
+                <div><span>Data</span><strong>{sourceLabel(marketStatus)}</strong></div>
               </div>
             </section>
 
             <section className="kpi-grid">
               <Kpi label={`${coin} price`} value={formatUsd(selected?.price || 0)} detail={`24h ${formatPct(selected?.changePct || 0)}`} tone={(selected?.changePct || 0) >= 0 ? "positive" : "negative"} />
-              <Kpi label="Open interest" value={formatUsd(selected?.oiUsd || 0)} detail={`${formatUsd(totalOi)} total perps OI`} />
-              <Kpi label="HYPE FDV" value={formatUsd(hype?.fdvUsd || 0)} detail={`${formatPct(totalOi ? ((hype?.oiUsd || 0) / totalOi) * 100 : 0, 1, false)} of total OI`} />
-              <Kpi label="Buyback pressure" value={buyback.estimatedBuybackUsd24hLabel || formatUsd(feePressure)} detail={buyback.estimatedBuybackHype24hLabel || "Estimated HYPE / 24h"} />
-              <Kpi label="TWAP net" value={`${twapNet >= 0 ? "Buy" : "Sell"} ${formatUsd(Math.abs(twapNet))}`} detail={`${sourceLabel(twapStatus)} HYPE flow tape`} tone={twapNet >= 0 ? "positive" : "negative"} />
-              <Kpi label="NFT floor" value={nftStats.floor} detail={`${nftStats.sales24h} 24h sales, ${nftStats.owners} owners`} />
-              <Kpi label="ETF net flow" value={etfNetFlow ? formatUsd(etfNetFlow) : "--"} detail={flowMeta.latestDate || sourceLabel(flowStatus)} tone={etfNetFlow >= 0 ? "positive" : "negative"} />
-              <Kpi label="Risk score" value={String(selected?.risk || "--")} detail={`Highest stress: ${topRisk?.symbol || "--"} ${topRisk?.risk || "--"}`} tone={(selected?.risk || 0) > 70 ? "negative" : "positive"} />
+              <Kpi label="24h volume USD" value={formatUsd(selected?.volumeUsd || 0)} detail={`Volume rank #${assetVolumeRank === 999 ? "--" : assetVolumeRank}`} />
+              <Kpi label="Open interest" value={formatUsd(selected?.oiUsd || 0)} detail={`${formatPct(oiChange15m, 2)} estimated 15m OI change`} />
+              <Kpi label="Hourly funding" value={formatPct((selected?.funding || 0) * 100, 4)} detail="0.010 means 0.010%, not raw API value" tone={(selected?.funding || 0) >= 0 ? "positive" : "negative"} />
+              <Kpi label="Taker flow 5m" value={formatUsd(Math.max(takerBuyUsd5m, takerSellUsd5m))} detail={`${takerBuyUsd5m >= takerSellUsd5m ? "Buy" : "Sell"} side leading`} tone={takerBuyUsd5m >= takerSellUsd5m ? "positive" : "negative"} />
+              <Kpi label="Preset threshold" value={formatUsd(presetCalibration.flow5m)} detail={`${formatPct(presetCalibration.oi15m, 2, false)} OI 15m / ${formatPct(presetCalibration.oi4h, 2, false)} OI 4h`} />
             </section>
 
-            <section className="two-col">
-              <Panel title={`${coin} 24h tape`} subtitle={`${formatUsd(selected?.volumeUsd || 0)} 24h volume, ${formatUsd(selected?.oiUsd || 0)} OI.`}>
-                <Sparkline candles={candles} />
+            <section className="overview-market">
+              <Panel title={`${coin} price chart`} subtitle="TradingView-style candles from Hyperliquid market data.">
+                <MarketCandleChart candles={candles} asset={coin} />
               </Panel>
-              <Panel title="Signal stack" subtitle="Derived from perps, liquidity, TWAPs, NFT demand, and TradFi flows.">
+              <Panel title="Market structure" subtitle="Same signals used by the alert presets, shown before you build a rule.">
                 <div className="signals">
-                  {overviewSignals.map((signal: { label: string; value: string; body: string; tone: string }) => <Signal key={signal.label} {...signal} />)}
+                  <Signal
+                    label="Fresh leverage"
+                    value={Math.max(takerBuyUsd5m, takerSellUsd5m) >= presetCalibration.flow5m ? "Near trigger" : "Below threshold"}
+                    body={`${takerBuyUsd5m >= takerSellUsd5m ? "Buy" : "Sell"} flow is ${formatUsd(Math.max(takerBuyUsd5m, takerSellUsd5m))}; preset threshold is ${formatUsd(presetCalibration.flow5m)}.`}
+                    tone={Math.max(takerBuyUsd5m, takerSellUsd5m) >= presetCalibration.flow5m ? "watch" : "good"}
+                  />
+                  <Signal
+                    label="OI expansion"
+                    value={`${formatPct(oiChange15m, 2)} / ${formatPct(oiChange4h, 2)}`}
+                    body={`Preset requires ${formatPct(presetCalibration.oi15m, 2, false)} over 15m or ${formatPct(presetCalibration.oi4h, 2, false)} over 4h depending on setup.`}
+                    tone={oiChange15m >= presetCalibration.oi15m || oiChange4h >= presetCalibration.oi4h ? "watch" : "good"}
+                  />
+                  <Signal
+                    label="Crowding"
+                    value={formatPct((selected?.funding || 0) * 100, 4)}
+                    body={`Crowded presets watch hourly funding beyond +/-0.010% with OI expanding and price stalling.`}
+                    tone={Math.abs((selected?.funding || 0) * 100) >= 0.010 ? "watch" : "good"}
+                  />
+                  <Signal
+                    label="Liquidity filter"
+                    value={assetVolumeRank <= 30 && (selected?.volumeUsd || 0) > 25_000_000 ? "Pass" : "Fail"}
+                    body={`Rules require 24h volume above $25M and volume rank <= 30 to avoid thin markets.`}
+                    tone={assetVolumeRank <= 30 && (selected?.volumeUsd || 0) > 25_000_000 ? "good" : "risk"}
+                  />
                 </div>
               </Panel>
             </section>
 
-            <section className="module-grid">
-              <MiniModule title="TWAP tape" value={`${twaps.length} clusters`} detail={`${formatUsd(twapBuy)} buys / ${formatUsd(twapSell)} sells`} onClick={() => setView("twaps")} />
-              <MiniModule title="Hypurr NFTs" value={nftStats.floor} detail={`${nftSales.length || "--"} latest sale cards loaded`} onClick={() => setView("nfts")} />
-              <MiniModule title="ETF flows" value={flowMeta.latestDate || sourceLabel(flowStatus)} detail={`${flows.length} products tracked`} onClick={() => setView("etf")} />
-            </section>
-
-            <section className="two-col lower">
-              <Panel title="Risk heat" subtitle="Top markets by computed stress score.">
-                <RiskHeatmap markets={markets} />
-              </Panel>
-              <Panel title="Fee-pressure model" subtitle="Assistance Fund estimate and fee-pressure proxy.">
-                <div className="model-box">
-                  <span>{sourceLabel(buybackStatus)} buyback endpoint</span>
-                  <strong>{buyback.estimatedBuybackUsd24hLabel || formatUsd(feePressure)}</strong>
-                  <p>{buyback.note || "The fallback model uses 2 bps on HYPE volume."}</p>
-                </div>
-              </Panel>
+            <section className="module-grid lean">
+              <MiniModule title="Alert Studio" value="Build rules" detail="Fresh leverage and crowded-side presets" onClick={() => setView("alerts")} />
+              <MiniModule title="TWAP tape" value="Buy / sell flow" detail="Dedicated page for execution pressure" onClick={() => setView("twaps")} />
+              <MiniModule title="Statistics" value="Relative strength" detail={`${coin} versus ${benchmarkCoin} and volume structure`} onClick={() => setView("statistics")} />
             </section>
           </>
         )}
@@ -2264,13 +2254,13 @@ export default function Page() {
               <Kpi label={`${coin} 30d`} value={formatPct(assetReturn30d, 2)} detail="Daily candle return" tone={assetReturn30d >= 0 ? "positive" : "negative"} />
               <Kpi label={`${benchmarkCoin} 30d`} value={formatPct(benchmarkReturn30d, 2)} detail="Benchmark return" tone={benchmarkReturn30d >= 0 ? "positive" : "negative"} />
               <Kpi label="Relative strength" value={formatPct(relativeStrength, 2)} detail={`${coin} return minus ${benchmarkCoin} return`} tone={relativeStrength >= 0 ? "positive" : "negative"} />
-              <Kpi label="Revenue proxy 30d" value={formatUsd(estimatedRevenue30d)} detail={`${sourceLabel(statsStatus)} candles, fee-pressure model`} />
+              <Kpi label="Estimated fees 30d" value={formatUsd(estimatedRevenue30d)} detail={`${sourceLabel(statsStatus)} candles, volume-based estimate`} />
             </section>
             <section className="stats-grid">
               <Panel title={`${coin} vs ${benchmarkCoin} normalized performance`} subtitle="Both assets start at 100. This makes relative strength readable immediately.">
                 <DualLineChart primary={hypeDaily} secondary={btcDaily} primaryLabel={coin} secondaryLabel={benchmarkCoin} />
               </Panel>
-              <Panel title="Hyperliquid revenue / fee-pressure proxy" subtitle="Estimated from Hyperliquid volume and a transparent fee-rate model.">
+              <Panel title="Hyperliquid estimated fees" subtitle="Estimated from Hyperliquid volume with a transparent fee-rate model.">
                 <RevenueChart series={revenueSeries} />
               </Panel>
               <Panel title="Volume and OI structure" subtitle="A market-quality read inspired by exchange screener dashboards.">
@@ -2279,45 +2269,9 @@ export default function Page() {
               <Panel title="Statistics read" subtitle="A compact interpretation layer so the page feels like a product, not a raw chart dump.">
                 <div className="signals">
                   <Signal label="Relative trend" value={formatPct(relativeStrength, 2)} body={relativeStrength >= 0 ? `${coin} has outperformed ${benchmarkCoin} over the sampled daily window.` : `${coin} is underperforming ${benchmarkCoin} over the sampled daily window.`} tone={relativeStrength >= 0 ? "good" : "watch"} />
-                  <Signal label="Revenue run-rate" value={formatUsd(avgDailyRevenue)} body="This is a fee-pressure proxy, not audited protocol revenue. It is useful as a directional dashboard metric." tone="good" />
+                  <Signal label="Fee run-rate" value={formatUsd(avgDailyRevenue)} body="This is an estimate, not audited protocol revenue. It is useful for direction, not accounting." tone="good" />
                   <Signal label="Market depth context" value={formatUsd(totalOi)} body="OI and volume structure help explain whether moves are spot-like, perp-driven, or liquidity-driven." tone="watch" />
                   <Signal label="Next upgrade" value="Historical API" body="A backend archive would turn these charts from rolling snapshots into a full time-series terminal." tone="good" />
-                </div>
-              </Panel>
-            </section>
-          </>
-        )}
-
-        {view === "markets" && (
-          <>
-            <ViewHeader eyebrow="Perps radar" title="Market map" />
-            <div className="toolbar">
-              <input placeholder="Search coin" value={search} onChange={(event) => setSearch(event.target.value)} />
-              <div className="segments">
-                {["oi", "risk", "funding", "volume"].map((sort: string) => (
-                  <button className={marketSort === sort ? "active" : ""} key={sort} onClick={() => setMarketSort(sort)}>{sort}</button>
-                ))}
-              </div>
-            </div>
-            <MarketTable rows={sortedMarkets} />
-          </>
-        )}
-
-        {view === "liquidity" && (
-          <>
-            <ViewHeader eyebrow="Book intelligence" title="Depth and execution pressure" />
-            <section className="two-col">
-              <Panel title={`${coin} book depth`} subtitle={`${formatUsd(book?.bidUsd || 0)} visible bids and ${formatUsd(book?.askUsd || 0)} visible asks.`}>
-                <DepthBars book={book} />
-              </Panel>
-              <Panel title="Execution lens" subtitle="Spread, visible depth, and near-touch imbalance.">
-                <div className="stats-list">
-                  <Stat label="Best bid" value={formatUsd(book?.bestBid || 0)} />
-                  <Stat label="Best ask" value={formatUsd(book?.bestAsk || 0)} />
-                  <Stat label="Spread" value={formatPct(book?.spreadPct || 0, 4, false)} />
-                  <Stat label="Bid depth" value={formatUsd(book?.bidUsd || 0)} />
-                  <Stat label="Ask depth" value={formatUsd(book?.askUsd || 0)} />
-                  <Stat label="Imbalance" value={formatPct(book?.imbalance || 0, 1)} />
                 </div>
               </Panel>
             </section>
@@ -2361,11 +2315,10 @@ export default function Page() {
                   {nftSales.length ? nftSales.map((sale) => <NftSaleCard sale={sale} key={`${sale.id}-${sale.price}`} />) : <div className="empty">No live sales returned. Add/refresh OpenSea API key if needed.</div>}
                 </div>
               </Panel>
-              <Panel title="Collection read" subtitle="Why this module matters for Hyperliquid ecosystem tracking.">
+              <Panel title="NFT liquidity read" subtitle="Floor, sales cadence, and volume show whether the collection has real bid activity.">
                 <div className="signals">
-                  <Signal label="Demand proxy" value={nftStats.floor} body="Hypurr floor and sales are a visible community demand layer around Hyperliquid." tone="good" />
+                  <Signal label="Demand" value={nftStats.floor} body="Floor and recent sales show whether collectors are still bidding, not just listing." tone="good" />
                   <Signal label="Liquidity check" value={nftStats.volume24h} body="Volume and recent sale cadence help separate actual bid activity from static floor listings." tone="watch" />
-                  <Signal label="Builder note" value="OpenSea proxy" body="The app uses backend API routes, so API keys and scrape fallbacks stay out of the browser." tone="good" />
                   <a className="external-card" href={OPENSEA_COLLECTION_URL} target="_blank" rel="noreferrer">Open collection on OpenSea -&gt;</a>
                 </div>
               </Panel>
@@ -2386,26 +2339,9 @@ export default function Page() {
               <Panel title="Daily ETF / ETP net flow" subtitle={flowMeta.note || "Green bars are inflows; red bars are outflows. Latest flow is shown on the right."}>
                 <FlowBarChart days={flowDays} />
               </Panel>
-              <Panel title="Tracked products" subtitle="Products tracked through the app flow proxy.">
+              <Panel title="Tracked products" subtitle="ETF and ETP products monitored for non-native demand.">
                 <div className="flow-list">
                   {flows.map((row: FlowRow) => <FlowCard row={row} key={`${row.ticker}-${row.name}`} />)}
-                </div>
-              </Panel>
-            </section>
-            <section className="two-col lower">
-              <Panel title="Why it matters" subtitle="TradFi demand can become a second-order signal for HYPE liquidity.">
-                <div className="signals">
-                  <Signal label="Bridge signal" value={etfNetFlow ? formatUsd(etfNetFlow) : "--"} body="ETF/ETP flow gives a separate read on demand outside native perps." tone={etfNetFlow < 0 ? "risk" : "good"} />
-                  <Signal label="Freshness" value={flowMeta.latestDate || sourceLabel(flowStatus)} body="The module exposes the parsed date and source state so users can judge freshness." tone="watch" />
-                  <Signal label="Builder note" value="Proxy layer" body="The current repo already contains a TradFi flow API route, which is used instead of hardcoding values." tone="good" />
-                </div>
-              </Panel>
-              <Panel title="Flow table read" subtitle="A clean product list sits under the chart instead of replacing it.">
-                <div className="stats-list">
-                  <Stat label="Products" value={String(flows.length)} />
-                  <Stat label="Latest date" value={flowMeta.latestDate || "--"} />
-                  <Stat label="Largest print" value={formatUsd(largestEtfPrint)} />
-                  <Stat label="Endpoint state" value={sourceLabel(flowStatus)} />
                 </div>
               </Panel>
             </section>
@@ -2433,58 +2369,6 @@ export default function Page() {
                   <Signal label="Accumulation" value="Cadence" body="Repeated purchases matter more when they are funded without destroying shareholder value." tone="good" />
                   <Signal label="Asset beta" value={coin} body="Use the top-right selector to compare HYPE/BTC/ETH market conditions beside the DAT narrative." tone="good" />
                   <Signal label="Risk" value="Dilution" body="Debt, convertibles, ATM issuance, and equity premium compression can dominate the crypto beta." tone="risk" />
-                </div>
-              </Panel>
-            </section>
-          </>
-        )}
-
-        {view === "hip3" && (
-          <>
-            <ViewHeader eyebrow="Builder-deployed markets" title="HIP-3 deployment monitor" />
-            <section className="kpi-grid">
-              <Kpi label="Tracked markets" value={String(markets.length)} detail="Live perps universe used as current market map" />
-              <Kpi label="Builder stake" value="500K HYPE" detail="HIP-3 deployer requirement" />
-              <Kpi label="Top OI market" value={sortedMarkets[0]?.symbol || "--"} detail={formatUsd(sortedMarkets[0]?.oiUsd || 0)} />
-              <Kpi label="Risk leader" value={`${topRisk?.symbol || "--"} ${topRisk?.risk || "--"}`} detail="Stress score from live market data" />
-            </section>
-            <section className="two-col">
-              <Panel title="Builder market radar" subtitle="HIP-3 is about deployable perps. This view highlights which markets look mature enough for builder-operated venues.">
-                <div className="hip-market-grid">
-                  {markets.slice(0, 18).map((market: Market) => <HipMarketCard market={market} key={market.symbol} />)}
-                </div>
-              </Panel>
-              <Panel title="Deployment checklist" subtitle="A practical read for builder grant reviewers.">
-                <ul className="proof-list">
-                  <li><strong>Liquidity first</strong><span>Prioritize assets with durable OI, consistent volume, and tight spreads.</span></li>
-                  <li><strong>Risk controls</strong><span>Funding, leverage cap, and stress score must be visible before listing.</span></li>
-                  <li><strong>Operator layer</strong><span>HIP-3 lets builders create market venues; analytics should explain why a venue deserves attention.</span></li>
-                  <li><strong>Next build</strong><span>Add deployer-level market share once the endpoint is exposed in the repo API.</span></li>
-                </ul>
-              </Panel>
-            </section>
-          </>
-        )}
-
-        {view === "hip4" && (
-          <>
-            <ViewHeader eyebrow="Outcome markets" title="HIP-4 probability desk" />
-            <section className="kpi-grid">
-              <Kpi label="Primitive" value="Outcome" detail="Binary YES/NO style contracts" />
-              <Kpi label="Payoff" value="0 / 1" detail="Bounded settlement profile" />
-              <Kpi label="Rail" value="HyperCore" detail="Same matching engine family" />
-              <Kpi label="Use case" value="Events" detail="Hedge or trade defined outcomes" />
-            </section>
-            <section className="two-col">
-              <Panel title="Outcome market board" subtitle="A professional placeholder for HIP-4 outcome data, structured like a probability terminal.">
-                <OutcomeBoard />
-              </Panel>
-              <Panel title="What to track" subtitle="HIP-4 needs different analytics than perps. Price is not just beta; it is implied probability.">
-                <div className="signals">
-                  <Signal label="Probability" value="YES / NO" body="Display both sides so users do not confuse outcome price with a perp mark." tone="good" />
-                  <Signal label="Expiry" value="Required" body="Outcome markets lose meaning if expiry, target, or settlement source is hidden." tone="watch" />
-                  <Signal label="Risk" value="Bounded" body="Loss is bounded by contract payoff, but liquidity and settlement risk still matter." tone="good" />
-                  <Signal label="Next build" value="outcomeMeta" body="Wire Hyperliquid outcome metadata once your backend route exposes it." tone="watch" />
                 </div>
               </Panel>
             </section>
@@ -2543,37 +2427,6 @@ export default function Page() {
           </>
         )}
 
-        {view === "builder" && (
-          <>
-            <ViewHeader eyebrow="Builder proof" title="Transparent analytics layer" />
-            <section className="builder-grid">
-              <Panel title="Data sources" subtitle="Every live metric is read-only and reproducible.">
-                <ul className="proof-list">
-                  <li><strong>Hyperliquid Info API</strong><span>metaAndAssetCtxs, candleSnapshot, l2Book, clearinghouseState.</span></li>
-                  <li><strong>Hyperliquid TWAP route</strong><span>Uses the repo backend endpoint to surface HYPE flow clusters and recent trade tape.</span></li>
-                  <li><strong>OpenSea proxy</strong><span>Collection stats and sale cards flow through server routes, keeping keys out of the browser.</span></li>
-                  <li><strong>TradFi flow proxy</strong><span>ETF and ETP flow products tracked as an external demand layer.</span></li>
-                </ul>
-              </Panel>
-              <Panel title="Computed models" subtitle="Designed to be inspected and improved.">
-                <ul className="proof-list">
-                  <li><strong>Market risk</strong><span>24h move + funding + OI + volume + leverage cap.</span></li>
-                  <li><strong>TWAP pressure</strong><span>Buy/sell cluster notional and net flow used as execution pressure signal.</span></li>
-                  <li><strong>Book pressure</strong><span>Near-touch bid/ask USD depth and spread.</span></li>
-                  <li><strong>Ecosystem demand</strong><span>NFT floor, recent sales, and ETF flows shown beside native market structure.</span></li>
-                </ul>
-              </Panel>
-              <Panel title="Roadmap" subtitle="Next grant-facing layers.">
-                <ol className="roadmap">
-                  <li>Historical archive for TWAP clusters, NFT sales, and ETF flows.</li>
-                  <li>Public sharable wallet reports with no private permissions.</li>
-                  <li>Open-source formula docs and changelog for community review.</li>
-                  <li>Rate-limited API proxy cache with freshness badges per module.</li>
-                </ol>
-              </Panel>
-            </section>
-          </>
-        )}
       </section>
     </main>
   );
@@ -2630,53 +2483,6 @@ function MiniModule({ title, value, detail, onClick }: { title: string; value: s
       <strong>{value}</strong>
       <small>{detail}</small>
     </button>
-  );
-}
-
-function MarketTable({ rows }: { rows: Market[] }) {
-  return (
-    <article className="panel table-panel">
-      <div className="panel-head">
-        <div>
-          <h2>Live perps</h2>
-          <p>{rows.length} markets shown</p>
-        </div>
-      </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Coin</th><th>Price</th><th>24h</th><th>OI</th><th>Volume</th><th>Funding</th><th>Risk</th></tr>
-          </thead>
-          <tbody>
-            {rows.map((market: Market) => (
-              <tr key={market.symbol}>
-                <td><strong>{market.symbol}</strong></td>
-                <td>{formatUsd(market.price)}</td>
-                <td className={market.changePct >= 0 ? "positive" : "negative"}>{formatPct(market.changePct)}</td>
-                <td>{formatUsd(market.oiUsd)}</td>
-                <td>{formatUsd(market.volumeUsd)}</td>
-                <td className={market.funding >= 0 ? "positive" : "negative"}>{formatPct(market.funding * 100, 4)}</td>
-                <td><div className="riskbar"><i style={{ width: `${market.risk}%`, background: riskColor(market.risk) }} /></div></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </article>
-  );
-}
-
-function RiskHeatmap({ markets }: { markets: Market[] }) {
-  return (
-    <div className="heatmap">
-      {[...markets].sort((a: Market, b: Market) => b.risk - a.risk).slice(0, 24).map((market: Market) => (
-        <div className="heat" key={market.symbol} style={{ borderColor: riskColor(market.risk) }}>
-          <strong>{market.symbol}</strong>
-          <span>{market.risk} risk</span>
-          <span>{formatPct(market.funding * 100, 4)}</span>
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -2812,7 +2618,7 @@ function RevenueChart({ series }: { series: Candle[] }) {
   return (
     <div className="revenue-chart">
       <div className="flow-summary">
-        <div><span>30d proxy</span><strong>{formatUsd(total)}</strong></div>
+        <div><span>30d estimate</span><strong>{formatUsd(total)}</strong></div>
         <div><span>Average day</span><strong>{formatUsd(series.length ? total / series.length : 0)}</strong></div>
       </div>
       <div className="revenue-bars">
@@ -2840,50 +2646,6 @@ function StructureChart({ markets }: { markets: Market[] }) {
             <span className="oi" style={{ width: `${Math.max(2, (market.oiUsd / max) * 100)}%` }} />
           </div>
           <small>{formatUsd(market.volumeUsd)} vol / {formatUsd(market.oiUsd)} OI</small>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function HipMarketCard({ market }: { market: Market }) {
-  const maturity = Math.round(clamp((Math.log10(market.oiUsd / 10_000_000 + 1) * 24) + (Math.log10(market.volumeUsd / 10_000_000 + 1) * 18) - Math.abs(market.funding) * 8000, 1, 99));
-  return (
-    <article className="hip-card">
-      <div>
-        <strong>{market.symbol}</strong>
-        <span>{maturity} maturity</span>
-      </div>
-      <p>{formatUsd(market.volumeUsd)} 24h volume</p>
-      <div className="riskbar"><i style={{ width: `${maturity}%`, background: riskColor(maturity) }} /></div>
-      <small>OI {formatUsd(market.oiUsd)} / funding {formatPct(market.funding * 100, 4)}</small>
-    </article>
-  );
-}
-
-function OutcomeBoard() {
-  const rows = [
-    { market: "BTC above daily mark", yes: 58, no: 42, expiry: "Daily 06:00 UTC", liquidity: "$420K" },
-    { market: "ETH above weekly range", yes: 46, no: 54, expiry: "Weekly", liquidity: "$180K" },
-    { market: "HYPE closes green", yes: 63, no: 37, expiry: "Daily", liquidity: "$260K" },
-  ];
-  return (
-    <div className="outcome-board">
-      {rows.map((row: { market: string; yes: number; no: number; expiry: string; liquidity: string }) => (
-        <article className="outcome-card" key={row.market}>
-          <div>
-            <strong>{row.market}</strong>
-            <span>{row.expiry}</span>
-          </div>
-          <div className="prob-track">
-            <i className="yes" style={{ width: `${row.yes}%` }} />
-            <i className="no" style={{ width: `${row.no}%` }} />
-          </div>
-          <div className="prob-labels">
-            <span>YES {row.yes}%</span>
-            <span>NO {row.no}%</span>
-          </div>
-          <small>Visible liquidity {row.liquidity}</small>
         </article>
       ))}
     </div>
@@ -2998,10 +2760,6 @@ function DatCard({ row }: { row: DatRow }) {
       <em>{row.risk}</em>
     </a>
   );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
 }
 
 type ThresholdPickerProps = {
