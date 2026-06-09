@@ -2830,7 +2830,6 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   const [chartMode, setChartMode] = useState<ChartMode>("price");
   const [chartInterval, setChartInterval] = useState<ChartInterval>("5m");
   const [connection, setConnection] = useState<ConnectionState>(() => hasInitialRestData ? "live" : "loading");
-  const [backfillReady, setBackfillReady] = useState(() => hasInitialRestData);
   const [lastUpdate, setLastUpdate] = useState<number | undefined>(() => initialLastUpdate(initialAssetState));
   const [alerts, setAlerts] = useState<AlertRule[]>([]);
   const [alertFilter, setAlertFilter] = useState<AlertFilter>("All");
@@ -3115,7 +3114,6 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
         });
         setLastUpdate(now);
         setConnection("live");
-        setBackfillReady(true);
       } catch {
         if (!cancelled) {
           setConnection((current) => current === "live" ? "live" : "failed");
@@ -3135,7 +3133,6 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   }, []);
 
   useEffect(() => {
-    if (!backfillReady) return;
     let stopped = false;
 
     const clearWsTimers = () => {
@@ -3172,6 +3169,13 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
       if (stopped) return;
       const ws = new WebSocket(HYPERLIQUID_WS_URL);
       wsRef.current = ws;
+      const openTimeout = window.setTimeout(() => {
+        if (ws.readyState !== WebSocket.CONNECTING) return;
+        const error = `WebSocket connection timed out while connecting to ${HYPERLIQUID_WS_URL}`;
+        setConnection("stale");
+        setWsDebug((current) => ({ ...current, status: "error", error }));
+        ws.close();
+      }, 20_000);
       setWsDebug((current) => ({
         ...createWsDebugState(wsAttemptRef.current > 0 ? "reconnecting" : "connecting", current),
         reconnects: current.reconnects,
@@ -3179,6 +3183,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
       }));
 
       ws.onopen = () => {
+        window.clearTimeout(openTimeout);
         const now = Date.now();
         wsAttemptRef.current = 0;
         wsLastMessageRef.current = null;
@@ -3351,7 +3356,10 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
         setConnection("stale");
         setWsDebug((current) => ({ ...current, status: "error", error: "Hyperliquid WebSocket error" }));
       };
-      ws.onclose = () => reconnect();
+      ws.onclose = () => {
+        window.clearTimeout(openTimeout);
+        reconnect();
+      };
     }
 
     connect();
@@ -3362,7 +3370,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
       if (wsRef.current) wsRef.current.close();
       wsRef.current = null;
     };
-  }, [backfillReady]);
+  }, []);
 
   const metricsByAsset = useMemo(() => {
     return Object.fromEntries(ASSETS.map((asset) => [asset.apiCoin, metricsFor(asset, assets[asset.apiCoin])])) as Record<ApiCoin, MetricBundle>;
@@ -3387,8 +3395,9 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
     hypeTrade?.error ||
     (hypeTrade?.lastMessageAt && nowTick - hypeTrade.lastMessageAt > 120_000 ? "HYPE trades stream is stale." : null) ||
     (!hypeTrade?.lastMessageAt && flowSinceOpenMinutes >= 2 && wsDebug.connectedAt ? "HYPE trades stream has not received messages yet." : null);
+  const initialWsFailure = !wsDebug.connectedAt && Boolean(wsDebug.error);
   const flowStatus: FlowStatus =
-    wsDebug.status === "error" ? "error" :
+    initialWsFailure || wsDebug.status === "error" ? "error" :
     wsDebug.status === "reconnecting" ? "reconnecting" :
     wsDebug.status === "stale" || tradeStreamStale || connection === "stale" ? "stale" :
     !wsDebug.connectedAt ? "connecting" :
