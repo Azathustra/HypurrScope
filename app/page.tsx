@@ -383,8 +383,10 @@ function normalizeLevel(level: any): BookLevel | null {
 function normalizeBook(payload: any): Book | null {
   const levels = payload?.levels || payload?.data?.levels;
   if (!Array.isArray(levels)) return null;
-  const bids = (levels[0] || []).map(normalizeLevel).filter((level: BookLevel | null): level is BookLevel => level !== null);
-  const asks = (levels[1] || []).map(normalizeLevel).filter((level: BookLevel | null): level is BookLevel => level !== null);
+  const rawBids = Array.isArray(levels[0]) ? levels[0] : [];
+  const rawAsks = Array.isArray(levels[1]) ? levels[1] : [];
+  const bids: BookLevel[] = rawBids.map(normalizeLevel).filter((level: BookLevel | null): level is BookLevel => level !== null);
+  const asks: BookLevel[] = rawAsks.map(normalizeLevel).filter((level: BookLevel | null): level is BookLevel => level !== null);
   if (!bids.length || !asks.length) return null;
   const bestBid = bids[0].price;
   const bestAsk = asks[0].price;
