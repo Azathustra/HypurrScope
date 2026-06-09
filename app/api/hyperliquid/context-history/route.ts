@@ -6,13 +6,19 @@ const VALID_COINS = ["BTC", "ETH", "HYPE"] as const;
 type ApiCoin = (typeof VALID_COINS)[number];
 
 type ContextSnapshot = {
+  id: string;
   timestamp: number;
   asset: ApiCoin;
   markPx: number | null;
+  midPx: number | null;
+  oraclePx: number | null;
+  premium: number | null;
   funding: number | null;
   openInterest: number | null;
   openInterestUsd: number | null;
   dayNtlVlm: number | null;
+  source: "metaAndAssetCtxs";
+  createdAt: string;
 };
 
 declare global {
@@ -47,15 +53,23 @@ function parseSnapshots(payload: unknown): ContextSnapshot[] {
     if (!VALID_COINS.includes(asset.name as ApiCoin)) return [];
     const ctx = contexts[index] || {};
     const markPx = n(ctx.markPx ?? ctx.midPx ?? ctx.oraclePx);
+    const midPx = n(ctx.midPx);
+    const oraclePx = n(ctx.oraclePx);
     const openInterest = n(ctx.openInterest);
     return {
+      id: `${asset.name}-${timestamp}`,
       timestamp,
       asset: asset.name as ApiCoin,
       markPx,
+      midPx,
+      oraclePx,
+      premium: n(ctx.premium),
       funding: n(ctx.funding),
       openInterest,
       openInterestUsd: markPx !== null && openInterest !== null ? markPx * openInterest : null,
       dayNtlVlm: n(ctx.dayNtlVlm),
+      source: "metaAndAssetCtxs",
+      createdAt: new Date(timestamp).toISOString(),
     };
   });
 }
