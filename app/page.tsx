@@ -7,6 +7,11 @@ type View = "overview" | "watchlist" | "flow" | "alerts" | "wallet";
 type ConnectionState = "loading" | "live" | "stale" | "failed";
 type SignalKind = "Fresh Long" | "Fresh Short" | "Crowded Long" | "Crowded Short";
 type ChartMode = "price" | "oi" | "cvd" | "funding";
+type ChartInterval = "1m" | "5m" | "15m" | "1h";
+type AlertTab = "presets" | "builder" | "saved";
+type AlertFilter = "All" | ApiCoin | "Enabled" | "Disabled";
+type AlertDestination = "Browser" | "Telegram" | "Discord" | "Webhook";
+type TriggerMode = "all" | "any";
 
 type AssetConfig = {
   apiCoin: ApiCoin;
@@ -71,6 +76,38 @@ type OiPoint = {
   oiUsd: number;
 };
 
+type FundingPoint = {
+  time: number;
+  fundingPct: number;
+};
+
+type ChartPoint = {
+  time: number;
+  value: number;
+};
+
+type ChartDataset =
+  | {
+      kind: "candles";
+      label: string;
+      valueLabel: string;
+      points: Candle[];
+      min: number;
+      max: number;
+      latest: number | null;
+      emptyReason: string;
+    }
+  | {
+      kind: "line";
+      label: string;
+      valueLabel: string;
+      points: ChartPoint[];
+      min: number;
+      max: number;
+      latest: number | null;
+      emptyReason: string;
+    };
+
 type FreshnessMap = Partial<Record<"meta" | "candles" | "book" | "trades" | "ws", number>>;
 
 type AssetState = {
@@ -79,6 +116,7 @@ type AssetState = {
   book: Book | null;
   trades: Trade[];
   oiHistory: OiPoint[];
+  fundingHistory: FundingPoint[];
   freshness: FreshnessMap;
   requestFailed: boolean;
 };
@@ -132,10 +170,34 @@ type FlowEvent = {
 type AlertRule = {
   id: string;
   asset: ApiCoin;
-  kind: SignalKind;
+  kind: string;
+  alertType: "preset" | "custom" | "live";
+  fingerprint: string;
+  thresholds: Record<string, number | string>;
+  triggerMode: TriggerMode;
+  triggerCount: number;
   createdAt: number;
   enabled: boolean;
-  destination: "Browser" | "Telegram" | "Discord" | "Webhook";
+  destination: AlertDestination;
+};
+
+type CustomAlertDraft = {
+  direction: SignalKind;
+  price15mPct: number;
+  oi15mPct: number;
+  oi4hPct: number;
+  fundingGreaterPct: number;
+  fundingLowerPct: number;
+  takerBuyRatioPct: number;
+  takerSellRatioPct: number;
+  netBuyFlow5mUsd: number;
+  netSellFlow5mUsd: number;
+  largeTradeUsd: number;
+  spreadBps: number;
+  depthUsd: number;
+  triggerMode: TriggerMode;
+  triggerCount: number;
+  destination: AlertDestination;
 };
 
 const ASSETS: AssetConfig[] = [
@@ -179,8 +241,8 @@ const ASSETS: AssetConfig[] = [
       flow5mUsd: 1_500_000,
       oi15mPct: 2.5,
       oi4hPct: 8,
-      price15mPct: 0.35,
-      fundingPct: 0.01,
+      price15mPct: 0.6,
+      fundingPct: 0.015,
       minDepthUsd: 350_000,
     },
   },
@@ -189,6 +251,12 @@ const ASSETS: AssetConfig[] = [
 const ASSET_ORDER = ASSETS.map((asset) => asset.apiCoin);
 const ASSET_BY_COIN = Object.fromEntries(ASSETS.map((asset) => [asset.apiCoin, asset])) as Record<ApiCoin, AssetConfig>;
 const PRESET_KINDS: SignalKind[] = ["Fresh Long", "Fresh Short", "Crowded Long", "Crowded Short"];
+const CHART_INTERVALS: Array<{ key: ChartInterval; label: string; ms: number }> = [
+  { key: "1m", label: "1m", ms: 60_000 },
+  { key: "5m", label: "5m", ms: 5 * 60_000 },
+  { key: "15m", label: "15m", ms: 15 * 60_000 },
+  { key: "1h", label: "1h", ms: 60 * 60_000 },
+];
 const HYPERLIQUID_WS_URL = "wss://api.hyperliquid.xyz/ws";
 const EMPTY_MARKET: MarketCtx = {
   price: null,
@@ -206,6 +274,7 @@ function emptyAssetState(): AssetState {
     book: null,
     trades: [],
     oiHistory: [],
+    fundingHistory: [],
     freshness: {},
     requestFailed: false,
   };
@@ -423,6 +492,19 @@ function normalizeTrade(row: any, index: number): Trade | null {
   };
 }
 
+function normalizeFundingHistory(payload: unknown): FundingPoint[] {
+  return (Array.isArray(payload) ? payload : [])
+    .map((row: any) => {
+      const time = n(row.time ?? row.t);
+      const fundingRaw = n(row.fundingRate ?? row.funding);
+      if (time === null || fundingRaw === null) return null;
+      return { time, fundingPct: fundingRaw * 100 } satisfies FundingPoint;
+    })
+    .filter((row: FundingPoint | null): row is FundingPoint => row !== null)
+    .sort((a: FundingPoint, b: FundingPoint) => a.time - b.time)
+    .slice(-1000);
+}
+
 function mergeCandle(existing: Candle[], incoming: Candle) {
   const next = existing.filter((candle) => candle.time !== incoming.time).concat(incoming);
   return next.sort((a, b) => a.time - b.time).slice(-1500);
@@ -440,8 +522,15 @@ function appendTrades(existing: Trade[], incoming: Trade[]) {
 function appendOi(existing: OiPoint[], oiUsd: number | null) {
   if (!Number.isFinite(oiUsd as number)) return existing;
   const now = Date.now();
-  const cutoff = now - 4.5 * 60 * 60 * 1000;
+  const cutoff = now - 24 * 60 * 60 * 1000;
   return existing.concat({ time: now, oiUsd: oiUsd as number }).filter((row) => row.time >= cutoff).slice(-400);
+}
+
+function appendFunding(existing: FundingPoint[], fundingPct: number | null) {
+  if (!Number.isFinite(fundingPct as number)) return existing;
+  const now = Date.now();
+  const cutoff = now - 24 * 60 * 60 * 1000;
+  return existing.concat({ time: now, fundingPct: fundingPct as number }).filter((row) => row.time >= cutoff).slice(-1000);
 }
 
 function priceChange(candles: Candle[], lookbackMs: number) {
@@ -627,7 +716,7 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     const oiOk = metrics.oi4h === null ? null : metrics.oi4h >= t.oi4hPct;
     const priceOk = metrics.price15m === null ? null : metrics.price15m >= -t.price15mPct * 0.35;
     const positioningOk = metrics.sellRatio5m === null ? null : metrics.sellRatio5m >= 55 || (metrics.netFlow15m ?? 0) < 0;
-    condition(fundingOk, "negative funding is stretched", `funding < -${formatFunding(t.fundingPct)}`, passed, missing);
+    condition(fundingOk, "negative funding is stretched", `funding < -${formatPct(t.fundingPct, 4, "", false)}`, passed, missing);
     condition(oiOk, "OI 4h elevated", `OI 4h >= ${formatPct(t.oi4hPct, 2, "", false)}`, passed, missing);
     condition(priceOk, "downside momentum stalled", "price must stall or bounce", passed, missing);
     condition(positioningOk, "short-side pressure visible", "short-side positioning not crowded yet", passed, missing);
@@ -752,30 +841,183 @@ function marketSentence(signal: SignalReadiness | null, state: string) {
   return "No active setup is confirmed; closest setups are shown so the feed stays useful.";
 }
 
-function Chart({ candles, mode, metrics }: { candles: Candle[]; mode: ChartMode; metrics: MetricBundle }) {
-  if (!candles.length) return <div className="compact-empty">Loading 24h candle backfill...</div>;
-  const rows = candles.slice(-180);
-  const values = rows.flatMap((candle) => [candle.high, candle.low]);
+function intervalMs(interval: ChartInterval) {
+  return CHART_INTERVALS.find((row) => row.key === interval)?.ms || 5 * 60_000;
+}
+
+function aggregateCandles(candles: Candle[], interval: ChartInterval) {
+  const bucketSize = intervalMs(interval);
+  if (interval === "1m") return candles.slice(-360);
+  const buckets = new Map<number, Candle[]>();
+  candles.forEach((candle: Candle) => {
+    const bucketTime = Math.floor(candle.time / bucketSize) * bucketSize;
+    const group = buckets.get(bucketTime) || [];
+    group.push(candle);
+    buckets.set(bucketTime, group);
+  });
+  return Array.from(buckets.entries())
+    .map(([time, rows]) => ({
+      time,
+      open: rows[0].open,
+      high: Math.max(...rows.map((row: Candle) => row.high)),
+      low: Math.min(...rows.map((row: Candle) => row.low)),
+      close: rows[rows.length - 1].close,
+      volumeUsd: rows.reduce((sum: number, row: Candle) => sum + row.volumeUsd, 0),
+    }))
+    .sort((a: Candle, b: Candle) => a.time - b.time)
+    .slice(-360);
+}
+
+function bucketLine(points: ChartPoint[], interval: ChartInterval) {
+  const bucketSize = intervalMs(interval);
+  const buckets = new Map<number, ChartPoint>();
+  points.forEach((point: ChartPoint) => {
+    const bucketTime = Math.floor(point.time / bucketSize) * bucketSize;
+    buckets.set(bucketTime, { time: bucketTime, value: point.value });
+  });
+  return Array.from(buckets.values()).sort((a: ChartPoint, b: ChartPoint) => a.time - b.time).slice(-360);
+}
+
+function cvdPoints(trades: Trade[], interval: ChartInterval) {
+  let cumulative = 0;
+  const rows = [...trades]
+    .sort((a: Trade, b: Trade) => a.time - b.time)
+    .map((trade: Trade) => {
+      cumulative += trade.side === "Buy" ? trade.notionalUsd : -trade.notionalUsd;
+      return { time: trade.time, value: cumulative };
+    });
+  return bucketLine(rows, interval);
+}
+
+function lineBounds(points: ChartPoint[]) {
+  const values = points.map((point: ChartPoint) => point.value).filter(Number.isFinite);
+  if (!values.length) return { min: 0, max: 1, latest: null };
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const span = Math.max(max - min, max * 0.001);
-  const width = 900;
-  const height = 260;
-  const x = (index: number) => 34 + (index / Math.max(1, rows.length - 1)) * (width - 70);
-  const y = (value: number) => 22 + (1 - (value - min) / span) * (height - 54);
-  const candleWidth = clamp((width - 70) / rows.length * 0.65, 2, 8);
-  const overlayValue =
-    mode === "cvd" ? metrics.cvd1h :
-    mode === "funding" ? null :
-    mode === "oi" ? metrics.oi1h :
-    null;
+  const span = Math.max(max - min, Math.max(Math.abs(max), 1) * 0.002);
+  return { min: min - span * 0.08, max: max + span * 0.08, latest: points[points.length - 1]?.value ?? null };
+}
+
+function buildChartDataset(state: AssetState, mode: ChartMode, interval: ChartInterval): ChartDataset {
+  if (mode === "price") {
+    const candles = aggregateCandles(state.candles, interval);
+    const values = candles.flatMap((candle: Candle) => [candle.high, candle.low]).filter(Number.isFinite);
+    if (values.length < 2) {
+      return { kind: "candles", label: "Price", valueLabel: "USD", points: [], min: 0, max: 1, latest: null, emptyReason: "Loading price candle backfill..." };
+    }
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = Math.max(max - min, max * 0.001);
+    return {
+      kind: "candles",
+      label: "Price candles",
+      valueLabel: "USD",
+      points: candles,
+      min: min - span * 0.08,
+      max: max + span * 0.08,
+      latest: candles[candles.length - 1]?.close ?? null,
+      emptyReason: "Loading price candle backfill...",
+    };
+  }
+
+  if (mode === "oi") {
+    const points = bucketLine(state.oiHistory.map((row: OiPoint) => ({ time: row.time, value: row.oiUsd })), interval);
+    const bounds = lineBounds(points);
+    return { kind: "line", label: "Open Interest", valueLabel: "USD", points, ...bounds, emptyReason: "OI needs two live snapshots before the line can be drawn." };
+  }
+
+  if (mode === "cvd") {
+    const points = cvdPoints(state.trades, interval);
+    const bounds = lineBounds(points);
+    return { kind: "line", label: "CVD", valueLabel: "USD", points, ...bounds, emptyReason: "CVD starts when live trades arrive from Hyperliquid." };
+  }
+
+  const points = bucketLine(state.fundingHistory.map((row: FundingPoint) => ({ time: row.time, value: row.fundingPct })), interval);
+  const bounds = lineBounds(points);
+  return { kind: "line", label: "Hourly Funding", valueLabel: "PCT", points, ...bounds, emptyReason: "Funding history is loading from Hyperliquid." };
+}
+
+function formatChartValue(value: number, mode: ChartMode) {
+  if (mode === "funding") return formatFunding(value);
+  return formatUsd(value, "");
+}
+
+function formatChartTime(time: number, interval: ChartInterval) {
+  const date = new Date(time);
+  if (interval === "1h") {
+    return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit" });
+  }
+  return date.toLocaleString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function TradingChart({ state, mode, interval }: { state: AssetState; mode: ChartMode; interval: ChartInterval }) {
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const dataset = useMemo(() => buildChartDataset(state, mode, interval), [state, mode, interval]);
+  const points = dataset.points;
+  const needsMore = points.length < 2;
+  if (needsMore) {
+    return (
+      <div className="radar-chart trading-chart empty-chart">
+        <div>
+          <strong>{dataset.label}</strong>
+          <span>{dataset.emptyReason}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const width = 940;
+  const height = 360;
+  const plot = { left: 48, right: 92, top: 24, bottom: 46 };
+  const chartRight = width - plot.right;
+  const chartBottom = height - plot.bottom;
+  const plotWidth = chartRight - plot.left;
+  const plotHeight = chartBottom - plot.top;
+  const span = Math.max(dataset.max - dataset.min, Math.max(Math.abs(dataset.max), 1) * 0.001);
+  const x = (index: number) => plot.left + (index / Math.max(1, points.length - 1)) * plotWidth;
+  const y = (value: number) => plot.top + (1 - (value - dataset.min) / span) * plotHeight;
+  const yTicks = [dataset.max, dataset.min + span * 0.75, dataset.min + span * 0.5, dataset.min + span * 0.25, dataset.min];
+  const tickIndexes = [0, Math.floor((points.length - 1) / 2), points.length - 1];
+  const activeIndex = clamp(hoverIndex ?? points.length - 1, 0, points.length - 1);
+  const active = points[activeIndex];
+  const activeValue = active ? dataset.kind === "candles" ? (active as Candle).close : (active as ChartPoint).value : null;
+  const latestLabel = dataset.latest === null ? "Loading" : formatChartValue(dataset.latest, mode);
+  const linePoints = dataset.kind === "line"
+    ? (points as ChartPoint[]).map((point: ChartPoint, index: number) => `${x(index)},${y(point.value)}`).join(" ")
+    : "";
+  const candleWidth = dataset.kind === "candles" ? clamp((plotWidth / Math.max(1, points.length)) * 0.64, 2, 12) : 0;
+
+  function handlePointer(event: React.PointerEvent<SVGSVGElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const svgX = ((event.clientX - rect.left) / rect.width) * width;
+    const rawIndex = Math.round(((svgX - plot.left) / plotWidth) * (points.length - 1));
+    setHoverIndex(clamp(rawIndex, 0, points.length - 1));
+  }
+
   return (
-    <div className="radar-chart">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="24 hour price chart">
-        <line x1="34" x2="866" y1="22" y2="22" />
-        <line x1="34" x2="866" y1="130" y2="130" />
-        <line x1="34" x2="866" y1="238" y2="238" />
-        {rows.map((candle, index) => {
+    <div className="radar-chart trading-chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${dataset.label} chart`} onPointerMove={handlePointer} onPointerLeave={() => setHoverIndex(null)}>
+        <rect x={plot.left} y={plot.top} width={plotWidth} height={plotHeight} className="chart-plot-bg" />
+        {yTicks.map((tick: number) => {
+          const yPos = y(tick);
+          return (
+            <g key={`y-${tick}`}>
+              <line x1={plot.left} x2={chartRight} y1={yPos} y2={yPos} className="chart-grid" />
+              <text x={chartRight + 10} y={yPos + 4} className="axis-label">{formatChartValue(tick, mode)}</text>
+            </g>
+          );
+        })}
+        {tickIndexes.map((index: number) => {
+          const point = points[index];
+          const xPos = x(index);
+          return (
+            <g key={`x-${point.time}-${index}`}>
+              <line x1={xPos} x2={xPos} y1={plot.top} y2={chartBottom} className="chart-grid vertical" />
+              <text x={xPos} y={height - 14} textAnchor="middle" className="axis-label">{formatChartTime(point.time, interval)}</text>
+            </g>
+          );
+        })}
+        {dataset.kind === "candles" && (points as Candle[]).map((candle: Candle, index: number) => {
           const up = candle.close >= candle.open;
           const xPos = x(index);
           const openY = y(candle.open);
@@ -787,12 +1029,19 @@ function Chart({ candles, mode, metrics }: { candles: Candle[]; mode: ChartMode;
             </g>
           );
         })}
-        <text x="38" y="18">{formatUsd(max, "")}</text>
-        <text x="38" y="254">{formatUsd(min, "")}</text>
+        {dataset.kind === "line" && <polyline className={`chart-line ${mode}`} points={linePoints} />}
+        {active && activeValue !== null && (
+          <g className="chart-crosshair">
+            <line x1={x(activeIndex)} x2={x(activeIndex)} y1={plot.top} y2={chartBottom} />
+            <line x1={plot.left} x2={chartRight} y1={y(activeValue)} y2={y(activeValue)} />
+            <circle cx={x(activeIndex)} cy={y(activeValue)} r="4" />
+          </g>
+        )}
       </svg>
       <div className="chart-meta">
-        <span>24h candles: {rows.length}</span>
-        <span>{mode === "price" ? "Price candles" : `${mode.toUpperCase()} overlay`} {overlayValue === null && mode !== "price" ? "needs rolling history" : ""}</span>
+        <span>{dataset.label} / {interval} / {points.length} bars</span>
+        <span>{active && activeValue !== null ? `${formatChartTime(active.time, interval)} - ${formatChartValue(activeValue, mode)}` : "Move over chart"}</span>
+        <span>Latest {latestLabel}</span>
       </div>
     </div>
   );
@@ -853,6 +1102,14 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
     if (a.active !== b.active) return a.active ? -1 : 1;
     return (b.score ?? -1) - (a.score ?? -1);
   }).slice(0, 8);
+  if (!rows.length) {
+    return (
+      <div className="compact-empty">
+        Closest setups need live price, OI and flow history.
+        <small>BTC, ETH and HYPE will appear here once enough data is available.</small>
+      </div>
+    );
+  }
   return (
     <div className="table-wrap">
       <table>
@@ -945,7 +1202,7 @@ function presetRules(asset: AssetConfig, kind: SignalKind) {
   }
   if (kind === "Crowded Long") {
     return [
-      `Hourly funding > ${formatPct(t.fundingPct, 3, "", false)}`,
+      `Hourly funding > +${formatPct(t.fundingPct, 3, "", false)}`,
       `OI change 4h >= ${formatPct(t.oi4hPct, 2, "", false)}`,
       "Price momentum is stalling",
       "Long-side taker pressure visible",
@@ -959,27 +1216,121 @@ function presetRules(asset: AssetConfig, kind: SignalKind) {
   ];
 }
 
+function presetThresholds(asset: AssetConfig, kind: SignalKind): Record<string, number | string> {
+  const t = asset.thresholds;
+  if (kind === "Fresh Long") {
+    return {
+      netBuyFlow5mUsd: t.flow5mUsd,
+      takerBuyRatioPct: 60,
+      oi15mPct: t.oi15mPct,
+      price15mPct: t.price15mPct,
+      liquidity: "healthy",
+      funding: "not extreme",
+    };
+  }
+  if (kind === "Fresh Short") {
+    return {
+      netSellFlow5mUsd: t.flow5mUsd,
+      takerSellRatioPct: 60,
+      oi15mPct: t.oi15mPct,
+      price15mPct: -t.price15mPct,
+      liquidity: "healthy",
+      funding: "not extreme",
+    };
+  }
+  if (kind === "Crowded Long") {
+    return {
+      fundingGreaterPct: t.fundingPct,
+      oi4hPct: t.oi4hPct,
+      momentum: "stalling",
+      takerPressure: "long-side visible",
+    };
+  }
+  return {
+    fundingLowerPct: -t.fundingPct,
+    oi4hPct: t.oi4hPct,
+    momentum: "downside stalling",
+    takerPressure: "short-side visible",
+  };
+}
+
+function defaultCustomDraft(asset: AssetConfig): CustomAlertDraft {
+  return {
+    direction: "Fresh Long",
+    price15mPct: asset.thresholds.price15mPct,
+    oi15mPct: asset.thresholds.oi15mPct,
+    oi4hPct: asset.thresholds.oi4hPct,
+    fundingGreaterPct: asset.thresholds.fundingPct,
+    fundingLowerPct: -asset.thresholds.fundingPct,
+    takerBuyRatioPct: 60,
+    takerSellRatioPct: 60,
+    netBuyFlow5mUsd: asset.thresholds.flow5mUsd,
+    netSellFlow5mUsd: asset.thresholds.flow5mUsd,
+    largeTradeUsd: asset.thresholds.largeTradeUsd,
+    spreadBps: 4,
+    depthUsd: asset.thresholds.minDepthUsd,
+    triggerMode: "all",
+    triggerCount: 4,
+    destination: "Browser",
+  };
+}
+
+function customThresholds(draft: CustomAlertDraft): Record<string, number | string> {
+  return {
+    direction: draft.direction,
+    price15mPct: draft.price15mPct,
+    oi15mPct: draft.oi15mPct,
+    oi4hPct: draft.oi4hPct,
+    fundingGreaterPct: draft.fundingGreaterPct,
+    fundingLowerPct: draft.fundingLowerPct,
+    takerBuyRatioPct: draft.takerBuyRatioPct,
+    takerSellRatioPct: draft.takerSellRatioPct,
+    netBuyFlow5mUsd: draft.netBuyFlow5mUsd,
+    netSellFlow5mUsd: draft.netSellFlow5mUsd,
+    largeTradeUsd: draft.largeTradeUsd,
+    spreadBps: draft.spreadBps,
+    depthUsd: draft.depthUsd,
+  };
+}
+
+function alertFingerprint(
+  asset: ApiCoin,
+  kind: string,
+  thresholds: Record<string, number | string>,
+  destination: AlertDestination,
+  triggerMode: TriggerMode,
+  triggerCount: number,
+) {
+  const thresholdKey = Object.keys(thresholds)
+    .sort()
+    .map((key) => `${key}:${thresholds[key]}`)
+    .join("|");
+  return `${asset}|${kind}|${destination}|${triggerMode}|${triggerCount}|${thresholdKey}`;
+}
+
 function AlertPresetGrid({
   asset,
-  metrics,
-  onAlert,
+  alerts,
+  onCreate,
 }: {
   asset: AssetConfig;
-  metrics: MetricBundle;
-  onAlert: (signal: SignalReadiness) => void;
+  alerts: AlertRule[];
+  onCreate: (asset: AssetConfig, kind: SignalKind) => void;
 }) {
   return (
     <div className="preset-grid">
       {PRESET_KINDS.map((kind) => {
-        const signal = buildSignal(asset, metrics, kind);
+        const thresholds = presetThresholds(asset, kind);
+        const fingerprint = alertFingerprint(asset.apiCoin, kind, thresholds, "Browser", "all", Object.keys(thresholds).length);
+        const alreadyCreated = alerts.some((alert: AlertRule) => alert.fingerprint === fingerprint);
         return (
-          <article className={signal.active ? "preset-card active" : "preset-card"} key={kind}>
+          <article className="preset-card" key={kind}>
             <header>
               <div>
                 <span>{asset.shortName} preset</span>
                 <strong>{kind}</strong>
               </div>
-              <em>{signal.score === null ? "needs history" : `${signal.score}%`}</em>
+              <em>Template</em>
             </header>
             <ul>
               {presetRules(asset, kind).map((rule) => <li key={rule}>{rule}</li>)}
@@ -987,11 +1338,163 @@ function AlertPresetGrid({
             <small>
               Calibration: large trade {formatUsd(asset.thresholds.largeTradeUsd)} / flow 5m {formatUsd(asset.thresholds.flow5mUsd)}
             </small>
-            <button className="table-action" onClick={() => onAlert(signal)}>Create this alert</button>
+            <button className="table-action" disabled={alreadyCreated} onClick={() => onCreate(asset, kind)}>
+              {alreadyCreated ? "Already created" : "Create preset alert"}
+            </button>
           </article>
         );
       })}
     </div>
+  );
+}
+
+function AlertTabs({ active, onChange }: { active: AlertTab; onChange: (tab: AlertTab) => void }) {
+  const tabs: Array<[AlertTab, string]> = [
+    ["presets", "Presets"],
+    ["builder", "Create your own"],
+    ["saved", "My alerts"],
+  ];
+  return (
+    <div className="alert-tabs">
+      {tabs.map(([key, label]) => (
+        <button className={active === key ? "active" : ""} key={key} onClick={() => onChange(key)}>{label}</button>
+      ))}
+    </div>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+  prefix,
+  suffix,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  prefix?: string;
+  suffix?: string;
+}) {
+  return (
+    <label className="builder-field">
+      <span>{label}</span>
+      <div>
+        {prefix ? <em>{prefix}</em> : null}
+        <input type="number" value={value} step="any" onChange={(event) => onChange(Number(event.target.value))} />
+        {suffix ? <em>{suffix}</em> : null}
+      </div>
+    </label>
+  );
+}
+
+function CustomAlertBuilder({
+  asset,
+  draft,
+  duplicate,
+  onChange,
+  onCreate,
+}: {
+  asset: AssetConfig;
+  draft: CustomAlertDraft;
+  duplicate: boolean;
+  onChange: (draft: CustomAlertDraft) => void;
+  onCreate: () => void;
+}) {
+  const conditionCount = Object.keys(customThresholds(draft)).length;
+  return (
+    <div className="custom-builder">
+      <div className="builder-field">
+        <span>Asset</span>
+        <select value={asset.apiCoin} disabled>
+          <option>{asset.shortName}</option>
+        </select>
+      </div>
+      <label className="builder-field">
+        <span>Setup direction</span>
+        <select value={draft.direction} onChange={(event) => onChange({ ...draft, direction: event.target.value as SignalKind })}>
+          {PRESET_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+        </select>
+      </label>
+      <NumberField label="Price 15m threshold" value={draft.price15mPct} suffix="%" onChange={(value) => onChange({ ...draft, price15mPct: value })} />
+      <NumberField label="OI 15m threshold" value={draft.oi15mPct} suffix="%" onChange={(value) => onChange({ ...draft, oi15mPct: value })} />
+      <NumberField label="OI 4h threshold" value={draft.oi4hPct} suffix="%" onChange={(value) => onChange({ ...draft, oi4hPct: value })} />
+      <NumberField label="Funding greater than" value={draft.fundingGreaterPct} suffix="%" onChange={(value) => onChange({ ...draft, fundingGreaterPct: value })} />
+      <NumberField label="Funding lower than" value={draft.fundingLowerPct} suffix="%" onChange={(value) => onChange({ ...draft, fundingLowerPct: value })} />
+      <NumberField label="Taker buy ratio" value={draft.takerBuyRatioPct} suffix="%" onChange={(value) => onChange({ ...draft, takerBuyRatioPct: value })} />
+      <NumberField label="Taker sell ratio" value={draft.takerSellRatioPct} suffix="%" onChange={(value) => onChange({ ...draft, takerSellRatioPct: value })} />
+      <NumberField label="Net buy flow 5m" value={draft.netBuyFlow5mUsd} prefix="$" onChange={(value) => onChange({ ...draft, netBuyFlow5mUsd: value })} />
+      <NumberField label="Net sell flow 5m" value={draft.netSellFlow5mUsd} prefix="$" onChange={(value) => onChange({ ...draft, netSellFlow5mUsd: value })} />
+      <NumberField label="Large trade threshold" value={draft.largeTradeUsd} prefix="$" onChange={(value) => onChange({ ...draft, largeTradeUsd: value })} />
+      <NumberField label="Spread threshold" value={draft.spreadBps} suffix="bps" onChange={(value) => onChange({ ...draft, spreadBps: value })} />
+      <NumberField label="Depth threshold" value={draft.depthUsd} prefix="$" onChange={(value) => onChange({ ...draft, depthUsd: value })} />
+      <label className="builder-field">
+        <span>Trigger logic</span>
+        <select value={draft.triggerMode} onChange={(event) => onChange({ ...draft, triggerMode: event.target.value as TriggerMode })}>
+          <option value="all">All conditions</option>
+          <option value="any">Any N conditions</option>
+        </select>
+      </label>
+      <NumberField label="N conditions" value={draft.triggerCount} onChange={(value) => onChange({ ...draft, triggerCount: clamp(Math.round(value), 1, conditionCount) })} />
+      <label className="builder-field">
+        <span>Destination</span>
+        <select value={draft.destination} onChange={(event) => onChange({ ...draft, destination: event.target.value as AlertDestination })}>
+          <option value="Browser">Browser</option>
+        </select>
+      </label>
+      <div className="builder-submit">
+        <span>{duplicate ? "Already created" : `${asset.shortName} custom alert ready`}</span>
+        <button className="primary-action" disabled={duplicate} onClick={onCreate}>{duplicate ? "Already created" : "Create custom alert"}</button>
+      </div>
+    </div>
+  );
+}
+
+function MyAlertsTable({
+  alerts,
+  filter,
+  onFilter,
+  onToggle,
+}: {
+  alerts: AlertRule[];
+  filter: AlertFilter;
+  onFilter: (filter: AlertFilter) => void;
+  onToggle: (id: string) => void;
+}) {
+  const filters: AlertFilter[] = ["All", "BTC", "ETH", "HYPE", "Enabled", "Disabled"];
+  const rows = alerts.filter((alert: AlertRule) => {
+    if (filter === "All") return true;
+    if (filter === "Enabled") return alert.enabled;
+    if (filter === "Disabled") return !alert.enabled;
+    return alert.asset === filter;
+  });
+  return (
+    <>
+      <div className="alert-filter-row">
+        {filters.map((item) => (
+          <button className={filter === item ? "active" : ""} key={item} onClick={() => onFilter(item)}>{item}</button>
+        ))}
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Asset</th><th>Setup</th><th>Type</th><th>Logic</th><th>Destination</th><th>Status</th><th>Created</th><th>Action</th></tr></thead>
+          <tbody>
+            {rows.length ? rows.map((alert) => (
+              <tr key={alert.id}>
+                <td><strong>{alert.asset}</strong></td>
+                <td>{alert.kind}</td>
+                <td>{alert.alertType}</td>
+                <td>{alert.triggerMode === "all" ? "All conditions" : `Any ${alert.triggerCount}`}</td>
+                <td>{alert.destination}</td>
+                <td>{alert.enabled ? "Enabled" : "Disabled"}</td>
+                <td>{new Date(alert.createdAt).toLocaleString()}</td>
+                <td><button className="table-action muted-action" onClick={() => onToggle(alert.id)}>{alert.enabled ? "Disable" : "Enable"}</button></td>
+              </tr>
+            )) : <tr><td colSpan={8}>No alerts match this filter.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -1001,10 +1504,14 @@ export default function Page() {
   const [selected, setSelected] = useState<ApiCoin>("HYPE");
   const [view, setView] = useState<View>("overview");
   const [chartMode, setChartMode] = useState<ChartMode>("price");
+  const [chartInterval, setChartInterval] = useState<ChartInterval>("5m");
   const [connection, setConnection] = useState<ConnectionState>("loading");
   const [backfillReady, setBackfillReady] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<number | undefined>();
   const [alerts, setAlerts] = useState<AlertRule[]>([]);
+  const [alertTab, setAlertTab] = useState<AlertTab>("presets");
+  const [alertFilter, setAlertFilter] = useState<AlertFilter>("All");
+  const [customDraft, setCustomDraft] = useState<CustomAlertDraft>(() => defaultCustomDraft(ASSET_BY_COIN.HYPE));
   const [wallet, setWallet] = useState("");
 
   const patchAsset = (coin: ApiCoin, updater: (state: AssetState) => AssetState) => {
@@ -1017,10 +1524,12 @@ export default function Page() {
     async function loadBackfill() {
       setConnection("loading");
       try {
-        const [metaPayload, candlePayloads, bookPayloads] = await Promise.all([
+        const requestTime = Date.now();
+        const [metaPayload, candlePayloads, bookPayloads, fundingPayloads] = await Promise.all([
           fetchMeta(),
           Promise.all(ASSETS.map((asset) => fetchCandles(asset.apiCoin).then((payload) => [asset.apiCoin, payload] as const))),
           Promise.all(ASSETS.map((asset) => postInfo({ type: "l2Book", coin: asset.apiCoin, nSigFigs: 5 }).then((payload) => [asset.apiCoin, payload] as const))),
+          Promise.all(ASSETS.map((asset) => postInfo({ type: "fundingHistory", coin: asset.apiCoin, startTime: requestTime - 24 * 60 * 60 * 1000, endTime: requestTime }).then((payload) => [asset.apiCoin, payload] as const).catch(() => [asset.apiCoin, []] as const))),
         ]);
         if (cancelled) return;
         const now = Date.now();
@@ -1030,12 +1539,14 @@ export default function Page() {
           const market = meta[asset.apiCoin] || { ...EMPTY_MARKET };
           const candles = normalizeCandles(candlePayloads.find(([coin]) => coin === asset.apiCoin)?.[1]);
           const book = normalizeBook(bookPayloads.find(([coin]) => coin === asset.apiCoin)?.[1]);
+          const fundingHistory = appendFunding(normalizeFundingHistory(fundingPayloads.find(([coin]) => coin === asset.apiCoin)?.[1]), market.fundingPct);
           next[asset.apiCoin] = {
             market,
             candles,
             book,
             trades: [],
             oiHistory: appendOi([], market.oiUsd),
+            fundingHistory,
             freshness: {
               meta: market.price !== null ? now : undefined,
               candles: candles.length ? now : undefined,
@@ -1165,6 +1676,7 @@ export default function Page() {
                 oraclePx: n(ctx.oraclePx) ?? state.market.oraclePx,
               },
               oiHistory: appendOi(state.oiHistory, oiUsd ?? state.market.oiUsd),
+              fundingHistory: appendFunding(state.fundingHistory, fundingRaw === null ? state.market.fundingPct : fundingRaw * 100),
               freshness: { ...state.freshness, meta: now, ws: now },
             }));
           }
@@ -1199,22 +1711,90 @@ export default function Page() {
   const selectedMetrics = metricsByAsset[selected];
   const selectedSignals = allSignals(selectedAsset, selectedMetrics);
   const selectedBest = bestSignal(selectedSignals);
+  const scoredSignals = signals.filter((signal: SignalReadiness) => signal.score !== null);
+  const customFingerprint = alertFingerprint(
+    selected,
+    `Custom ${customDraft.direction}`,
+    customThresholds(customDraft),
+    customDraft.destination,
+    customDraft.triggerMode,
+    customDraft.triggerCount,
+  );
+  const customDuplicate = alerts.some((alert: AlertRule) => alert.fingerprint === customFingerprint);
   const flowEvents = ASSETS.flatMap((asset) => buildFlowEvents(asset, assets[asset.apiCoin], metricsByAsset[asset.apiCoin]))
     .sort((a, b) => b.time - a.time)
     .slice(0, 40);
 
+  useEffect(() => {
+    setCustomDraft(defaultCustomDraft(selectedAsset));
+  }, [selectedAsset]);
+
+  function saveAlert(rule: AlertRule) {
+    setAlerts((current) => {
+      if (current.some((alert: AlertRule) => alert.fingerprint === rule.fingerprint)) return current;
+      return [rule].concat(current).slice(0, 60);
+    });
+    setView("alerts");
+    setAlertTab("saved");
+  }
+
   function createAlert(signal: SignalReadiness) {
+    const asset = ASSET_BY_COIN[signal.asset];
+    const thresholds = presetThresholds(asset, signal.kind);
+    const triggerCount = Object.keys(thresholds).length;
     const rule: AlertRule = {
       id: `alert-${signal.asset}-${signal.kind}-${Date.now()}`,
       asset: signal.asset,
       kind: signal.kind,
+      alertType: "live",
+      fingerprint: alertFingerprint(signal.asset, signal.kind, thresholds, "Browser", "all", triggerCount),
+      thresholds,
+      triggerMode: "all",
+      triggerCount,
       createdAt: Date.now(),
       enabled: true,
       destination: "Browser",
     };
-    setAlerts((current) => [rule].concat(current).slice(0, 30));
     setSelected(signal.asset);
-    setView("alerts");
+    saveAlert(rule);
+  }
+
+  function createPresetAlert(asset: AssetConfig, kind: SignalKind) {
+    const thresholds = presetThresholds(asset, kind);
+    const triggerCount = Object.keys(thresholds).length;
+    saveAlert({
+      id: `preset-${asset.apiCoin}-${kind}-${Date.now()}`,
+      asset: asset.apiCoin,
+      kind,
+      alertType: "preset",
+      fingerprint: alertFingerprint(asset.apiCoin, kind, thresholds, "Browser", "all", triggerCount),
+      thresholds,
+      triggerMode: "all",
+      triggerCount,
+      createdAt: Date.now(),
+      enabled: true,
+      destination: "Browser",
+    });
+  }
+
+  function createCustomAlert() {
+    saveAlert({
+      id: `custom-${selected}-${Date.now()}`,
+      asset: selected,
+      kind: `Custom ${customDraft.direction}`,
+      alertType: "custom",
+      fingerprint: customFingerprint,
+      thresholds: customThresholds(customDraft),
+      triggerMode: customDraft.triggerMode,
+      triggerCount: customDraft.triggerCount,
+      createdAt: Date.now(),
+      enabled: true,
+      destination: customDraft.destination,
+    });
+  }
+
+  function toggleAlert(id: string) {
+    setAlerts((current) => current.map((alert: AlertRule) => alert.id === id ? { ...alert, enabled: !alert.enabled } : alert));
   }
 
   const connectionLabel =
@@ -1302,7 +1882,7 @@ export default function Page() {
 
             <section className="two-panels">
               <Panel title="Closest setups" right={activeSignals.length ? `${activeSignals.length} active` : "No active signal"}>
-                <SignalTable signals={signals} onAlert={createAlert} />
+                <SignalTable signals={scoredSignals} onAlert={createAlert} />
               </Panel>
               <Panel title="Recent Flow Events" right="last 60m">
                 <FlowEventsTable events={flowEvents} />
@@ -1335,14 +1915,23 @@ export default function Page() {
             </section>
 
             <Panel title={`${selectedAsset.shortName} chart`} right={<Freshness timestamp={selectedState.freshness.candles} />}>
-              <div className="chart-toolbar">
-                {(["price", "oi", "cvd", "funding"] as ChartMode[]).map((mode) => (
-                  <button className={chartMode === mode ? "active" : ""} key={mode} onClick={() => setChartMode(mode)}>
-                    {mode === "cvd" ? <Tooltip label="CVD" text="Cumulative volume delta: aggressive buy notional minus aggressive sell notional." /> : mode.toUpperCase()}
-                  </button>
-                ))}
+              <div className="chart-toolbar chart-toolbar-split">
+                <div className="toolbar-group">
+                  {(["price", "oi", "cvd", "funding"] as ChartMode[]).map((mode) => (
+                    <button className={chartMode === mode ? "active" : ""} key={mode} onClick={() => setChartMode(mode)}>
+                      {mode === "cvd" ? <Tooltip label="CVD" text="Cumulative volume delta: aggressive buy notional minus aggressive sell notional." /> : mode.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+                <div className="toolbar-group">
+                  {CHART_INTERVALS.map((row) => (
+                    <button className={chartInterval === row.key ? "active" : ""} key={row.key} onClick={() => setChartInterval(row.key)}>
+                      {row.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <Chart candles={selectedState.candles} mode={chartMode} metrics={selectedMetrics} />
+              <TradingChart state={selectedState} mode={chartMode} interval={chartInterval} />
             </Panel>
 
             <section className="two-panels">
@@ -1369,33 +1958,43 @@ export default function Page() {
 
         {view === "alerts" && (
           <>
-            <PageHead title="Alerts" subtitle="Preset alerts are calibrated per asset. Change BTC / ETH / HYPE in the top bar to update the values." />
-            <Panel title={`${selectedAsset.shortName} alert presets`} right={`${selectedAsset.bucket} thresholds`}>
-              <AlertPresetGrid asset={selectedAsset} metrics={selectedMetrics} onAlert={createAlert} />
-            </Panel>
-            <section className="two-panels">
-              <Panel title="Recommended now" right={best?.active ? "active setup" : "closest setup"}>
-                <SignalTable signals={signals} onAlert={createAlert} />
+            <PageHead title="Alerts" subtitle="Presets and custom rules are controlled by the selected BTC / ETH / HYPE asset." />
+            <Panel title={`${selectedAsset.shortName} alert console`} right={`${alerts.length} saved`}>
+              <AlertTabs active={alertTab} onChange={setAlertTab} />
+              {alertTab === "presets" && (
+                <>
+                  <div className="alert-section-head">
+                    <strong>{selectedAsset.shortName} preset alerts</strong>
+                    <span>{selectedAsset.bucket} thresholds</span>
+                  </div>
+                  <AlertPresetGrid asset={selectedAsset} alerts={alerts} onCreate={createPresetAlert} />
+                </>
+              )}
+              {alertTab === "builder" && (
+                <>
+                  <div className="alert-section-head">
+                    <strong>Create your own</strong>
+                    <span>{selectedAsset.shortName} defaults are loaded from the selected asset.</span>
+                  </div>
+                  <CustomAlertBuilder
+                    asset={selectedAsset}
+                    draft={customDraft}
+                    duplicate={customDuplicate}
+                    onChange={setCustomDraft}
+                    onCreate={createCustomAlert}
+                  />
+                </>
+              )}
+              {alertTab === "saved" && (
+                <>
+                  <div className="alert-section-head">
+                    <strong>My alerts</strong>
+                    <span>Saved alerts across BTC, ETH and HYPE.</span>
+                  </div>
+                  <MyAlertsTable alerts={alerts} filter={alertFilter} onFilter={setAlertFilter} onToggle={toggleAlert} />
+                </>
+              )}
               </Panel>
-              <Panel title="My alerts" right={`${alerts.length} saved`}>
-                <div className="table-wrap">
-                  <table>
-                    <thead><tr><th>Asset</th><th>Setup</th><th>Destination</th><th>Status</th><th>Created</th></tr></thead>
-                    <tbody>
-                      {alerts.length ? alerts.map((alert) => (
-                        <tr key={alert.id}>
-                          <td><strong>{alert.asset}</strong></td>
-                          <td>{alert.kind}</td>
-                          <td>{alert.destination}</td>
-                          <td>{alert.enabled ? "Enabled" : "Paused"}</td>
-                          <td>{new Date(alert.createdAt).toLocaleString()}</td>
-                        </tr>
-                      )) : <tr><td colSpan={5}>No saved alerts yet. Pick a setup from the table.</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-              </Panel>
-            </section>
           </>
         )}
 
