@@ -11,6 +11,7 @@ const checks = [
   ["Wallet error state", css.includes(".form-error")],
   ["No Recommended now on alerts", !page.includes("Recommended now")],
   ["Preset alert copy", page.includes("Create preset alert")],
+  ["Neutral pre-hydration flow copy", page.includes("Initializing live flow") && page.includes("Preparing WebSocket stream") && !page.includes("Opening Hyperliquid WebSocket") && !page.includes("Connecting to trade stream") && !page.includes("WebSocket trades not streaming")],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);

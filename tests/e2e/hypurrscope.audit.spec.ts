@@ -25,6 +25,7 @@ async function waitForLiveFlowMetrics(page: import("@playwright/test").Page) {
   await expect(page.getByRole("heading", { name: "Recent Flow" })).toBeVisible();
   await expect(page.getByText(/Streaming|Collecting live flow/i)).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Opening Hyperliquid WebSocket")).not.toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("WebSocket trades not streaming")).not.toBeVisible({ timeout: 30_000 });
 
   for (const asset of ASSETS) {
     const row = page.getByTestId(`flow-metrics-${asset}`);
@@ -118,6 +119,11 @@ test("public homepage HTML does not expose card loading placeholders", async ({ 
   ]) {
     expect(html, placeholder).not.toContain(placeholder);
   }
+  expect(html).not.toContain("Opening Hyperliquid WebSocket");
+  expect(html).not.toContain("WebSocket trades not streaming");
+  expect(html).not.toContain("Connecting to trade stream");
+  expect(html).toContain("Initializing live flow");
+  expect(html).toContain("Preparing WebSocket stream");
 });
 
 test("snapshot endpoint inserts rows and OI history exposes snapshot counts", async ({ page }) => {
@@ -143,6 +149,8 @@ test("closest setups include all four presets for BTC ETH HYPE", async ({ page }
   await expect(panel.getByText("Structure score")).toBeVisible();
   await expect(panel.getByText("Flow score")).toBeVisible();
   await expect(panel.getByText("Final score")).toBeVisible();
+  await expect(panel.getByText("Why this ranks here")).toBeVisible();
+  await expect(panel.getByText("Main blocker")).toBeVisible();
   await expect(panel.getByText("Flow inputs")).toBeVisible();
   await expect(panel.getByText("Current value / target value")).toBeVisible();
   await expect(panel.getByText("Needs data")).toHaveCount(0);
@@ -175,6 +183,8 @@ test("live flow metrics produce numeric flowScore and finalScore for closest set
       await expect(row.locator('[data-col="flow-score"]'), `${asset} ${preset} flowScore`).toContainText(/^\d+%$/);
       await expect(row.locator('[data-col="final-score"]'), `${asset} ${preset} finalScore`).toContainText(/^\d+%$/);
       await expect(row.locator('[data-col="status"]'), `${asset} ${preset} status`).toContainText(/active|near|inactive/);
+      await expect(row.locator('[data-col="why"]'), `${asset} ${preset} why`).toContainText(/Why this ranks here:/);
+      await expect(row.locator('[data-col="main-blocker"]'), `${asset} ${preset} blocker`).toContainText(/Main blocker:/);
       await expect(row.locator('[data-col="flow-inputs"]'), `${asset} ${preset} flow inputs`).toContainText(/takerBuyRatio5m|takerSellRatio5m|netBuyFlow5m|netSellFlow5m|CVD 5m/);
       await expect(row.locator('[data-col="current-target"]'), `${asset} ${preset} current target`).toContainText(/target|PASS|waiting|flow/i);
     }

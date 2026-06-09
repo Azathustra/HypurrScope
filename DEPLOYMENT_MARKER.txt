@@ -1,4 +1,4 @@
 HypurrScope production hardening deployment marker
 Created for forcing a fresh GitHub commit and Vercel deployment.
-Timestamp: 2026-06-09T22:50:00+02:00
-Patch: Vercel Hobby cron compatibility. Native Vercel cron is daily; use external cron for 60s cadence.
+Timestamp: 2026-06-09T23:05:00+02:00
+Patch: Production hardening copy. Adds setup explanations and neutral pre-hydration live-flow wording.
