@@ -14,7 +14,7 @@ const ASSETS: ApiCoin[] = ["BTC", "ETH", "HYPE"];
 const WS_HOST = "api.hyperliquid.xyz";
 const WS_PATH = "/ws";
 const WS_URL = `wss://${WS_HOST}${WS_PATH}`;
-const SMOKE_VERSION = "ws-smoke-v4-native-tls-websocket-2026-06-09";
+const SMOKE_VERSION = "ws-smoke-v5-native-tls-buffer-type-fix-2026-06-09";
 const SUBSCRIPTIONS: Subscription[] = [
   { type: "allMids" },
   ...ASSETS.flatMap((coin) => [
@@ -118,7 +118,7 @@ function makeClientFrame(message: string, opcode = 0x1) {
   return Buffer.concat([header, mask, masked]);
 }
 
-function parseFrames(buffer: Buffer, onText: (text: string) => void, onClose: (code: number | null, reason: string) => void, socket: tls.TLSSocket) {
+function parseFrames(buffer: Buffer<ArrayBufferLike>, onText: (text: string) => void, onClose: (code: number | null, reason: string) => void, socket: tls.TLSSocket): Buffer<ArrayBufferLike> {
   let offset = 0;
 
   while (buffer.length - offset >= 2) {
@@ -192,7 +192,7 @@ export async function GET(request: Request) {
   let error: string | null = null;
   let closeCode: number | null = null;
   let closeReason: string | null = null;
-  let frameBuffer = Buffer.alloc(0);
+  let frameBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 
   return await new Promise<Response>((resolve) => {
     let finished = false;
