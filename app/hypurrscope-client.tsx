@@ -2001,6 +2001,62 @@ function FlowEventsTable({ events, flowState }: { events: FlowEvent[]; flowState
   );
 }
 
+function LiveTradeTape({
+  assetStates,
+  metricsByAsset,
+  filter,
+}: {
+  assetStates: Record<ApiCoin, AssetState>;
+  metricsByAsset: Record<ApiCoin, MetricBundle>;
+  filter: FlowFilter;
+}) {
+  const watchedAssets = ASSETS.filter((asset) => filter === "All" || filter === asset.apiCoin || filter === "Large trades" || filter === "Taker bursts");
+  const rows = watchedAssets
+    .flatMap((asset) => assetStates[asset.apiCoin].trades.slice(0, 16).map((trade) => ({ asset, trade })))
+    .sort((a, b) => b.trade.time - a.trade.time)
+    .slice(0, 40);
+
+  if (!rows.length) {
+    return (
+      <div className="compact-empty">
+        Waiting for live trades.
+        <small>The WebSocket is connected; the tape fills as trades arrive after this page is opened.</small>
+      </div>
+    );
+  }
+
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Time</th><th>Asset</th><th>Side</th><th>Notional</th><th>Price</th><th>Large trade threshold</th><th>5m net flow</th><th>Buy / sell ratio</th></tr>
+        </thead>
+        <tbody>
+          {rows.map(({ asset, trade }) => {
+            const metrics = metricsByAsset[asset.apiCoin];
+            const ratio =
+              metrics.buyRatio5m === null || metrics.sellRatio5m === null
+                ? "Collecting"
+                : `${metrics.buyRatio5m.toFixed(1)}% / ${metrics.sellRatio5m.toFixed(1)}%`;
+            return (
+              <tr key={`${asset.apiCoin}-${trade.id}`}>
+                <td>{new Date(trade.time).toLocaleTimeString()}</td>
+                <td><strong>{asset.shortName}</strong></td>
+                <td className={trade.side === "Buy" ? "positive" : "negative"}>{trade.side}</td>
+                <td>{formatUsd(trade.notionalUsd)}</td>
+                <td>{formatUsd(trade.price)}</td>
+                <td>{trade.notionalUsd >= asset.thresholds.largeTradeUsd ? "Triggered" : `below ${formatUsd(asset.thresholds.largeTradeUsd)}`}</td>
+                <td className={directionClass(metrics.netFlow5m)}>{metrics.netFlow5m === null ? "Collecting" : formatUsd(metrics.netFlow5m)}</td>
+                <td>{ratio}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function ReadinessCard({ signal }: { signal: SignalReadiness }) {
   return (
     <article className={signal.active ? "readiness-card active" : "readiness-card"}>
@@ -3515,6 +3571,9 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
             <Panel title="All watched assets" right="BTC / ETH / HYPE">
               <FlowFilterRow filter={flowFilter} onFilter={setFlowFilter} />
               <FlowEventsTable events={filteredFlowEvents} flowState={flowState} />
+            </Panel>
+            <Panel title="Live trade tape" right="real WebSocket trades">
+              <LiveTradeTape assetStates={assets} metricsByAsset={metricsByAsset} filter={flowFilter} />
             </Panel>
           </>
         )}
