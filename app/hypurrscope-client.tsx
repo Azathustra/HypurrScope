@@ -377,6 +377,10 @@ type WsDebugState = {
   lastMessageAt: number | null;
   reconnects: number;
   error: string | null;
+  rawMessagesCount: number;
+  subscriptionAcksCount: number;
+  lastRawMessagePreview: string | null;
+  lastSubscriptionSent: string | null;
   subscriptions: Record<string, WsSubscriptionDebug>;
 };
 
@@ -575,7 +579,7 @@ function subscriptionKey(subscription: WsSubscription) {
 }
 
 function subscriptionFromMessage(data: any): WsSubscription | null {
-  const raw = data?.subscription || data?.data?.subscription;
+  const raw = data?.subscription || data?.data?.subscription || data?.data;
   const type = raw?.type;
   if (!["allMids", "trades", "l2Book", "candle", "activeAssetCtx"].includes(type)) return null;
   const coin = ASSET_ORDER.includes(raw?.coin) ? raw.coin as ApiCoin : undefined;
@@ -587,8 +591,31 @@ function subscriptionFromMessage(data: any): WsSubscription | null {
 }
 
 function messageAsset(data: any): ApiCoin | null {
-  const coin = data?.coin || data?.s || data?.ctx?.coin;
+  const row = Array.isArray(data) ? data[0] : data;
+  const coin = row?.coin || row?.s || row?.asset || row?.coinName || row?.ctx?.coin || row?.ctx?.s || row?.candle?.s || row?.candle?.coin;
   return ASSET_ORDER.includes(coin) ? coin : null;
+}
+
+function subscriptionFromLiveMessage(channel: string, data: any, message: any): WsSubscription | null {
+  if (channel === "allMids") return { type: "allMids" };
+  if (channel === "trades") {
+    const rows = Array.isArray(data) ? data : Array.isArray(data?.trades) ? data.trades : [data];
+    const coin = messageAsset(rows) || messageAsset(data) || message?.subscription?.coin;
+    return ASSET_ORDER.includes(coin) ? { type: "trades", coin } : null;
+  }
+  if (channel === "l2Book") {
+    const coin = messageAsset(data) || message?.subscription?.coin;
+    return ASSET_ORDER.includes(coin) ? { type: "l2Book", coin } : null;
+  }
+  if (channel === "candle") {
+    const coin = messageAsset(data) || message?.subscription?.coin;
+    return ASSET_ORDER.includes(coin) ? { type: "candle", coin, interval: "1m" } : null;
+  }
+  if (channel === "activeAssetCtx") {
+    const coin = messageAsset(data) || message?.subscription?.coin;
+    return ASSET_ORDER.includes(coin) ? { type: "activeAssetCtx", coin } : null;
+  }
+  return null;
 }
 
 function createWsDebugState(status: WebSocketStatus, previous?: WsDebugState): WsDebugState {
@@ -611,6 +638,10 @@ function createWsDebugState(status: WebSocketStatus, previous?: WsDebugState): W
     lastMessageAt: previous?.lastMessageAt ?? null,
     reconnects: previous?.reconnects ?? 0,
     error: previous?.error ?? null,
+    rawMessagesCount: previous?.rawMessagesCount ?? 0,
+    subscriptionAcksCount: previous?.subscriptionAcksCount ?? 0,
+    lastRawMessagePreview: previous?.lastRawMessagePreview ?? null,
+    lastSubscriptionSent: previous?.lastSubscriptionSent ?? null,
     subscriptions,
   };
 }
@@ -2119,7 +2150,7 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
 function FlowEventsTable({ events, flowState }: { events: FlowEvent[]; flowState: FlowDisplayState }) {
   if (!events.length) {
     const emptyText =
-      flowState.status === "connecting" ? "Connecting to trade stream" :
+      flowState.status === "connecting" ? "Opening Hyperliquid WebSocket" :
       flowState.status === "reconnecting" ? "Reconnecting to Hyperliquid trade stream" :
       flowState.status === "collecting" ? `Collecting live flow: ${flowState.minutes}m since page open` :
       flowState.status === "stale" ? "Trade stream stale" :
@@ -2870,13 +2901,16 @@ function QAPanel({
       </div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>WebSocket status</th><th>Connected at</th><th>Last message</th><th>Reconnects</th><th>Error</th></tr></thead>
+          <thead><tr><th>WebSocket status</th><th>Connected at</th><th>Last message</th><th>Reconnects</th><th>Raw messages</th><th>Acks</th><th>Last subscription</th><th>Error</th></tr></thead>
           <tbody>
             <tr>
               <td><strong>{wsDebug.status}</strong></td>
               <td>{wsDebug.connectedAt ? new Date(wsDebug.connectedAt).toLocaleTimeString() : "-"}</td>
               <td>{wsDebug.lastMessageAt ? ageLabel(wsDebug.lastMessageAt) : "-"}</td>
               <td>{wsDebug.reconnects}</td>
+              <td>{wsDebug.rawMessagesCount}</td>
+              <td>{wsDebug.subscriptionAcksCount}</td>
+              <td>{wsDebug.lastSubscriptionSent || "-"}</td>
               <td>{wsDebug.error || "-"}</td>
             </tr>
           </tbody>
@@ -3234,6 +3268,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
     const subscribeAll = (ws: WebSocket) => {
       WS_SUBSCRIPTIONS.forEach((subscription) => {
         ws.send(JSON.stringify({ method: "subscribe", subscription }));
+        setWsDebug((current) => ({ ...current, lastSubscriptionSent: subscriptionKey(subscription) }));
       });
     };
 
@@ -3307,10 +3342,23 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
           const now = Date.now();
           wsLastMessageRef.current = now;
           setLastUpdate(now);
+          setWsDebug((current) => ({
+            ...current,
+            lastMessageAt: now,
+            rawMessagesCount: current.rawMessagesCount + 1,
+            lastRawMessagePreview: String(event.data || "").slice(0, 500),
+          }));
 
           if (channel === "subscriptionResponse") {
             const subscription = subscriptionFromMessage(message);
-            if (subscription) setWsDebug((current) => markWsSubscription(current, subscription, now));
+            if (subscription) {
+              setWsDebug((current) => ({
+                ...markWsSubscription(current, subscription, now),
+                subscriptionAcksCount: current.subscriptionAcksCount + 1,
+              }));
+            } else {
+              setWsDebug((current) => ({ ...current, subscriptionAcksCount: current.subscriptionAcksCount + 1 }));
+            }
             return;
           }
 
@@ -3341,8 +3389,10 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
             return;
           }
 
+          const liveSubscription = subscriptionFromLiveMessage(channel, data, message);
+          if (liveSubscription) setWsDebug((current) => markWsMessage(current, liveSubscription, now));
+
           if (channel === "allMids" && data?.mids) {
-            setWsDebug((current) => markWsMessage(current, { type: "allMids" }, now));
             setAssets((current) => {
               const next = { ...current };
               ASSET_ORDER.forEach((coin) => {
@@ -3362,9 +3412,8 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
           if (channel === "candle") {
             const rows = Array.isArray(data) ? data : [data];
             rows.forEach((row) => {
-              const coin = messageAsset(row);
+              const coin = messageAsset(row) || message?.subscription?.coin;
               if (!coin) return;
-              setWsDebug((current) => markWsMessage(current, { type: "candle", coin, interval: "1m" }, now));
               const candle = normalizeCandles([row]).slice(-1)[0];
               if (candle) patchAsset(coin, (state) => ({
                 ...state,
@@ -3376,9 +3425,8 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
 
           if (channel === "trades") {
             const rawRows = Array.isArray(data) ? data : Array.isArray(data?.trades) ? data.trades : [];
-            const coin = rawRows[0]?.coin || rawRows[0]?.s || messageAsset(data) || message?.subscription?.coin;
+            const coin = rawRows[0]?.coin || rawRows[0]?.s || messageAsset(rawRows) || messageAsset(data) || message?.subscription?.coin;
             if (ASSET_ORDER.includes(coin)) {
-              setWsDebug((current) => markWsMessage(current, { type: "trades", coin }, now));
               const trades = rawRows.map(normalizeTrade).filter((trade: Trade | null): trade is Trade => trade !== null);
               patchAsset(coin, (state) => ({
                 ...state,
@@ -3389,9 +3437,8 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
           }
 
           if (channel === "l2Book") {
-            const coin = messageAsset(data);
+            const coin = messageAsset(data) || message?.subscription?.coin;
             if (coin) {
-              setWsDebug((current) => markWsMessage(current, { type: "l2Book", coin }, now));
               const book = normalizeBook(data);
               if (book) patchAsset(coin, (state) => ({
                 ...state,
@@ -3402,10 +3449,9 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
           }
 
           if (channel === "activeAssetCtx") {
-            const coin = messageAsset(data);
+            const coin = messageAsset(data) || message?.subscription?.coin;
             const ctx = data?.ctx || data;
             if (coin) {
-              setWsDebug((current) => markWsMessage(current, { type: "activeAssetCtx", coin }, now));
               const price = n(ctx.markPx ?? ctx.midPx ?? ctx.oraclePx);
               const midPx = n(ctx.midPx);
               const fundingRaw = n(ctx.funding);
