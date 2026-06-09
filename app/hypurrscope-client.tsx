@@ -293,6 +293,8 @@ type SignalReadiness = {
   flowMissing: string[];
   details: string[];
   flowInputs: string[];
+  why: string;
+  blocker: string;
   explanation: string;
 };
 
@@ -1448,6 +1450,25 @@ function flowInputLines(metrics: MetricBundle) {
   ];
 }
 
+function conditionLabel(row: string) {
+  return row.split(":")[0]?.replace(/\s+(PASS|FAIL)$/i, "").trim() || row.trim();
+}
+
+function conciseCondition(row: string) {
+  return row.replace(/\s+(PASS|FAIL)$/i, "").replace(/\s+/g, " ").trim();
+}
+
+function setupWhy(passed: string[]) {
+  if (!passed.length) return "Why this ranks here: no condition has passed yet.";
+  const labels = passed.slice(0, 2).map(conditionLabel);
+  return `Why this ranks here: ${labels.join(" and ")} ${labels.length > 1 ? "are" : "is"} passing.`;
+}
+
+function setupBlocker(missing: string[]) {
+  if (!missing.length) return "Main blocker: no blocker right now.";
+  return `Main blocker: ${conciseCondition(missing[0])}.`;
+}
+
 function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind): SignalReadiness {
   const passed: string[] = [];
   const missing: string[] = [];
@@ -1465,9 +1486,9 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     const fundingOk = funding === null ? null : !funding;
     condition(priceOk, "Price 15m", metricOrUnavailable(metrics.price15m, (value) => formatPct(value, 2)), `> ${formatPct(t.price15mPct, 2, "", false)}`, "/api/hl/candles priceChange15mPct missing", passed, missing, details);
     condition(oiOk, "OI 15m", metricOrUnavailable(metrics.oi15m, (value) => formatPct(value, 2)), `>= ${formatPct(t.oi15mPct, 2, "", false)}`, "backend OI history has not reached 15 minutes", passed, missing, details);
-    condition(ratioOk, "Taker buy ratio 5m", metricOrUnavailable(metrics.takerBuyRatio5m, (value) => formatPct(value, 1, "unavailable", false)), "> 60.0%", "WebSocket trades not streaming", passed, missing, details);
-    condition(flowOk, "Net buy flow 5m", metricOrUnavailable(metrics.netBuyFlow5m, formatUsd), `>= ${formatUsd(t.flow5mUsd)}`, "WebSocket trades not streaming", passed, missing, details);
-    condition(cvdOk, "CVD 5m", metricOrUnavailable(metrics.cvd5m, formatUsd), "> $0", "WebSocket trades not streaming", passed, missing, details);
+    condition(ratioOk, "Taker buy ratio 5m", metricOrUnavailable(metrics.takerBuyRatio5m, (value) => formatPct(value, 1, "unavailable", false)), "> 60.0%", "Collecting live flow", passed, missing, details);
+    condition(flowOk, "Net buy flow 5m", metricOrUnavailable(metrics.netBuyFlow5m, formatUsd), `>= ${formatUsd(t.flow5mUsd)}`, "Collecting live flow", passed, missing, details);
+    condition(cvdOk, "CVD 5m", metricOrUnavailable(metrics.cvd5m, formatUsd), "> $0", "Collecting live flow", passed, missing, details);
     condition(liquidity, "Liquidity", metrics.spreadBps === null || metrics.depth10Bps === null ? "unavailable" : `spread ${metrics.spreadBps.toFixed(2)} bps / depth ${formatUsd(metrics.depth10Bps)}`, `spread <= 4 bps and depth >= ${formatUsd(t.minDepthUsd)}`, "/api/hl/book spreadBps or depth10bpsUsd missing", passed, missing, details);
     condition(fundingOk, "Funding", metricOrUnavailable(metrics.fundingPct, formatFunding), `abs < ${formatFunding(t.fundingPct * 2)}`, "/api/hl/markets fundingRaw missing", passed, missing, details);
   }
@@ -1481,9 +1502,9 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     const fundingOk = funding === null ? null : !funding;
     condition(priceOk, "Price 15m", metricOrUnavailable(metrics.price15m, (value) => formatPct(value, 2)), `< -${formatPct(t.price15mPct, 2, "", false)}`, "/api/hl/candles priceChange15mPct missing", passed, missing, details);
     condition(oiOk, "OI 15m", metricOrUnavailable(metrics.oi15m, (value) => formatPct(value, 2)), `>= ${formatPct(t.oi15mPct, 2, "", false)}`, "backend OI history has not reached 15 minutes", passed, missing, details);
-    condition(ratioOk, "Taker sell ratio 5m", metricOrUnavailable(metrics.takerSellRatio5m, (value) => formatPct(value, 1, "unavailable", false)), "> 60.0%", "WebSocket trades not streaming", passed, missing, details);
-    condition(flowOk, "Net sell flow 5m", metricOrUnavailable(metrics.netSellFlow5m, formatUsd), `>= ${formatUsd(t.flow5mUsd)}`, "WebSocket trades not streaming", passed, missing, details);
-    condition(cvdOk, "CVD 5m", metricOrUnavailable(metrics.cvd5m, formatUsd), "< $0", "WebSocket trades not streaming", passed, missing, details);
+    condition(ratioOk, "Taker sell ratio 5m", metricOrUnavailable(metrics.takerSellRatio5m, (value) => formatPct(value, 1, "unavailable", false)), "> 60.0%", "Collecting live flow", passed, missing, details);
+    condition(flowOk, "Net sell flow 5m", metricOrUnavailable(metrics.netSellFlow5m, formatUsd), `>= ${formatUsd(t.flow5mUsd)}`, "Collecting live flow", passed, missing, details);
+    condition(cvdOk, "CVD 5m", metricOrUnavailable(metrics.cvd5m, formatUsd), "< $0", "Collecting live flow", passed, missing, details);
     condition(liquidity, "Liquidity", metrics.spreadBps === null || metrics.depth10Bps === null ? "unavailable" : `spread ${metrics.spreadBps.toFixed(2)} bps / depth ${formatUsd(metrics.depth10Bps)}`, `spread <= 4 bps and depth >= ${formatUsd(t.minDepthUsd)}`, "/api/hl/book spreadBps or depth10bpsUsd missing", passed, missing, details);
     condition(fundingOk, "Funding", metricOrUnavailable(metrics.fundingPct, formatFunding), `abs < ${formatFunding(t.fundingPct * 2)}`, "/api/hl/markets fundingRaw missing", passed, missing, details);
   }
@@ -1497,7 +1518,7 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     condition(oiOk, "OI 4h", metricOrUnavailable(metrics.oi4h, (value) => formatPct(value, 2)), `>= ${formatPct(t.oi4hPct, 2, "", false)}`, "backend OI history has not reached 240 minutes", passed, missing, details);
     condition(priceOk, "Price momentum", metricOrUnavailable(metrics.price15m, (value) => formatPct(value, 2)), `<= ${formatPct(t.price15mPct * 0.35, 2, "", false)}`, "/api/hl/candles priceChange15mPct missing", passed, missing, details);
     condition(liquidity, "Liquidity", metrics.spreadBps === null || metrics.depth10Bps === null ? "unavailable" : `spread ${metrics.spreadBps.toFixed(2)} bps / depth ${formatUsd(metrics.depth10Bps)}`, `spread <= 4 bps and depth >= ${formatUsd(t.minDepthUsd)}`, "/api/hl/book spreadBps or depth10bpsUsd missing", passed, missing, details);
-    condition(positioningOk, "Long-side taker pressure weakening", metrics.takerBuyRatio5m === null ? "unavailable" : `${formatPct(metrics.takerBuyRatio5m, 1, "unavailable", false)} buy ratio / ${formatUsd(metrics.netBuyFlow5m)} net buy / CVD ${formatUsd(metrics.cvd5m)}`, `buy ratio <= 55% or net buy <= ${formatUsd(t.flow5mUsd * 0.35)} or CVD <= $0`, "WebSocket trades not streaming", passed, missing, details);
+    condition(positioningOk, "Long-side taker pressure weakening", metrics.takerBuyRatio5m === null ? "unavailable" : `${formatPct(metrics.takerBuyRatio5m, 1, "unavailable", false)} buy ratio / ${formatUsd(metrics.netBuyFlow5m)} net buy / CVD ${formatUsd(metrics.cvd5m)}`, `buy ratio <= 55% or net buy <= ${formatUsd(t.flow5mUsd * 0.35)} or CVD <= $0`, "Collecting live flow", passed, missing, details);
   }
 
   if (kind === "Crowded Short") {
@@ -1509,7 +1530,7 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     condition(oiOk, "OI 4h", metricOrUnavailable(metrics.oi4h, (value) => formatPct(value, 2)), `>= ${formatPct(t.oi4hPct, 2, "", false)}`, "backend OI history has not reached 240 minutes", passed, missing, details);
     condition(priceOk, "Downside momentum", metricOrUnavailable(metrics.price15m, (value) => formatPct(value, 2)), `>= -${formatPct(t.price15mPct * 0.35, 2, "", false)}`, "/api/hl/candles priceChange15mPct missing", passed, missing, details);
     condition(liquidity, "Liquidity", metrics.spreadBps === null || metrics.depth10Bps === null ? "unavailable" : `spread ${metrics.spreadBps.toFixed(2)} bps / depth ${formatUsd(metrics.depth10Bps)}`, `spread <= 4 bps and depth >= ${formatUsd(t.minDepthUsd)}`, "/api/hl/book spreadBps or depth10bpsUsd missing", passed, missing, details);
-    condition(positioningOk, "Short-side taker pressure weakening", metrics.takerSellRatio5m === null ? "unavailable" : `${formatPct(metrics.takerSellRatio5m, 1, "unavailable", false)} sell ratio / ${formatUsd(metrics.netSellFlow5m)} net sell / CVD ${formatUsd(metrics.cvd5m)}`, `sell ratio <= 55% or net sell <= ${formatUsd(t.flow5mUsd * 0.35)} or CVD >= $0`, "WebSocket trades not streaming", passed, missing, details);
+    condition(positioningOk, "Short-side taker pressure weakening", metrics.takerSellRatio5m === null ? "unavailable" : `${formatPct(metrics.takerSellRatio5m, 1, "unavailable", false)} sell ratio / ${formatUsd(metrics.netSellFlow5m)} net sell / CVD ${formatUsd(metrics.cvd5m)}`, `sell ratio <= 55% or net sell <= ${formatUsd(t.flow5mUsd * 0.35)} or CVD >= $0`, "Collecting live flow", passed, missing, details);
   }
 
   const { structureScore, flowScore, flowMissing } = scoreParts(asset, metrics, kind);
@@ -1523,7 +1544,7 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
       ? "not_evaluable_flow_missing"
       : signalStatus(finalScore, active);
   const flowReason = flowMissing.length
-    ? `${flowMissing.join(" and ")} ${flowMissing.length > 1 ? "are" : "is"} unavailable because WebSocket trades are not streaming.`
+    ? `${flowMissing.join(" and ")} ${flowMissing.length > 1 ? "are" : "is"} collecting from live WebSocket trades.`
     : "";
   return {
     asset: asset.apiCoin,
@@ -1539,6 +1560,8 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     flowMissing,
     details,
     flowInputs: flowInputLines(metrics),
+    why: setupWhy(passed),
+    blocker: setupBlocker(missing),
     explanation: active ? `${asset.shortName} has an active ${kind.toLowerCase()} setup.` : flowReason || details[0] || "Not evaluated: waiting for price/funding/OI/flow data",
   };
 }
@@ -1699,7 +1722,7 @@ function marketAssetWarning(metricsByAsset: Record<ApiCoin, MetricBundle>) {
 }
 
 function marketSentence(signal: SignalReadiness | null, state: string) {
-  if (state === "Initializing") return "Connecting to Hyperliquid and loading BTC, ETH and HYPE source data.";
+  if (state === "Initializing") return "Initializing market data and preparing live flow.";
   if (state === "Warming up") return "Live data is arriving; OI and flow windows need more history before scoring.";
   if (state === "Stale") return "The stream is stale; values stay visible but should not be treated as live.";
   if (state === "API error") return "Hyperliquid source data is temporarily unavailable.";
@@ -2144,7 +2167,7 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
     <div className="table-wrap">
       <table>
         <thead>
-          <tr><th>Asset</th><th>Setup</th><th>Structure score</th><th>Flow score</th><th>Final score</th><th>Status</th><th>Flow inputs</th><th>Passed conditions</th><th>Failed conditions</th><th>Current value / target value</th><th>Action</th></tr>
+          <tr><th>Asset</th><th>Setup</th><th>Structure score</th><th>Flow score</th><th>Final score</th><th>Status</th><th>Why this ranks here</th><th>Main blocker</th><th>Flow inputs</th><th>Passed conditions</th><th>Failed conditions</th><th>Current value / target value</th><th>Action</th></tr>
         </thead>
         <tbody>
           {rows.map((signal) => (
@@ -2155,6 +2178,8 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
               <td data-col="flow-score">{signal.flowScore === null ? `unavailable${signal.flowMissing.length ? `: ${signal.flowMissing.join(", ")}` : ""}` : `${signal.flowScore}%`}</td>
               <td data-col="final-score">{signal.finalScore === null ? "not evaluable" : `${signal.finalScore}%`}</td>
               <td data-col="status">{signal.status}</td>
+              <td data-col="why">{signal.why}</td>
+              <td data-col="main-blocker">{signal.blocker}</td>
               <td data-col="flow-inputs">{signal.flowInputs.join(" | ")}</td>
               <td data-col="passed-conditions">{signal.passed.length ? signal.passed.join(" | ") : "No condition passed yet"}</td>
               <td data-col="failed-conditions">{signal.missing.length ? signal.missing.join(" | ") : "No missing condition"}</td>
@@ -2172,7 +2197,7 @@ function FlowEventsTable({ events, flowState }: { events: FlowEvent[]; flowState
   const explanation = "Recent Flow only shows threshold events. Flow Score uses continuous taker flow, net flow and CVD.";
   if (!events.length) {
     const emptyText =
-      flowState.status === "connecting" ? "Opening Hyperliquid WebSocket" :
+      flowState.status === "connecting" ? "Preparing WebSocket stream..." :
       flowState.status === "reconnecting" ? "Reconnecting to Hyperliquid trade stream" :
       flowState.status === "collecting" ? `Collecting live flow: ${flowState.minutes}m since page open` :
       flowState.status === "stale" ? "Trade stream stale" :
@@ -2180,7 +2205,7 @@ function FlowEventsTable({ events, flowState }: { events: FlowEvent[]; flowState
       "Streaming. No events above threshold since page open";
     return (
       <div className="compact-empty">
-        {emptyText}.
+        {emptyText}
         {flowState.status !== "error" && flowState.hypeError ? <small>{flowState.hypeError}</small> : null}
         <small>{explanation}</small>
         <small>Large trades: BTC $1M, ETH $500K, HYPE $100K. Flow bursts: BTC $10M, ETH $6M, HYPE $1.5M.</small>
@@ -2741,8 +2766,8 @@ function WatchlistTable({
                 <td>{formatPct(metrics.oi1h, 2, oiBackendLabel(state, 60))}</td>
                 <td>{formatPct(metrics.oi4h, 2, oiBackendLabel(state, 240))}</td>
                 <td className={directionClass(state.market.fundingPct)}>{formatFunding(state.market.fundingPct)}</td>
-                <td className={directionClass(metrics.netFlow5m)}>{metrics.netFlow5m === null ? "Connecting" : formatUsd(metrics.netFlow5m)}</td>
-                <td className={directionClass(metrics.cvd15m)}>{metrics.cvd15m === null ? "Connecting" : formatUsd(metrics.cvd15m)}</td>
+                <td className={directionClass(metrics.netFlow5m)}>{metrics.netFlow5m === null ? "Collecting" : formatUsd(metrics.netFlow5m)}</td>
+                <td className={directionClass(metrics.cvd15m)}>{metrics.cvd15m === null ? "Collecting" : formatUsd(metrics.cvd15m)}</td>
                 <td>{metrics.spreadBps === null ? "Loading" : `${metrics.spreadBps.toFixed(2)} bps`}</td>
                 <td>{formatUsd(metrics.depth10Bps)}</td>
                 <td>{signalBadge(signal)}</td>
@@ -2769,7 +2794,7 @@ function FlowStatusCards({
   const mostActive = [...ASSETS].sort((a, b) => Math.abs(metricsByAsset[b.apiCoin].netFlow5m ?? 0) - Math.abs(metricsByAsset[a.apiCoin].netFlow5m ?? 0))[0];
   const strongestFlow = mostActive ? metricsByAsset[mostActive.apiCoin].netFlow5m : null;
   const label =
-    flowState.status === "connecting" ? "Connecting" :
+    flowState.status === "connecting" ? "Initializing" :
     flowState.status === "reconnecting" ? "Reconnecting" :
     flowState.status === "collecting" ? "Collecting live flow" :
     flowState.status === "stale" ? "Stale" :
@@ -2780,7 +2805,7 @@ function FlowStatusCards({
       <article>
         <span>WebSocket status</span>
         <strong>{label}</strong>
-        <small>{flowState.status === "error" ? `Flow unavailable: ${flowState.error || "Hyperliquid WebSocket error"}` : flowState.hypeError || (flowState.status === "streaming" && !events.length ? "No events above threshold since page open." : `${flowState.minutes}m since page open`)}</small>
+        <small>{flowState.status === "error" ? `Flow unavailable: ${flowState.error || "Hyperliquid WebSocket error"}` : flowState.hypeError || (flowState.status === "streaming" && !events.length ? "No events above threshold since page open." : "Preparing WebSocket stream...")}</small>
       </article>
       <article>
         <span>Events since page open</span>
@@ -2795,7 +2820,7 @@ function FlowStatusCards({
       <article>
         <span>Strongest net flow</span>
         <strong>{mostActive ? mostActive.shortName : "None"}</strong>
-        <small>{strongestFlow === null ? "Connecting" : formatUsd(strongestFlow)}</small>
+        <small>{strongestFlow === null ? "Collecting" : formatUsd(strongestFlow)}</small>
       </article>
     </section>
   );
@@ -3785,8 +3810,8 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
               </article>
               <article>
                 <span>Flow status</span>
-                <strong>{flowState.status === "streaming" ? "Streaming" : flowState.status === "collecting" ? "Collecting" : flowState.status === "reconnecting" ? "Reconnecting" : flowState.status === "stale" ? "Stale" : flowState.status === "error" ? "Error" : "Connecting"}</strong>
-                <small>{flowState.status === "streaming" ? "Live flow since page open." : `Collecting live flow: ${flowState.minutes}m since page open.`}</small>
+                <strong>{flowState.status === "streaming" ? "Streaming" : flowState.status === "collecting" ? "Collecting" : flowState.status === "reconnecting" ? "Reconnecting" : flowState.status === "stale" ? "Stale" : flowState.status === "error" ? "Error" : "Initializing"}</strong>
+                <small>{flowState.status === "streaming" ? "Live flow since page open." : flowState.status === "error" ? `Flow unavailable: ${flowState.error || "Hyperliquid WebSocket error"}` : "Initializing live flow..."}</small>
               </article>
               <article>
                 <span>Alerts</span>
