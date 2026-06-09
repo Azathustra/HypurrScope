@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 type ApiCoin = "BTC" | "ETH" | "HYPE";
 type View = "overview" | "watchlist" | "asset" | "flow" | "alerts" | "wallet";
 type ConnectionState = "loading" | "live" | "stale" | "failed";
+type AssetDataStatus = "ready" | "loading" | "stale" | "error";
 type SignalKind = "Fresh Long" | "Fresh Short" | "Crowded Long" | "Crowded Short";
 type ChartMode = "price" | "oi" | "cvd" | "funding";
 type ChartInterval = "1m" | "5m" | "15m" | "1h";
@@ -144,7 +145,33 @@ type AssetState = {
   oiHistory: OiPoint[];
   fundingHistory: FundingPoint[];
   freshness: FreshnessMap;
+  sourceUpdatedAt: number | null;
+  sourceUpdatedAtIso: string | null;
+  missingFields: string[];
+  dataError: string | null;
   requestFailed: boolean;
+};
+
+type HlMarketAsset = {
+  apiCoin: ApiCoin;
+  markPx: number | null;
+  midPx: number | null;
+  oraclePx: number | null;
+  fundingRaw: number | null;
+  fundingPctHourly: number | null;
+  openInterestRaw: number | null;
+  openInterestUsdComputed: number | null;
+  dayNtlVlm: number | null;
+  prevDayPx: number | null;
+  missingFields?: string[];
+  updatedAt?: string;
+};
+
+type HlMarketsResponse = {
+  ok: boolean;
+  assets?: HlMarketAsset[];
+  error?: string;
+  updatedAt?: string;
 };
 
 type MetricBundle = {
@@ -341,6 +368,10 @@ function emptyAssetState(): AssetState {
     oiHistory: [],
     fundingHistory: [],
     freshness: {},
+    sourceUpdatedAt: null,
+    sourceUpdatedAtIso: null,
+    missingFields: [],
+    dataError: null,
     requestFailed: false,
   };
 }
@@ -395,6 +426,34 @@ function formatFunding(value: number | null) {
   return formatPct(numberValue, 4);
 }
 
+function formatSourceTimestamp(state: AssetState) {
+  if (!state.sourceUpdatedAtIso) return "updatedAt missing";
+  return state.sourceUpdatedAtIso;
+}
+
+function assetDataStatus(state: AssetState, now = Date.now()): AssetDataStatus {
+  if (state.dataError) return "error";
+  if (!state.sourceUpdatedAt) return "loading";
+  return now - state.sourceUpdatedAt > 30_000 ? "stale" : "ready";
+}
+
+function unavailableLabel(label: string, fields: string[], state: AssetState) {
+  const missing = fields.find((field) => state.missingFields.includes(field)) || fields[0];
+  return `${label} unavailable: ${missing} missing`;
+}
+
+function formatMarketValue(
+  value: number | null,
+  formatter: (value: number | null) => string,
+  label: string,
+  fields: string[],
+  state: AssetState,
+) {
+  if (Number.isFinite(value as number)) return formatter(value);
+  if (state.sourceUpdatedAt) return unavailableLabel(label, fields, state);
+  return "Loading";
+}
+
 function directionClass(value: number | null) {
   if (!Number.isFinite(value as number)) return "";
   return (value as number) >= 0 ? "positive" : "negative";
@@ -438,6 +497,19 @@ async function fetchMeta(): Promise<unknown> {
   const response = await fetch("/api/hyperliquid/meta", { cache: "no-store" });
   if (!response.ok) throw new Error(`Meta failed ${response.status}`);
   return response.json();
+}
+
+async function fetchHlMarkets(): Promise<HlMarketsResponse> {
+  const response = await fetch("/api/hl/markets", { cache: "no-store" });
+  const payload = await response.json();
+  if (!response.ok) {
+    return {
+      ok: false,
+      error: payload?.error || `HL markets failed ${response.status}`,
+      updatedAt: payload?.updatedAt,
+    };
+  }
+  return payload;
 }
 
 async function fetchCandles(coin: ApiCoin): Promise<unknown> {
@@ -514,6 +586,48 @@ function normalizeMeta(payload: unknown): Partial<Record<ApiCoin, MarketCtx>> {
       oraclePx: n(ctx.oraclePx),
     };
   });
+  return result;
+}
+
+function normalizeHlMarkets(payload: HlMarketsResponse): Partial<Record<ApiCoin, {
+  market: MarketCtx;
+  missingFields: string[];
+  sourceUpdatedAt: number | null;
+  sourceUpdatedAtIso: string | null;
+}>> {
+  if (!payload.ok || !Array.isArray(payload.assets)) return {};
+  const result: Partial<Record<ApiCoin, {
+    market: MarketCtx;
+    missingFields: string[];
+    sourceUpdatedAt: number | null;
+    sourceUpdatedAtIso: string | null;
+  }>> = {};
+
+  payload.assets.forEach((row) => {
+    if (!ASSET_ORDER.includes(row.apiCoin)) return;
+    const updatedAtIso = row.updatedAt || payload.updatedAt || null;
+    const updatedAtMs = updatedAtIso ? Date.parse(updatedAtIso) : NaN;
+    const price = n(row.markPx);
+    const fundingPct = n(row.fundingPctHourly);
+    const oiUsd = n(row.openInterestUsdComputed);
+    result[row.apiCoin] = {
+      market: {
+        price,
+        prevPrice: n(row.prevDayPx),
+        midPx: n(row.midPx),
+        fundingPct,
+        premium: null,
+        openInterestRaw: n(row.openInterestRaw),
+        oiUsd,
+        volume24hUsd: n(row.dayNtlVlm),
+        oraclePx: n(row.oraclePx),
+      },
+      missingFields: Array.isArray(row.missingFields) ? row.missingFields : [],
+      sourceUpdatedAt: Number.isFinite(updatedAtMs) ? updatedAtMs : null,
+      sourceUpdatedAtIso: updatedAtIso,
+    };
+  });
+
   return result;
 }
 
@@ -1430,14 +1544,21 @@ function AssetCard({
   state,
   metrics,
   signal,
+  now,
   onOpen,
 }: {
   asset: AssetConfig;
   state: AssetState;
   metrics: MetricBundle;
   signal: SignalReadiness | null;
+  now: number;
   onOpen: () => void;
 }) {
+  const dataStatus = assetDataStatus(state, now);
+  const sourceText = state.dataError
+    ? state.dataError
+    : `Source timestamp ${formatSourceTimestamp(state)}`;
+
   return (
     <article className="asset-card">
       <button className="asset-open" onClick={onOpen}>
@@ -1448,16 +1569,16 @@ function AssetCard({
         <em className={signal?.active ? "signal-active" : ""}>{signalBadge(signal)}</em>
       </button>
       <div className="asset-card-grid">
-        <div><span>Price</span><strong>{formatUsd(state.market.price)}</strong></div>
+        <div><span>Price</span><strong>{formatMarketValue(state.market.price, formatUsd, "price", ["markPx"], state)}</strong></div>
         <div><span>15m</span><strong className={directionClass(metrics.price15m)}>{formatPct(metrics.price15m, 2, "Loading")}</strong></div>
         <div><span>1h</span><strong className={directionClass(metrics.price1h)}>{formatPct(metrics.price1h, 2, "Loading")}</strong></div>
-        <div><span>OI 15m</span><strong>{formatPct(metrics.oi15m, 2, oiWarmupLabel(state.oiHistory, 15))}</strong></div>
-        <div><span>OI 4h</span><strong>{formatPct(metrics.oi4h, 2, oiWarmupLabel(state.oiHistory, 240))}</strong></div>
-        <div><span>Hourly funding</span><strong>{formatFunding(state.market.fundingPct)}</strong></div>
+        <div><span>Open interest</span><strong>{formatMarketValue(state.market.oiUsd, formatUsd, "open interest", ["openInterestRaw", "openInterestUsdComputed"], state)}</strong></div>
+        <div><span>24h volume</span><strong>{formatMarketValue(state.market.volume24hUsd, formatUsd, "24h volume", ["dayNtlVlm"], state)}</strong></div>
+        <div><span>Hourly funding</span><strong>{formatMarketValue(state.market.fundingPct, formatFunding, "funding", ["fundingRaw"], state)}</strong></div>
         <div><span>Taker 5m</span><strong>{metrics.netFlow5m === null ? "Loading" : formatUsd(metrics.netFlow5m)}</strong></div>
         <div><span>Depth +/-10 bps</span><strong>{formatUsd(metrics.depth10Bps, "Loading")}</strong></div>
       </div>
-      <small className="asset-source">Source Hyperliquid info/trades/book - {ageLabel(state.freshness.meta || state.freshness.ws)}</small>
+      <small className="asset-source">Source Hyperliquid REST - Data status {dataStatus} - {sourceText}</small>
       <button className="text-action" onClick={onOpen}>View details</button>
     </article>
   );
@@ -2126,6 +2247,7 @@ export default function Page() {
   const [walletLoading, setWalletLoading] = useState(false);
   const [walletResult, setWalletResult] = useState<WalletResult | null>(null);
   const [qaEnabled, setQaEnabled] = useState(false);
+  const [nowTick, setNowTick] = useState(Date.now());
 
   const patchAsset = (coin: ApiCoin, updater: (state: AssetState) => AssetState) => {
     setAssets((current) => ({ ...current, [coin]: updater(current[coin]) }));
@@ -2133,6 +2255,80 @@ export default function Page() {
 
   useEffect(() => {
     setQaEnabled(typeof window !== "undefined" && new URLSearchParams(window.location.search).get("qa") === "1");
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowTick(Date.now()), 5_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInitialMarkets() {
+      try {
+        const payload = await fetchHlMarkets();
+        if (cancelled) return;
+        if (!payload.ok) {
+          const message = payload.error || "HL markets unavailable";
+          setAssets((current) => {
+            const next = { ...current };
+            ASSET_ORDER.forEach((coin) => {
+              next[coin] = { ...next[coin], dataError: message, requestFailed: true };
+            });
+            return next;
+          });
+          setConnection("failed");
+          return;
+        }
+
+        const markets = normalizeHlMarkets(payload);
+        setAssets((current) => {
+          const next = { ...current };
+          ASSET_ORDER.forEach((coin) => {
+            const row = markets[coin];
+            if (!row) {
+              next[coin] = {
+                ...next[coin],
+                missingFields: ["asset"],
+                dataError: `${coin} missing from /api/hl/markets`,
+                requestFailed: true,
+              };
+              return;
+            }
+            next[coin] = {
+              ...next[coin],
+              market: row.market,
+              oiHistory: appendOi(next[coin].oiHistory, row.market.oiUsd),
+              fundingHistory: appendFunding(next[coin].fundingHistory, row.market.fundingPct),
+              freshness: { ...next[coin].freshness, meta: row.sourceUpdatedAt || Date.now() },
+              sourceUpdatedAt: row.sourceUpdatedAt,
+              sourceUpdatedAtIso: row.sourceUpdatedAtIso,
+              missingFields: row.missingFields,
+              dataError: null,
+              requestFailed: false,
+            };
+          });
+          return next;
+        });
+        setLastUpdate(Date.now());
+        setConnection("live");
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : String(error);
+        setAssets((current) => {
+          const next = { ...current };
+          ASSET_ORDER.forEach((coin) => {
+            next[coin] = { ...next[coin], dataError: message, requestFailed: true };
+          });
+          return next;
+        });
+        setConnection("failed");
+      }
+    }
+
+    loadInitialMarkets();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -2174,41 +2370,59 @@ export default function Page() {
         if (cancelled) return;
         const now = Date.now();
         const meta = normalizeMeta(metaPayload);
-        const next = initialAssets();
-        ASSETS.forEach((asset) => {
-          const market = meta[asset.apiCoin] || { ...EMPTY_MARKET };
-          const candles = normalizeCandles(payloadFor(candlePayloads, asset.apiCoin));
-          const book = normalizeBook(payloadFor(bookPayloads, asset.apiCoin));
-          const contextHistory = normalizeContextHistory(payloadFor(historyPayloads, asset.apiCoin));
-          const fundingHistory = appendFunding(
-            normalizeFundingHistory(payloadFor(fundingPayloads, asset.apiCoin)).concat(contextHistory.fundingHistory).sort((a, b) => a.time - b.time).slice(-1000),
-            market.fundingPct,
-          );
-          next[asset.apiCoin] = {
-            market,
-            candles,
-            book,
-            trades: [],
-            oiHistory: appendOi(contextHistory.oiHistory, market.oiUsd),
-            fundingHistory,
-            freshness: {
-              meta: market.price !== null ? now : undefined,
-              candles: candles.length ? now : undefined,
-              book: book ? now : undefined,
-            },
-            requestFailed: false,
-          };
+        setAssets((current) => {
+          const next = { ...current };
+          ASSETS.forEach((asset) => {
+            const previous = current[asset.apiCoin];
+            const backfillMarket = meta[asset.apiCoin] || { ...EMPTY_MARKET };
+            const market = {
+              price: backfillMarket.price ?? previous.market.price,
+              prevPrice: backfillMarket.prevPrice ?? previous.market.prevPrice,
+              midPx: backfillMarket.midPx ?? previous.market.midPx,
+              fundingPct: backfillMarket.fundingPct ?? previous.market.fundingPct,
+              premium: backfillMarket.premium ?? previous.market.premium,
+              openInterestRaw: backfillMarket.openInterestRaw ?? previous.market.openInterestRaw,
+              oiUsd: backfillMarket.oiUsd ?? previous.market.oiUsd,
+              volume24hUsd: backfillMarket.volume24hUsd ?? previous.market.volume24hUsd,
+              oraclePx: backfillMarket.oraclePx ?? previous.market.oraclePx,
+            };
+            const candles = normalizeCandles(payloadFor(candlePayloads, asset.apiCoin));
+            const book = normalizeBook(payloadFor(bookPayloads, asset.apiCoin));
+            const contextHistory = normalizeContextHistory(payloadFor(historyPayloads, asset.apiCoin));
+            const fundingHistory = appendFunding(
+              normalizeFundingHistory(payloadFor(fundingPayloads, asset.apiCoin)).concat(contextHistory.fundingHistory).sort((a, b) => a.time - b.time).slice(-1000),
+              market.fundingPct,
+            );
+            next[asset.apiCoin] = {
+              ...previous,
+              market,
+              candles,
+              book,
+              trades: previous.trades,
+              oiHistory: appendOi(contextHistory.oiHistory, market.oiUsd),
+              fundingHistory,
+              freshness: {
+                ...previous.freshness,
+                meta: market.price !== null ? previous.sourceUpdatedAt || now : previous.freshness.meta,
+                candles: candles.length ? now : previous.freshness.candles,
+                book: book ? now : previous.freshness.book,
+              },
+              requestFailed: false,
+            };
+          });
+          return next;
         });
-        setAssets(next);
         setLastUpdate(now);
         setConnection("live");
         setBackfillReady(true);
       } catch {
         if (!cancelled) {
-          setConnection("failed");
+          setConnection((current) => current === "live" ? "live" : "failed");
           setAssets((current) => {
             const next = { ...current };
-            ASSET_ORDER.forEach((coin) => { next[coin] = { ...next[coin], requestFailed: true }; });
+            ASSET_ORDER.forEach((coin) => {
+              next[coin] = { ...next[coin], requestFailed: !next[coin].sourceUpdatedAt };
+            });
             return next;
           });
         }
@@ -2600,6 +2814,7 @@ export default function Page() {
                     state={assets[asset.apiCoin]}
                     metrics={metricsByAsset[asset.apiCoin]}
                     signal={bestSignal(assetSignals)}
+                    now={nowTick}
                     key={asset.apiCoin}
                     onOpen={() => { setSelected(asset.apiCoin); setView("asset"); }}
                   />
