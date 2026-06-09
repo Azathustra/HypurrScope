@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-const page = fs.readFileSync("app/page.tsx", "utf8");
+const page = `${fs.readFileSync("app/page.tsx", "utf8")}\n${fs.readFileSync("app/hypurrscope-client.tsx", "utf8")}`;
 const css = fs.readFileSync("app/globals.css", "utf8");
 
 const checks = [

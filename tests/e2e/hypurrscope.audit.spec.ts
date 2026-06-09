@@ -41,6 +41,9 @@ test("production REST data endpoints return usable BTC ETH HYPE data", async ({ 
 
     const oi = await apiOk(page, `/api/hl/oi-history?asset=${asset}`);
     expect(oi.availableHistoryMinutes, `${asset} availableHistoryMinutes`).not.toBeUndefined();
+    expect(oi.health, `${asset} OI health`).toBeDefined();
+    expect(oi.health.cadenceStatus, `${asset} OI cadenceStatus`).toBeTruthy();
+    expect(oi.health.lastSnapshotAgeSeconds, `${asset} OI lastSnapshotAgeSeconds`).not.toBeUndefined();
   }
 });
 
@@ -100,8 +103,12 @@ test("closest setups include all four presets for BTC ETH HYPE", async ({ page }
   await expect(panel).toBeVisible();
   const rows = panel.locator("tbody tr");
   await expect(rows).toHaveCount(12);
+  await expect(panel.getByText("Structure score")).toBeVisible();
+  await expect(panel.getByText("Flow score")).toBeVisible();
+  await expect(panel.getByText("Final score")).toBeVisible();
   await expect(panel.getByText("Current value / target value")).toBeVisible();
   await expect(panel.getByText("Needs data")).toHaveCount(0);
+  await expect(panel.getByText("No score")).toHaveCount(0);
 
   for (const asset of ASSETS) {
     for (const preset of PRESETS) {
@@ -187,12 +194,20 @@ test("recent flow does not remain connecting forever when websocket streams", as
 test("debug websocket page exposes subscriptions and timestamps", async ({ page }) => {
   await page.goto("/debug/ws");
   await expect(page.getByRole("heading", { name: "HypurrScope WebSocket debug" })).toBeVisible();
-  await expect(page.getByText(/hydrated at:/i)).toBeVisible();
-  await expect(page.getByText(/websocket status:\s*streaming/i)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/hydratedAt:/i)).toBeVisible();
+  await expect(page.getByText(/browserCanUseWebSocket:\s*true/i)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/userAgent:/i)).toBeVisible();
+  await expect(page.getByText(/attemptedUrl:/i)).toBeVisible();
+  await expect(page.getByText(/lastSubscriptionSent:/i)).toBeVisible();
+  await expect(page.getByText(/websocketStatus:\s*streaming/i)).toBeVisible({ timeout: 30_000 });
   const proof = await page.locator("pre").last().textContent();
   const parsed = JSON.parse(proof || "{}");
   expect(parsed.hydratedAt).toBeTruthy();
   expect(parsed.websocketStatus).toBe("streaming");
+  expect(parsed.browserCanUseWebSocket).toBe(true);
+  expect(parsed.userAgent).toBeTruthy();
+  expect(parsed.attemptedUrl).toBe("wss://api.hyperliquid.xyz/ws");
+  expect(parsed.lastSubscriptionSent).toBeTruthy();
   for (const field of [
     "btcTradesLastTimestamp",
     "ethTradesLastTimestamp",
