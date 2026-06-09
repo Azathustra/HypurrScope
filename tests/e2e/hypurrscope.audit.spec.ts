@@ -189,6 +189,10 @@ test("recent flow does not remain connecting forever when websocket streams", as
   await expect(page.getByRole("heading", { name: "Recent Flow" })).toBeVisible();
   await expect(page.getByText(/Streaming|Collecting live flow|Reconnecting|Trade stream error|Trade stream stale/i)).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Connecting to trade stream")).not.toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Flow metrics debug")).toBeVisible();
+  await expect(page.getByText("Trade side mapping debug")).toBeVisible();
+  await expect(page.getByText("takerBuyRatio5m")).toBeVisible();
+  await expect(page.getByText("Raw trade side")).toBeVisible();
 });
 
 test("debug websocket page exposes subscriptions and timestamps", async ({ page }) => {

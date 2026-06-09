@@ -3,9 +3,13 @@ import fs from "node:fs";
 const page = `${fs.readFileSync("app/page.tsx", "utf8")}\n${fs.readFileSync("app/hypurrscope-client.tsx", "utf8")}`;
 
 const checks = [
-  ["Signal status type", page.includes('"active" | "near" | "inactive" | "warming_up" | "not_evaluable" | "not_evaluable_flow_missing"')],
+  ["Signal status type", page.includes('"active" | "near" | "inactive" | "not_evaluable_data_missing" | "not_evaluable_flow_missing"')],
   ["Split setup scores", page.includes("structureScore") && page.includes("flowScore") && page.includes("finalScore")],
   ["Flow missing status", page.includes("not_evaluable_flow_missing") && page.includes("flowMissing")],
+  ["Data missing status", page.includes("not_evaluable_data_missing")],
+  ["Real flow aliases", page.includes("takerBuyRatio5m") && page.includes("takerSellRatio5m") && page.includes("netBuyFlow5m") && page.includes("netSellFlow5m")],
+  ["Trade side mapping debug", page.includes("Trade side mapping debug") && page.includes("raw B = Bid/buy taker")],
+  ["Flow metrics debug", page.includes("Flow metrics debug") && page.includes("buyNotional5m") && page.includes("sellNotional5m")],
   ["Fresh Long conditions", page.includes("Taker buy ratio") && page.includes("Net buy flow 5m")],
   ["Fresh Short conditions", page.includes("Taker sell ratio") && page.includes("Net sell flow 5m")],
   ["Crowded Long conditions", page.includes("Hourly funding") && page.includes("Long-side taker pressure")],
