@@ -17,7 +17,7 @@ type AlertTab = "presets" | "builder" | "saved";
 type FlowStatus = "connecting" | "collecting" | "streaming" | "stale" | "reconnecting" | "error";
 type WebSocketStatus = "connecting" | "connected" | "streaming" | "stale" | "reconnecting" | "error";
 type WsChannel = "allMids" | "trades" | "l2Book" | "candle" | "activeAssetCtx";
-type SignalStatus = "active" | "near" | "inactive" | "warming_up" | "not_evaluable";
+type SignalStatus = "active" | "near" | "inactive" | "warming_up" | "not_evaluable" | "not_evaluable_flow_missing";
 
 type AssetConfig = {
   apiCoin: ApiCoin;
@@ -268,10 +268,14 @@ type SignalReadiness = {
   asset: ApiCoin;
   kind: SignalKind;
   score: number | null;
+  structureScore: number | null;
+  flowScore: number | null;
+  finalScore: number | null;
   status: SignalStatus;
   active: boolean;
   passed: string[];
   missing: string[];
+  flowMissing: string[];
   details: string[];
   explanation: string;
 };
@@ -334,6 +338,7 @@ type FlowDisplayState = {
   wsStatus: WebSocketStatus;
   tradeStreamsActive: boolean;
   hypeError: string | null;
+  error: string | null;
 };
 
 type WsSubscription = {
@@ -1242,6 +1247,129 @@ function signalStatus(score: number | null, active: boolean, missing: string[]):
   return "inactive";
 }
 
+function averageScore(scores: Array<number | null | undefined>) {
+  const usable = scores.filter((value): value is number => Number.isFinite(value as number));
+  return usable.length ? Math.round(usable.reduce((sum, value) => sum + value, 0) / usable.length) : null;
+}
+
+function booleanScore(value: boolean | null) {
+  if (value === null) return null;
+  return value ? 100 : 0;
+}
+
+function positiveThresholdScore(value: number | null, threshold: number) {
+  if (value === null) return null;
+  return componentScore(Math.max(0, value), threshold) ?? 0;
+}
+
+function negativeThresholdScore(value: number | null, threshold: number) {
+  if (value === null) return null;
+  return componentScore(Math.max(0, -value), threshold) ?? 0;
+}
+
+function flowMissingInputs(kind: SignalKind, metrics: MetricBundle) {
+  const missing: string[] = [];
+  if (kind === "Fresh Long") {
+    if (metrics.buyRatio5m === null) missing.push("taker buy ratio 5m");
+    if (metrics.netFlow5m === null) missing.push("net buy flow 5m");
+  }
+  if (kind === "Fresh Short") {
+    if (metrics.sellRatio5m === null) missing.push("taker sell ratio 5m");
+    if (metrics.netFlow5m === null) missing.push("net sell flow 5m");
+  }
+  if (kind === "Crowded Long") {
+    if (metrics.buyRatio5m === null) missing.push("taker buy ratio 5m");
+    if (metrics.netFlow5m === null) missing.push("net buy flow 5m");
+  }
+  if (kind === "Crowded Short") {
+    if (metrics.sellRatio5m === null) missing.push("taker sell ratio 5m");
+    if (metrics.netFlow5m === null) missing.push("net sell flow 5m");
+  }
+  return missing;
+}
+
+function scoreParts(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind) {
+  const t = asset.thresholds;
+  const fundingNotExtremeScore = metrics.fundingAbsExtreme === null ? null : metrics.fundingAbsExtreme ? 0 : 100;
+  const liquidityScore = booleanScore(metrics.liquidityHealthy);
+  const flowMissing = flowMissingInputs(kind, metrics);
+  const cvdLongScore = metrics.cvd5m === null ? undefined : metrics.cvd5m > 0 ? 100 : 0;
+  const cvdShortScore = metrics.cvd5m === null ? undefined : metrics.cvd5m < 0 ? 100 : 0;
+
+  if (kind === "Fresh Long") {
+    return {
+      structureScore: averageScore([
+        positiveThresholdScore(metrics.price15m, t.price15mPct),
+        positiveThresholdScore(metrics.oi15m, t.oi15mPct),
+        liquidityScore,
+        fundingNotExtremeScore,
+      ]),
+      flowScore: flowMissing.length ? null : averageScore([
+        positiveThresholdScore(metrics.buyRatio5m, 60),
+        positiveThresholdScore(metrics.netFlow5m, t.flow5mUsd),
+        cvdLongScore,
+      ]),
+      flowMissing,
+    };
+  }
+
+  if (kind === "Fresh Short") {
+    return {
+      structureScore: averageScore([
+        negativeThresholdScore(metrics.price15m, t.price15mPct),
+        positiveThresholdScore(metrics.oi15m, t.oi15mPct),
+        liquidityScore,
+        fundingNotExtremeScore,
+      ]),
+      flowScore: flowMissing.length ? null : averageScore([
+        positiveThresholdScore(metrics.sellRatio5m, 60),
+        negativeThresholdScore(metrics.netFlow5m, t.flow5mUsd),
+        cvdShortScore,
+      ]),
+      flowMissing,
+    };
+  }
+
+  if (kind === "Crowded Long") {
+    const fundingScore = metrics.fundingPct === null ? null : metrics.fundingPct >= t.fundingPct ? 100 : positiveThresholdScore(metrics.fundingPct, t.fundingPct);
+    const priceStallingScore = metrics.price15m === null ? null : metrics.price15m <= t.price15mPct * 0.35 ? 100 : 0;
+    return {
+      structureScore: averageScore([
+        fundingScore,
+        positiveThresholdScore(metrics.oi4h, t.oi4hPct),
+        priceStallingScore,
+      ]),
+      flowScore: flowMissing.length ? null : averageScore([
+        positiveThresholdScore(metrics.buyRatio5m, 55),
+        positiveThresholdScore(metrics.netFlow5m, t.flow5mUsd),
+        cvdLongScore,
+      ]),
+      flowMissing,
+    };
+  }
+
+  const fundingScore = metrics.fundingPct === null ? null : metrics.fundingPct <= -t.fundingPct ? 100 : negativeThresholdScore(metrics.fundingPct, t.fundingPct);
+  const priceStallingScore = metrics.price15m === null ? null : metrics.price15m >= -t.price15mPct * 0.35 ? 100 : 0;
+  return {
+    structureScore: averageScore([
+      fundingScore,
+      positiveThresholdScore(metrics.oi4h, t.oi4hPct),
+      priceStallingScore,
+    ]),
+    flowScore: flowMissing.length ? null : averageScore([
+      positiveThresholdScore(metrics.sellRatio5m, 55),
+      negativeThresholdScore(metrics.netFlow5m, t.flow5mUsd),
+      cvdShortScore,
+    ]),
+    flowMissing,
+  };
+}
+
+function finalSignalScore(structureScore: number | null, flowScore: number | null) {
+  if (structureScore === null || flowScore === null) return null;
+  return Math.round(structureScore * 0.6 + flowScore * 0.4);
+}
+
 function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind): SignalReadiness {
   const passed: string[] = [];
   const missing: string[] = [];
@@ -1337,19 +1465,31 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     }
   }
 
-  const score = rawScores.length ? Math.round(rawScores.reduce((sum, value) => sum + value, 0) / rawScores.length) : null;
-  const active = score !== null && missing.length === 0;
-  const status = signalStatus(score, active, missing);
+  const { structureScore, flowScore, flowMissing } = scoreParts(asset, metrics, kind);
+  const finalScore = finalSignalScore(structureScore, flowScore);
+  const score = finalScore;
+  const active = finalScore !== null && missing.length === 0;
+  const status: SignalStatus =
+    structureScore !== null && flowScore === null && flowMissing.length
+      ? "not_evaluable_flow_missing"
+      : signalStatus(finalScore, active, missing);
+  const flowReason = flowMissing.length
+    ? `${flowMissing.join(" and ")} ${flowMissing.length > 1 ? "are" : "is"} unavailable because WebSocket trades are not streaming.`
+    : "";
   return {
     asset: asset.apiCoin,
     kind,
     score,
+    structureScore,
+    flowScore,
+    finalScore,
     status,
     active,
     passed,
     missing,
+    flowMissing,
     details,
-    explanation: active ? `${asset.shortName} has an active ${kind.toLowerCase()} setup.` : details[0] || "Not evaluated: waiting for price/funding/OI/flow data",
+    explanation: active ? `${asset.shortName} has an active ${kind.toLowerCase()} setup.` : flowReason || details[0] || "Not evaluated: waiting for price/funding/OI/flow data",
   };
 }
 
@@ -1358,14 +1498,15 @@ function allSignals(asset: AssetConfig, metrics: MetricBundle) {
 }
 
 function bestSignal(signals: SignalReadiness[]) {
-  const active = signals.filter((signal) => signal.active).sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0];
+  const active = signals.filter((signal) => signal.active).sort((a, b) => (b.finalScore ?? 0) - (a.finalScore ?? 0))[0];
   if (active) return active;
-  return [...signals].sort((a, b) => (b.score ?? -1) - (a.score ?? -1))[0] || null;
+  return [...signals].sort((a, b) => (b.finalScore ?? b.structureScore ?? -1) - (a.finalScore ?? a.structureScore ?? -1))[0] || null;
 }
 
 function signalBadge(signal: SignalReadiness | null) {
   if (!signal) return "Not evaluated";
-  if (signal.score === null) return signal.status === "warming_up" ? "Warming up" : "Not evaluated";
+  if (signal.finalScore === null && signal.status === "not_evaluable_flow_missing") return "Flow missing";
+  if (signal.finalScore === null) return signal.status === "warming_up" ? "Warming up" : "Not evaluated";
   if (signal.active) return signal.kind;
   if (signal.status === "near") return `Near ${signal.kind}`;
   return "Inactive";
@@ -1479,12 +1620,22 @@ function marketState(signals: SignalReadiness[], metricsByAsset: Record<ApiCoin,
   if (!dataReady) return "Warming up";
   if (connection === "stale") return "Stale";
   const active = signals.filter((signal) => signal.active);
-  if (ASSET_ORDER.some((coin) => metricsByAsset[coin].liquidityHealthy === false)) return "Liquidity Thin";
+  const thinAssets = ASSETS.filter((asset) => metricsByAsset[asset.apiCoin].liquidityHealthy === false);
+  if (thinAssets.length >= 2) return "Liquidity Thin";
+  if (thinAssets.length === 1) return "Mixed";
   if (active.some((signal) => signal.kind === "Crowded Long")) return "Crowded Long";
   if (active.some((signal) => signal.kind === "Crowded Short")) return "Crowded Short";
   if (active.some((signal) => signal.kind === "Fresh Long")) return "Risk-on";
   if (active.some((signal) => signal.kind === "Fresh Short")) return "Risk-off";
   return "Neutral";
+}
+
+function marketAssetWarning(metricsByAsset: Record<ApiCoin, MetricBundle>) {
+  const thinAssets = ASSETS.filter((asset) => metricsByAsset[asset.apiCoin].liquidityHealthy === false);
+  if (thinAssets.length !== 1) return "";
+  const asset = thinAssets[0];
+  const metrics = metricsByAsset[asset.apiCoin];
+  return `Asset Warning: ${asset.shortName} liquidity thin - ${asset.shortName} depth ±10 bps ${formatUsd(metrics.depth10Bps, "unavailable")} / target ${formatUsd(asset.thresholds.minDepthUsd)}`;
 }
 
 function marketSentence(signal: SignalReadiness | null, state: string) {
@@ -1494,6 +1645,7 @@ function marketSentence(signal: SignalReadiness | null, state: string) {
   if (state === "API error") return "Hyperliquid source data is temporarily unavailable.";
   if (signal?.active) return `${signal.asset} is the cleanest active setup: ${signal.kind.toLowerCase()}.`;
   if (state === "Liquidity Thin") return "Liquidity is thin on at least one watched asset; avoid treating wicks as clean signals.";
+  if (state === "Mixed") return "One watched asset has a liquidity warning; BTC and ETH are not implied as thin when they pass checks.";
   return "No active setup is confirmed; closest setups are shown so the feed stays useful.";
 }
 
@@ -1921,9 +2073,7 @@ function AssetCard({
 function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert: (signal: SignalReadiness) => void }) {
   const rows = [...signals].sort((a, b) => {
     if (a.active !== b.active) return a.active ? -1 : 1;
-    if (a.score === null && b.score !== null) return 1;
-    if (a.score !== null && b.score === null) return -1;
-    return (b.score ?? -1) - (a.score ?? -1);
+    return (b.finalScore ?? b.structureScore ?? -1) - (a.finalScore ?? a.structureScore ?? -1);
   });
   if (!rows.length) {
     return (
@@ -1937,19 +2087,21 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
     <div className="table-wrap">
       <table>
         <thead>
-          <tr><th>Asset</th><th>Setup</th><th>Score</th><th>Status</th><th>Passed conditions</th><th>Missing conditions</th><th>Current value / target value</th><th>Action</th></tr>
+          <tr><th>Asset</th><th>Setup</th><th>Structure score</th><th>Flow score</th><th>Final score</th><th>Status</th><th>Passed conditions</th><th>Missing conditions</th><th>Current value / target value</th><th>Action</th></tr>
         </thead>
         <tbody>
           {rows.map((signal) => (
             <tr key={`${signal.asset}-${signal.kind}`}>
               <td><strong>{signal.asset}</strong></td>
               <td>{signal.kind}</td>
-              <td>{signal.score === null ? "No score" : `${signal.score}%`}</td>
+              <td>{signal.structureScore === null ? "Structure unavailable" : `${signal.structureScore}%`}</td>
+              <td>{signal.flowScore === null ? `unavailable${signal.flowMissing.length ? `: ${signal.flowMissing.join(", ")}` : ""}` : `${signal.flowScore}%`}</td>
+              <td>{signal.finalScore === null ? "not evaluable" : `${signal.finalScore}%`}</td>
               <td>{signal.status}</td>
               <td>{signal.passed.length ? signal.passed.join(" | ") : "No condition passed yet"}</td>
               <td>{signal.missing.length ? signal.missing.join(" | ") : "No missing condition"}</td>
               <td>{signal.details.join(" | ")}</td>
-              <td><button className="table-action" disabled={signal.score === null} onClick={() => onAlert(signal)}>{signal.score === null ? "Not evaluable" : "Create alert"}</button></td>
+              <td><button className="table-action" disabled={signal.finalScore === null} onClick={() => onAlert(signal)}>{signal.finalScore === null ? "Not evaluable" : "Create alert"}</button></td>
             </tr>
           ))}
         </tbody>
@@ -1965,12 +2117,12 @@ function FlowEventsTable({ events, flowState }: { events: FlowEvent[]; flowState
       flowState.status === "reconnecting" ? "Reconnecting to Hyperliquid trade stream" :
       flowState.status === "collecting" ? `Collecting live flow: ${flowState.minutes}m since page open` :
       flowState.status === "stale" ? "Trade stream stale" :
-      flowState.status === "error" ? "Trade stream error" :
+      flowState.status === "error" ? `Flow unavailable: ${flowState.error || "Hyperliquid WebSocket error"}` :
       "Streaming. No events above threshold since page open";
     return (
       <div className="compact-empty">
         {emptyText}.
-        {flowState.hypeError ? <small>{flowState.hypeError}</small> : null}
+        {flowState.status !== "error" && flowState.hypeError ? <small>{flowState.hypeError}</small> : null}
         <small>Large trades: BTC $1M, ETH $500K, HYPE $100K. Flow bursts: BTC $10M, ETH $6M, HYPE $1.5M.</small>
       </div>
     );
@@ -2062,9 +2214,9 @@ function ReadinessCard({ signal }: { signal: SignalReadiness }) {
     <article className={signal.active ? "readiness-card active" : "readiness-card"}>
       <div className="readiness-head">
         <strong>{signal.kind}</strong>
-        <span>{signal.score === null ? "No score" : `${signal.score}%`}</span>
+        <span>{signal.finalScore === null ? `structure ${signal.structureScore ?? "unavailable"}${signal.structureScore === null ? "" : "%"}` : `${signal.finalScore}%`}</span>
       </div>
-      <em>{signal.score === null ? "warming up" : signal.active ? "active" : "inactive"}</em>
+      <em>{signal.status === "not_evaluable_flow_missing" ? "flow unavailable" : signal.finalScore === null ? "not evaluable" : signal.active ? "active" : "inactive"}</em>
       <div className="check-list">
         {signal.passed.map((item) => <span className="passed" key={item}>OK {item}</span>)}
         {signal.missing.map((item) => <span className="missing" key={item}>Missing {item}</span>)}
@@ -2482,7 +2634,7 @@ function FlowStatusCards({
       <article>
         <span>WebSocket status</span>
         <strong>{label}</strong>
-        <small>{flowState.hypeError || (flowState.status === "streaming" && !events.length ? "No events above threshold since page open." : `${flowState.minutes}m since page open`)}</small>
+        <small>{flowState.status === "error" ? `Flow unavailable: ${flowState.error || "Hyperliquid WebSocket error"}` : flowState.hypeError || (flowState.status === "streaming" && !events.length ? "No events above threshold since page open." : `${flowState.minutes}m since page open`)}</small>
       </article>
       <article>
         <span>Events since page open</span>
@@ -3248,6 +3400,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
     wsStatus: wsDebug.status,
     tradeStreamsActive,
     hypeError,
+    error: wsDebug.error || hypeError,
   };
   const state = marketState(signals, metricsByAsset, dataReady, connection);
   const selectedAsset = ASSET_BY_COIN[selected];
@@ -3271,6 +3424,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
     .sort((a, b) => b.time - a.time)
     .slice(0, 60);
   const filteredFlowEvents = filterFlowEvents(flowEvents, flowFilter);
+  const marketWarning = marketAssetWarning(metricsByAsset);
 
   useEffect(() => {
     setCustomDraft(defaultCustomDraft(selectedAsset));
@@ -3291,7 +3445,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   }
 
   function createAlert(signal: SignalReadiness) {
-    if (signal.score === null) return;
+    if (signal.finalScore === null) return;
     const asset = ASSET_BY_COIN[signal.asset];
     const thresholds = presetThresholds(asset, signal.kind);
     const triggerCount = Object.keys(thresholds).length;
@@ -3448,12 +3602,12 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
               <article>
                 <span>Market State</span>
                 <strong>{state}</strong>
-                <small>{marketSentence(best, state)}</small>
+                <small>{marketWarning || marketSentence(best, state)}</small>
               </article>
               <article>
                 <span>Best setup now</span>
                 <strong>{!dataReady ? "Not available yet" : best?.active ? best.asset : "None"}</strong>
-                <small>{!dataReady ? "Waiting for BTC, ETH and HYPE live source data." : best ? `${best.kind} ${best.score === null ? "warming up" : `${best.score}%`}` : "No evaluated setup"}</small>
+                <small>{!dataReady ? "Waiting for BTC, ETH and HYPE live source data." : best ? `${best.kind} ${best.finalScore === null ? `structure ${best.structureScore ?? "unavailable"}${best.structureScore === null ? "" : "%"} / flow unavailable` : `${best.finalScore}%`}` : "No evaluated setup"}</small>
               </article>
               <article>
                 <span>Flow status</span>

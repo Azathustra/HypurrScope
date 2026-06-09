@@ -75,6 +75,12 @@ export default function DebugWsPage() {
   const [hydratedAt, setHydratedAt] = useState<number | null>(null);
   const [reconnectCount, setReconnectCount] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [userAgent, setUserAgent] = useState<string>("waiting");
+  const [browserCanUseWebSocket, setBrowserCanUseWebSocket] = useState<boolean | null>(null);
+  const [attemptedUrl, setAttemptedUrl] = useState<string | null>(null);
+  const [lastSubscriptionSent, setLastSubscriptionSent] = useState<string | null>(null);
+  const [closeCode, setCloseCode] = useState<number | null>(null);
+  const [closeReason, setCloseReason] = useState<string | null>(null);
   const [rows, setRows] = useState<Record<string, DebugRow>>(() => initialRows());
   const [browserLogs, setBrowserLogs] = useState<string[]>([]);
   const [now, setNow] = useState(Date.now());
@@ -97,6 +103,8 @@ export default function DebugWsPage() {
   useEffect(() => {
     const at = Date.now();
     setHydratedAt(at);
+    setUserAgent(navigator.userAgent);
+    setBrowserCanUseWebSocket(typeof WebSocket !== "undefined");
     recordLog("hydrated debug page in browser");
   }, []);
 
@@ -116,6 +124,7 @@ export default function DebugWsPage() {
 
     function subscribe(socket: WebSocket) {
       SUBSCRIPTIONS.forEach((subscription) => {
+        setLastSubscriptionSent(keyFor(subscription));
         socket.send(JSON.stringify({ method: "subscribe", subscription }));
       });
       recordLog(`sent ${SUBSCRIPTIONS.length} subscriptions`);
@@ -140,6 +149,14 @@ export default function DebugWsPage() {
 
     function connect() {
       if (stoppedRef.current) return;
+      setAttemptedUrl(WS_URL);
+      if (typeof WebSocket === "undefined") {
+        const message = "Browser WebSocket API is unavailable";
+        setStatus("error");
+        setLastError(message);
+        recordLog(message);
+        return;
+      }
       setStatus(attemptsRef.current > 0 ? "reconnecting" : "connecting");
       recordLog(`opening ${WS_URL}`);
       const socket = new WebSocket(WS_URL);
@@ -205,11 +222,17 @@ export default function DebugWsPage() {
 
       socket.onerror = () => {
         setStatus("error");
-        setLastError("Hyperliquid WebSocket error");
-        recordLog("browser websocket error event");
+        const message = `Browser WebSocket error event while connecting to ${WS_URL}`;
+        setLastError(message);
+        recordLog(message);
       };
 
-      socket.onclose = () => scheduleReconnect();
+      socket.onclose = (event) => {
+        setCloseCode(event.code);
+        setCloseReason(event.reason || "");
+        recordLog(`websocket closed code=${event.code} reason=${event.reason || "-"}`);
+        scheduleReconnect();
+      };
     }
 
     connect();
@@ -247,18 +270,30 @@ export default function DebugWsPage() {
     hypeActiveAssetCtxLastTimestamp: stamp(rows[keyFor({ type: "activeAssetCtx", coin: "HYPE" })]?.lastMessageAt ?? null),
     reconnectCount,
     lastError,
+    userAgent,
+    browserCanUseWebSocket,
+    attemptedUrl,
+    lastSubscriptionSent,
+    closeCode,
+    closeReason,
   };
 
   return (
     <main style={{ minHeight: "100vh", margin: 0, padding: 24, background: "#050807", color: "#d7fbe9", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }}>
       <h1 style={{ margin: "0 0 12px", fontSize: 18 }}>HypurrScope WebSocket debug</h1>
       <section style={{ border: "1px solid #244338", padding: 16, marginBottom: 18 }}>
-        <p><strong>websocket status:</strong> {status}</p>
-        <p><strong>hydrated at:</strong> {stamp(hydratedAt) || "waiting"}</p>
-        <p><strong>connection started at:</strong> {stamp(startedAt) || "waiting"}</p>
-        <p><strong>last message timestamp:</strong> {stamp(lastMessageAt) || "waiting"}</p>
-        <p><strong>reconnect count:</strong> {reconnectCount}</p>
-        <p><strong>last error:</strong> {lastError || "-"}</p>
+        <p><strong>hydratedAt:</strong> {stamp(hydratedAt) || "waiting"}</p>
+        <p><strong>websocketStatus:</strong> {status}</p>
+        <p><strong>connectionStartedAt:</strong> {stamp(startedAt) || "waiting"}</p>
+        <p><strong>lastMessageTimestamp:</strong> {stamp(lastMessageAt) || "waiting"}</p>
+        <p><strong>reconnectCount:</strong> {reconnectCount}</p>
+        <p><strong>lastError:</strong> {lastError || "-"}</p>
+        <p><strong>userAgent:</strong> {userAgent}</p>
+        <p><strong>browserCanUseWebSocket:</strong> {browserCanUseWebSocket === null ? "waiting" : String(browserCanUseWebSocket)}</p>
+        <p><strong>attemptedUrl:</strong> {attemptedUrl || "-"}</p>
+        <p><strong>lastSubscriptionSent:</strong> {lastSubscriptionSent || "-"}</p>
+        <p><strong>closeCode:</strong> {closeCode ?? "-"}</p>
+        <p><strong>closeReason:</strong> {closeReason || "-"}</p>
       </section>
       <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 18, fontSize: 12 }}>
         <thead>
