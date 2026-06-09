@@ -617,7 +617,7 @@ function formatFunding(value: number | null) {
 }
 
 function formatSourceTimestamp(state: AssetState) {
-  if (!state.sourceUpdatedAtIso) return "updatedAt missing";
+  if (!state.sourceUpdatedAtIso) return "/api/hl/markets updatedAt missing";
   return state.sourceUpdatedAtIso;
 }
 
@@ -627,9 +627,9 @@ function assetDataStatus(state: AssetState, now = Date.now()): AssetDataStatus {
   return now - state.sourceUpdatedAt > 30_000 ? "stale" : "ready";
 }
 
-function unavailableLabel(label: string, fields: string[], state: AssetState) {
+function unavailableLabel(label: string, fields: string[], state: AssetState, endpoint: string) {
   const missing = fields.find((field) => state.missingFields.includes(field)) || fields[0];
-  return `${label} unavailable: ${missing} missing`;
+  return `${label} unavailable: ${endpoint} ${missing} missing`;
 }
 
 function formatMarketValue(
@@ -640,28 +640,28 @@ function formatMarketValue(
   state: AssetState,
 ) {
   if (Number.isFinite(value as number)) return formatter(value);
-  if (state.sourceUpdatedAt) return unavailableLabel(label, fields, state);
+  if (state.sourceUpdatedAt) return unavailableLabel(label, fields, state, "/api/hl/markets");
   return "Loading";
 }
 
 function formatCandleChange(value: number | null, label: "15m" | "1h", state: AssetState) {
   if (Number.isFinite(value as number)) return formatPct(value, 2);
   if (state.candleError) return state.candleError;
-  if (state.candles.length) return `${label} unavailable: candle close missing`;
+  if (state.candles.length) return `${label} unavailable: /api/hl/candles candle close missing`;
   return "Loading";
 }
 
 function formatSpread(value: number | null, state: AssetState) {
   if (Number.isFinite(value as number)) return `${(value as number).toFixed(2)} bps`;
   if (state.bookError) return state.bookError;
-  if (state.book) return "spread unavailable: spreadBps missing";
+  if (state.book) return "spread unavailable: /api/hl/book spreadBps missing";
   return "Loading";
 }
 
 function formatDepth10(value: number | null, state: AssetState) {
   if (Number.isFinite(value as number)) return formatUsd(value);
   if (state.bookError) return state.bookError;
-  if (state.book) return "depth unavailable: depth10bpsUsd missing";
+  if (state.book) return "depth unavailable: /api/hl/book depth10bpsUsd missing";
   return "Loading";
 }
 
@@ -2161,8 +2161,8 @@ function CustomAlertBuilder({
       <NumberField label="Price 15m threshold" value={draft.price15mPct} suffix="%" onChange={(value) => onChange({ ...draft, price15mPct: value })} />
       <NumberField label="OI 15m threshold" value={draft.oi15mPct} suffix="%" onChange={(value) => onChange({ ...draft, oi15mPct: value })} />
       <NumberField label="OI 4h threshold" value={draft.oi4hPct} suffix="%" onChange={(value) => onChange({ ...draft, oi4hPct: value })} />
-      <NumberField label="Funding greater than" value={draft.fundingGreaterPct} suffix="%" onChange={(value) => onChange({ ...draft, fundingGreaterPct: value })} />
-      <NumberField label="Funding lower than" value={draft.fundingLowerPct} suffix="%" onChange={(value) => onChange({ ...draft, fundingLowerPct: value })} />
+      <NumberField label="Funding above" value={draft.fundingGreaterPct} suffix="%" onChange={(value) => onChange({ ...draft, fundingGreaterPct: value })} />
+      <NumberField label="Funding below" value={draft.fundingLowerPct} suffix="%" onChange={(value) => onChange({ ...draft, fundingLowerPct: value })} />
       <NumberField label="Taker buy ratio" value={draft.takerBuyRatioPct} suffix="%" onChange={(value) => onChange({ ...draft, takerBuyRatioPct: value })} />
       <NumberField label="Taker sell ratio" value={draft.takerSellRatioPct} suffix="%" onChange={(value) => onChange({ ...draft, takerSellRatioPct: value })} />
       <NumberField label="Net buy flow 5m" value={draft.netBuyFlow5mUsd} prefix="$" onChange={(value) => onChange({ ...draft, netBuyFlow5mUsd: value })} />
@@ -2560,6 +2560,15 @@ export default function Page() {
 
   useEffect(() => {
     setQaEnabled(typeof window !== "undefined" && new URLSearchParams(window.location.search).get("qa") === "1");
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const path = window.location.pathname;
+    if (path === "/watchlist") setView("watchlist");
+    if (path === "/alerts") setView("alerts");
+    if (path === "/wallet-scanner") setView("wallet");
+    if (path === "/recent-flow") setView("flow");
   }, []);
 
   useEffect(() => {
