@@ -1,6 +1,7 @@
 import fs from "node:fs";
 
 const page = `${fs.readFileSync("app/page.tsx", "utf8")}\n${fs.readFileSync("app/hypurrscope-client.tsx", "utf8")}`;
+const oiHistoryRoute = fs.readFileSync("app/api/hl/oi-history/route.ts", "utf8");
 
 const required = [
   ["BTC flow", page.includes("flow5mUsd: 10_000_000")],
@@ -12,6 +13,8 @@ const required = [
   ["Context history route", page.includes("/api/hyperliquid/context-history")],
   ["Alerts backend route exists", fs.existsSync("app/api/alerts/route.ts")],
   ["Flow events backend route exists", fs.existsSync("app/api/flow-events/route.ts")],
+  ["OI cadence top-level fields", ["cadenceStatus", "lastSnapshotAgeSeconds", "averageSnapshotIntervalSecondsLast60m", "averageSnapshotIntervalSecondsLast4h", "expectedSnapshotCountLast60m", "actualSnapshotCountLast60m", "missingSnapshotIntervalsLast60m", "missingSnapshotIntervalsLast4h"].every((field) => oiHistoryRoute.includes(field))],
+  ["OI recent historical gap status", oiHistoryRoute.includes("healthy_recent_with_historical_gap")],
 ];
 
 const failed = required.filter(([, ok]) => !ok);

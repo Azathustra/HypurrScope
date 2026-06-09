@@ -41,9 +41,19 @@ test("production REST data endpoints return usable BTC ETH HYPE data", async ({ 
 
     const oi = await apiOk(page, `/api/hl/oi-history?asset=${asset}`);
     expect(oi.availableHistoryMinutes, `${asset} availableHistoryMinutes`).not.toBeUndefined();
-    expect(oi.health, `${asset} OI health`).toBeDefined();
-    expect(oi.health.cadenceStatus, `${asset} OI cadenceStatus`).toBeTruthy();
-    expect(oi.health.lastSnapshotAgeSeconds, `${asset} OI lastSnapshotAgeSeconds`).not.toBeUndefined();
+    for (const field of [
+      "cadenceStatus",
+      "lastSnapshotAgeSeconds",
+      "averageSnapshotIntervalSecondsLast60m",
+      "averageSnapshotIntervalSecondsLast4h",
+      "expectedSnapshotCountLast60m",
+      "actualSnapshotCountLast60m",
+      "missingSnapshotIntervalsLast60m",
+      "missingSnapshotIntervalsLast4h",
+    ]) {
+      expect(oi[field], `${asset} OI ${field}`).not.toBeUndefined();
+    }
+    expect(["healthy", "healthy_recent_with_historical_gap", "degraded"]).toContain(oi.cadenceStatus);
   }
 });
 
@@ -133,17 +143,24 @@ test("watchlist direct route shows exactly BTC ETH HYPE", async ({ page }) => {
   const table = page.locator(".radar-panel").filter({ hasText: "BTC / ETH / HYPE market board" });
   await expect(table.locator("tbody tr")).toHaveCount(3);
   for (const asset of ASSETS) await expect(table.locator("tbody tr").filter({ hasText: asset })).toHaveCount(1);
+  for (const header of ["Price", "15m", "1h", "OI 15m", "OI 1h", "OI 4h", "Hourly funding", "Spread", "Depth +/-10bps"]) {
+    await expect(table.locator("thead")).toContainText(header);
+  }
 });
 
-test("alerts direct route has tabs, asset selector, HYPE presets and duplicate blocking", async ({ page }) => {
+test("alerts direct route has tabs, asset presets and duplicate blocking", async ({ page }) => {
   await page.goto("/alerts");
   await expect(page.getByRole("heading", { name: "Alerts" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Presets" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Create your own" })).toBeVisible();
   await expect(page.getByRole("button", { name: "My alerts" })).toBeVisible();
 
-  await page.getByRole("button", { name: "HYPE" }).click();
-  for (const preset of PRESETS) await expect(page.locator(".radar-panel").filter({ hasText: preset })).toBeVisible();
+  for (const asset of ASSETS) {
+    await page.getByRole("button", { name: asset }).click();
+    for (const preset of PRESETS) {
+      await expect(page.getByText(`${asset} ${preset}`)).toBeVisible();
+    }
+  }
 
   const createButtons = page.getByRole("button", { name: "Create preset alert" });
   await createButtons.first().click();
@@ -177,6 +194,7 @@ test("custom alert builder includes all required controls", async ({ page }) => 
 test("wallet scanner rejects invalid addresses and never asks for private credentials", async ({ page }) => {
   await page.goto("/wallet-scanner");
   await expect(page.getByRole("heading", { name: "Wallet Scanner" })).toBeVisible();
+  await expect(page.getByText(/private key|seed phrase|signature|wallet connect/i)).toHaveCount(0);
   await expect(page.getByPlaceholder(/private key/i)).toHaveCount(0);
   await expect(page.getByRole("button", { name: /connect wallet|sign|signature/i })).toHaveCount(0);
   await page.getByPlaceholder("0x...").fill("not-a-wallet");

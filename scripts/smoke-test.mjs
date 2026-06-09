@@ -10,8 +10,9 @@ const checks = [
   ["HYPE support", page.includes('"HYPE"')],
   ["Watchlist page", page.includes("Watchlist")],
   ["Alerts tabs", page.includes("Presets") && page.includes("Create your own") && page.includes("My alerts")],
-  ["Wallet scanner read-only", page.includes("Read-only") && page.includes("no wallet connect")],
+  ["Wallet scanner read-only", page.includes("Read-only") && page.includes("public address only")],
   ["SEO title", layout.includes("BTC ETH HYPE Hyperliquid Risk Radar")],
+  ["SEO description", layout.includes("Track BTC, ETH and HYPE perps on Hyperliquid with live price, open interest, funding, liquidity, flow events, closest setups and alerts.")],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);
