@@ -296,3 +296,20 @@ test("debug websocket page exposes subscriptions and timestamps", async ({ page 
     expect(parsed[field], field).toBeTruthy();
   }
 });
+
+test("server websocket smoke endpoint proves Hyperliquid streaming", async ({ page }) => {
+  const response = await page.request.get("/api/hl/ws-smoke?seconds=10", { timeout: 15_000 });
+  expect(response.ok(), "ws-smoke HTTP status").toBeTruthy();
+  const payload = await response.json();
+  expect(payload.ok, "ws-smoke ok").toBe(true);
+  expect(payload.attemptedUrl).toBe("wss://api.hyperliquid.xyz/ws");
+  expect(payload.connected).toBe(true);
+  expect(payload.rawMessagesCount).toBeGreaterThan(0);
+  expect(payload.subscriptionAcksCount).toBeGreaterThan(0);
+  for (const asset of ASSETS) {
+    expect(
+      payload.perAssetLastTimestamps[asset].trades || payload.perAssetLastTimestamps[asset].l2Book,
+      `${asset} trades or l2Book timestamp`,
+    ).toBeTruthy();
+  }
+});
