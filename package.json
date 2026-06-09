@@ -17,8 +17,7 @@
     "next": "14.2.35",
     "pg": "8.13.1",
     "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "ws": "8.18.0"
+    "react-dom": "18.3.1"
   },
   "devDependencies": {
     "@types/node": "20.17.57",
@@ -26,7 +25,6 @@
     "@playwright/test": "1.53.0",
     "@types/react": "18.3.23",
     "@types/react-dom": "18.3.7",
-    "@types/ws": "8.5.13",
     "autoprefixer": "10.4.21",
     "eslint": "8.57.1",
     "eslint-config-next": "14.2.35",

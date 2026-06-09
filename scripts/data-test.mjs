@@ -20,8 +20,8 @@ const required = [
   ["Debug WS browser fields", ["hydratedAt", "browserCanUseWebSocket", "attemptedUrl", "rawMessagesCount", "subscriptionAcksCount", "lastRawMessagePreview"].every((field) => debugWs.includes(field))],
   ["Debug WS correct subscriptions", debugWs.includes('type: "allMids"') && debugWs.includes('type: "trades"') && debugWs.includes('type: "l2Book"') && debugWs.includes('type: "candle"') && debugWs.includes('type: "activeAssetCtx"')],
   ["WS smoke route exists", fs.existsSync("app/api/hl/ws-smoke/route.ts")],
-  ["WS smoke uses server WebSocket", wsSmokeRoute.includes('import WebSocket from "ws"') && wsSmokeRoute.includes("wss://api.hyperliquid.xyz/ws")],
-  ["WS smoke version marker", wsSmokeRoute.includes("ws-smoke-v3-subscription-send-proof-2026-06-09")],
+  ["WS smoke uses native TLS WebSocket", wsSmokeRoute.includes('import tls from "node:tls"') && wsSmokeRoute.includes("makeClientFrame") && wsSmokeRoute.includes('const WS_HOST = "api.hyperliquid.xyz"') && wsSmokeRoute.includes('const WS_PATH = "/ws"')],
+  ["WS smoke version marker", wsSmokeRoute.includes("ws-smoke-v4-native-tls-websocket-2026-06-09")],
   ["WS smoke correct subscriptions", wsSmokeRoute.includes('type: "allMids"') && wsSmokeRoute.includes('type: "trades"') && wsSmokeRoute.includes('type: "l2Book"') && wsSmokeRoute.includes('type: "activeAssetCtx"')],
   ["WS smoke proof fields", ["subscriptionsSent", "subscriptionAcksCount", "rawMessagesCount", "perChannelCounts", "perAssetLastTimestamps", "lastRawMessagePreview"].every((field) => wsSmokeRoute.includes(field))],
 ];
