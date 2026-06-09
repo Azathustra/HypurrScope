@@ -206,7 +206,7 @@ test("recent flow does not remain connecting forever when websocket streams", as
   await page.goto("/recent-flow");
   await expect(page.getByRole("heading", { name: "Recent Flow" })).toBeVisible();
   await expect(page.getByText(/Streaming|Collecting live flow|Reconnecting|Trade stream error|Trade stream stale/i)).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText("Connecting to trade stream")).not.toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Opening Hyperliquid WebSocket")).not.toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Flow metrics debug")).toBeVisible();
   await expect(page.getByText("Trade side mapping debug")).toBeVisible();
   await expect(page.getByText("takerBuyRatio5m")).toBeVisible();
@@ -221,6 +221,9 @@ test("debug websocket page exposes subscriptions and timestamps", async ({ page 
   await expect(page.getByText(/userAgent:/i)).toBeVisible();
   await expect(page.getByText(/attemptedUrl:/i)).toBeVisible();
   await expect(page.getByText(/lastSubscriptionSent:/i)).toBeVisible();
+  await expect(page.getByText(/rawMessagesCount:/i)).toBeVisible();
+  await expect(page.getByText(/subscriptionAcksCount:/i)).toBeVisible();
+  await expect(page.getByText(/lastRawMessagePreview:/i)).toBeVisible();
   await expect(page.getByText(/websocketStatus:\s*streaming/i)).toBeVisible({ timeout: 30_000 });
   const proof = await page.locator("pre").last().textContent();
   const parsed = JSON.parse(proof || "{}");
@@ -230,6 +233,12 @@ test("debug websocket page exposes subscriptions and timestamps", async ({ page 
   expect(parsed.userAgent).toBeTruthy();
   expect(parsed.attemptedUrl).toBe("wss://api.hyperliquid.xyz/ws");
   expect(parsed.lastSubscriptionSent).toBeTruthy();
+  expect(parsed.rawMessagesCount).toBeGreaterThan(0);
+  expect(parsed.subscriptionAcksCount).toBeGreaterThan(0);
+  expect(parsed.lastRawMessagePreview).toBeTruthy();
+  for (const channel of ["candle:BTC:1m", "candle:ETH:1m", "candle:HYPE:1m"]) {
+    expect(parsed.subscribedChannels, channel).toContain(channel);
+  }
   for (const field of [
     "btcTradesLastTimestamp",
     "ethTradesLastTimestamp",
@@ -237,9 +246,6 @@ test("debug websocket page exposes subscriptions and timestamps", async ({ page 
     "btcL2BookLastTimestamp",
     "ethL2BookLastTimestamp",
     "hypeL2BookLastTimestamp",
-    "btcCandleLastTimestamp",
-    "ethCandleLastTimestamp",
-    "hypeCandleLastTimestamp",
     "btcActiveAssetCtxLastTimestamp",
     "ethActiveAssetCtxLastTimestamp",
     "hypeActiveAssetCtxLastTimestamp",
