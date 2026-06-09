@@ -1,8 +1,4 @@
-const config = {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-};
+/// <reference types="next" />
+/// <reference types="next/image-types/global" />
 
-export default config;
+// This file is generated for local and Vercel type checking.
