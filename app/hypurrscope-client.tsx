@@ -292,6 +292,7 @@ type SignalReadiness = {
   missing: string[];
   flowMissing: string[];
   details: string[];
+  flowInputs: string[];
   explanation: string;
 };
 
@@ -1436,6 +1437,17 @@ function finalSignalScore(structureScore: number | null, flowScore: number | nul
   return Math.round(structureScore * 0.6 + flowScore * 0.4);
 }
 
+function flowInputLines(metrics: MetricBundle) {
+  return [
+    `takerBuyRatio5m ${formatPct(metrics.takerBuyRatio5m, 1, "collecting", false)}`,
+    `takerSellRatio5m ${formatPct(metrics.takerSellRatio5m, 1, "collecting", false)}`,
+    `netBuyFlow5m ${formatUsd(metrics.netBuyFlow5m, "collecting")}`,
+    `netSellFlow5m ${formatUsd(metrics.netSellFlow5m, "collecting")}`,
+    `CVD 5m ${formatUsd(metrics.cvd5m, "collecting")}`,
+    `CVD 15m ${formatUsd(metrics.cvd15m, "collecting")}`,
+  ];
+}
+
 function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind): SignalReadiness {
   const passed: string[] = [];
   const missing: string[] = [];
@@ -1526,6 +1538,7 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     missing,
     flowMissing,
     details,
+    flowInputs: flowInputLines(metrics),
     explanation: active ? `${asset.shortName} has an active ${kind.toLowerCase()} setup.` : flowReason || details[0] || "Not evaluated: waiting for price/funding/OI/flow data",
   };
 }
@@ -1534,10 +1547,20 @@ function allSignals(asset: AssetConfig, metrics: MetricBundle) {
   return PRESET_KINDS.map((kind) => buildSignal(asset, metrics, kind));
 }
 
+function rankSignals(signals: SignalReadiness[]) {
+  return [...signals].sort((a, b) => {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    return (b.finalScore ?? b.structureScore ?? -1) - (a.finalScore ?? a.structureScore ?? -1);
+  });
+}
+
 function bestSignal(signals: SignalReadiness[]) {
-  const active = signals.filter((signal) => signal.active).sort((a, b) => (b.finalScore ?? 0) - (a.finalScore ?? 0))[0];
-  if (active) return active;
-  return [...signals].sort((a, b) => (b.finalScore ?? b.structureScore ?? -1) - (a.finalScore ?? a.structureScore ?? -1))[0] || null;
+  return rankSignals(signals)[0] || null;
+}
+
+function summarySignalText(signal: SignalReadiness | null) {
+  if (!signal || signal.finalScore === null) return "None";
+  return `${signal.asset} ${signal.kind} - ${signal.status} - ${signal.finalScore}%`;
 }
 
 function signalBadge(signal: SignalReadiness | null) {
@@ -2108,10 +2131,7 @@ function AssetCard({
 }
 
 function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert: (signal: SignalReadiness) => void }) {
-  const rows = [...signals].sort((a, b) => {
-    if (a.active !== b.active) return a.active ? -1 : 1;
-    return (b.finalScore ?? b.structureScore ?? -1) - (a.finalScore ?? a.structureScore ?? -1);
-  });
+  const rows = rankSignals(signals);
   if (!rows.length) {
     return (
       <div className="compact-empty">
@@ -2124,7 +2144,7 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
     <div className="table-wrap">
       <table>
         <thead>
-          <tr><th>Asset</th><th>Setup</th><th>Structure score</th><th>Flow score</th><th>Final score</th><th>Status</th><th>Passed conditions</th><th>Failed conditions</th><th>Current value / target value</th><th>Action</th></tr>
+          <tr><th>Asset</th><th>Setup</th><th>Structure score</th><th>Flow score</th><th>Final score</th><th>Status</th><th>Flow inputs</th><th>Passed conditions</th><th>Failed conditions</th><th>Current value / target value</th><th>Action</th></tr>
         </thead>
         <tbody>
           {rows.map((signal) => (
@@ -2135,6 +2155,7 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
               <td data-col="flow-score">{signal.flowScore === null ? `unavailable${signal.flowMissing.length ? `: ${signal.flowMissing.join(", ")}` : ""}` : `${signal.flowScore}%`}</td>
               <td data-col="final-score">{signal.finalScore === null ? "not evaluable" : `${signal.finalScore}%`}</td>
               <td data-col="status">{signal.status}</td>
+              <td data-col="flow-inputs">{signal.flowInputs.join(" | ")}</td>
               <td data-col="passed-conditions">{signal.passed.length ? signal.passed.join(" | ") : "No condition passed yet"}</td>
               <td data-col="failed-conditions">{signal.missing.length ? signal.missing.join(" | ") : "No missing condition"}</td>
               <td data-col="current-target">{signal.details.join(" | ")}</td>
@@ -2148,6 +2169,7 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
 }
 
 function FlowEventsTable({ events, flowState }: { events: FlowEvent[]; flowState: FlowDisplayState }) {
+  const explanation = "Recent Flow only shows threshold events. Flow Score uses continuous taker flow, net flow and CVD.";
   if (!events.length) {
     const emptyText =
       flowState.status === "connecting" ? "Opening Hyperliquid WebSocket" :
@@ -2160,33 +2182,37 @@ function FlowEventsTable({ events, flowState }: { events: FlowEvent[]; flowState
       <div className="compact-empty">
         {emptyText}.
         {flowState.status !== "error" && flowState.hypeError ? <small>{flowState.hypeError}</small> : null}
+        <small>{explanation}</small>
         <small>Large trades: BTC $1M, ETH $500K, HYPE $100K. Flow bursts: BTC $10M, ETH $6M, HYPE $1.5M.</small>
       </div>
     );
   }
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Time</th><th>Asset</th><th>Event</th><th>Side</th><th>Notional</th><th>Price</th><th>Context</th><th>Source</th><th>Status</th></tr>
-        </thead>
-        <tbody>
-          {events.map((event) => (
-            <tr key={event.id}>
-              <td>{new Date(event.time).toLocaleTimeString()}</td>
-              <td><strong>{event.asset}</strong></td>
-              <td>{event.eventType}</td>
-              <td className={event.side === "Buy" ? "positive" : event.side === "Sell" ? "negative" : ""}>{event.side}</td>
-              <td>{event.size}</td>
-              <td>{formatUsd(event.price, "-")}</td>
-              <td>{event.context}</td>
-              <td>{event.source}</td>
-              <td>{event.status}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <>
+      <small className="panel-note">{explanation}</small>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Time</th><th>Asset</th><th>Event</th><th>Side</th><th>Notional</th><th>Price</th><th>Context</th><th>Source</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            {events.map((event) => (
+              <tr key={event.id}>
+                <td>{new Date(event.time).toLocaleTimeString()}</td>
+                <td><strong>{event.asset}</strong></td>
+                <td>{event.eventType}</td>
+                <td className={event.side === "Buy" ? "positive" : event.side === "Sell" ? "negative" : ""}>{event.side}</td>
+                <td>{event.size}</td>
+                <td>{formatUsd(event.price, "-")}</td>
+                <td>{event.context}</td>
+                <td>{event.source}</td>
+                <td>{event.status}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -3515,8 +3541,11 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
     return ASSETS.flatMap((asset) => allSignals(asset, metricsByAsset[asset.apiCoin]));
   }, [metricsByAsset]);
 
-  const activeSignals = signals.filter((signal) => signal.active);
-  const best = bestSignal(signals);
+  const rankedSignals = useMemo(() => rankSignals(signals), [signals]);
+  const activeSignals = rankedSignals.filter((signal) => signal.active);
+  const bestActiveSignal = rankedSignals.find((signal) => signal.active) || null;
+  const closestSummarySignal = bestActiveSignal || rankedSignals.find((signal) => signal.status === "near") || null;
+  const best = rankedSignals[0] || null;
   const dataReady = ASSET_ORDER.every((coin) => {
     const assetState = assets[coin];
     return assetState.market.price !== null && assetState.market.fundingPct !== null && assetState.market.oiUsd !== null && assetState.candles.length >= 2 && assetState.book !== null;
@@ -3749,9 +3778,10 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
                 <small>{marketWarning || marketSentence(best, state)}</small>
               </article>
               <article>
-                <span>Best setup now</span>
-                <strong>{!dataReady ? "Not available yet" : best?.active ? best.asset : "None"}</strong>
-                <small>{!dataReady ? "Waiting for BTC, ETH and HYPE live source data." : best ? `${best.kind} ${best.finalScore === null ? `structure ${best.structureScore ?? "unavailable"}${best.structureScore === null ? "" : "%"} / flow collecting` : `${best.finalScore}%`}` : "No evaluated setup"}</small>
+                <span>Best active setup</span>
+                <strong data-testid="best-active-setup">{!dataReady ? "Not available yet" : bestActiveSignal ? `${bestActiveSignal.asset} ${bestActiveSignal.kind}` : "None"}</strong>
+                <small>{!dataReady ? "Waiting for BTC, ETH and HYPE live source data." : bestActiveSignal ? summarySignalText(bestActiveSignal) : "Best active setup: None"}</small>
+                <small data-testid="closest-setup-summary">Closest setup: {!dataReady ? "Waiting for live source data" : summarySignalText(closestSummarySignal)}</small>
               </article>
               <article>
                 <span>Flow status</span>

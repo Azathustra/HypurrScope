@@ -3410,6 +3410,14 @@ td {
   line-height: 1.35;
 }
 
+.panel-note {
+  display: block;
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
 .asset-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 12px 24px 0;
