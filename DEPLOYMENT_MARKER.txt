@@ -1,0 +1,3 @@
+HypurrScope production hardening deployment marker
+Created for forcing a fresh GitHub commit and Vercel deployment.
+Timestamp: 2026-06-09T22:40:00+02:00
