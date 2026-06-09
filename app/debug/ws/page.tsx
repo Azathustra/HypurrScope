@@ -72,18 +72,32 @@ export default function DebugWsPage() {
   const [status, setStatus] = useState<WsStatus>("connecting");
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [lastMessageAt, setLastMessageAt] = useState<number | null>(null);
+  const [hydratedAt, setHydratedAt] = useState<number | null>(null);
   const [reconnectCount, setReconnectCount] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
   const [rows, setRows] = useState<Record<string, DebugRow>>(() => initialRows());
+  const [browserLogs, setBrowserLogs] = useState<string[]>([]);
   const [now, setNow] = useState(Date.now());
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<number | null>(null);
   const attemptsRef = useRef(0);
   const stoppedRef = useRef(false);
 
+  function recordLog(message: string) {
+    const line = `${new Date().toISOString()} ${message}`;
+    console.info(`[HypurrScope debug/ws] ${message}`);
+    setBrowserLogs((current) => [line].concat(current).slice(0, 40));
+  }
+
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const at = Date.now();
+    setHydratedAt(at);
+    recordLog("hydrated debug page in browser");
   }, []);
 
   useEffect(() => {
@@ -93,6 +107,7 @@ export default function DebugWsPage() {
       if (stoppedRef.current) return;
       setStatus("reconnecting");
       setLastError("WebSocket disconnected; reconnecting");
+      recordLog("websocket closed; reconnecting");
       setReconnectCount((value) => value + 1);
       const delay = Math.min(15_000, 1_000 * Math.max(1, 2 ** Math.min(attemptsRef.current, 4)));
       attemptsRef.current += 1;
@@ -103,10 +118,12 @@ export default function DebugWsPage() {
       SUBSCRIPTIONS.forEach((subscription) => {
         socket.send(JSON.stringify({ method: "subscribe", subscription }));
       });
+      recordLog(`sent ${SUBSCRIPTIONS.length} subscriptions`);
     }
 
     function markAck(subscription: WsSubscription, at: number) {
       const key = keyFor(subscription);
+      recordLog(`subscription acknowledged ${key}`);
       setRows((current) => ({
         ...current,
         [key]: { ...(current[key] || { key, channel: subscription.type, asset: subscription.coin || "all", lastMessageAt: null }), acknowledgedAt: at, error: null },
@@ -124,6 +141,7 @@ export default function DebugWsPage() {
     function connect() {
       if (stoppedRef.current) return;
       setStatus(attemptsRef.current > 0 ? "reconnecting" : "connecting");
+      recordLog(`opening ${WS_URL}`);
       const socket = new WebSocket(WS_URL);
       socketRef.current = socket;
 
@@ -133,6 +151,7 @@ export default function DebugWsPage() {
         setStartedAt((value) => value || at);
         setStatus("connected");
         setLastError(null);
+        recordLog("websocket connected");
         subscribe(socket);
       };
 
@@ -152,7 +171,9 @@ export default function DebugWsPage() {
 
           if (channel === "error" || message.error) {
             setStatus("error");
-            setLastError(String(message.error || data?.error || "Hyperliquid WebSocket error"));
+            const messageText = String(message.error || data?.error || "Hyperliquid WebSocket error");
+            setLastError(messageText);
+            recordLog(`websocket error message: ${messageText}`);
             return;
           }
 
@@ -176,13 +197,16 @@ export default function DebugWsPage() {
           setStatus("streaming");
         } catch (error) {
           setStatus("error");
-          setLastError(error instanceof Error ? error.message : String(error));
+          const messageText = error instanceof Error ? error.message : String(error);
+          setLastError(messageText);
+          recordLog(`websocket parse error: ${messageText}`);
         }
       };
 
       socket.onerror = () => {
         setStatus("error");
         setLastError("Hyperliquid WebSocket error");
+        recordLog("browser websocket error event");
       };
 
       socket.onclose = () => scheduleReconnect();
@@ -207,6 +231,7 @@ export default function DebugWsPage() {
 
   const rowsList = useMemo(() => Object.values(rows), [rows]);
   const proof = {
+    hydratedAt: stamp(hydratedAt),
     websocketStatus: status,
     connectionStartedAt: stamp(startedAt),
     lastMessageTimestamp: stamp(lastMessageAt),
@@ -229,6 +254,7 @@ export default function DebugWsPage() {
       <h1 style={{ margin: "0 0 12px", fontSize: 18 }}>HypurrScope WebSocket debug</h1>
       <section style={{ border: "1px solid #244338", padding: 16, marginBottom: 18 }}>
         <p><strong>websocket status:</strong> {status}</p>
+        <p><strong>hydrated at:</strong> {stamp(hydratedAt) || "waiting"}</p>
         <p><strong>connection started at:</strong> {stamp(startedAt) || "waiting"}</p>
         <p><strong>last message timestamp:</strong> {stamp(lastMessageAt) || "waiting"}</p>
         <p><strong>reconnect count:</strong> {reconnectCount}</p>
@@ -251,6 +277,8 @@ export default function DebugWsPage() {
           ))}
         </tbody>
       </table>
+      <h2 style={{ margin: "0 0 12px", fontSize: 15 }}>Browser console logs</h2>
+      <pre style={{ marginBottom: 18, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.5 }}>{browserLogs.length ? browserLogs.join("\n") : "waiting for browser hydration"}</pre>
       <h2 style={{ margin: "0 0 12px", fontSize: 15 }}>Machine-readable proof</h2>
       <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.5 }}>{JSON.stringify(proof, null, 2)}</pre>
     </main>

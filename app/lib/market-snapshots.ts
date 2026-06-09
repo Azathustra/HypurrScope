@@ -166,6 +166,21 @@ export async function snapshotCount(asset: SnapshotAsset) {
   return Number(result.rows[0]?.count || 0);
 }
 
+export async function snapshotTimeline(asset: SnapshotAsset) {
+  await ensureMarketSnapshotsTable();
+  const result = await getSnapshotPool().query<{ ts: string }>(
+    `
+      select ts
+      from market_snapshots
+      where asset = $1
+        and open_interest_usd_computed is not null
+      order by ts asc
+    `,
+    [asset],
+  );
+  return result.rows.map((row) => new Date(row.ts).toISOString());
+}
+
 export function numeric(value: unknown) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);

@@ -272,6 +272,7 @@ type SignalReadiness = {
   active: boolean;
   passed: string[];
   missing: string[];
+  details: string[];
   explanation: string;
 };
 
@@ -1201,10 +1202,35 @@ function componentScore(value: number, threshold: number, inverse = false) {
   return clamp(ratio * 100, 0, 100);
 }
 
-function condition(ok: boolean | null, passLabel: string, missingLabel: string, passed: string[], missing: string[]) {
-  if (ok === true) passed.push(passLabel);
-  else if (ok === null) missing.push(`Not evaluated: waiting for ${missingLabel}`);
-  else missing.push(missingLabel);
+function condition(
+  ok: boolean | null,
+  label: string,
+  currentValue: string,
+  targetValue: string,
+  unavailableReason: string,
+  passed: string[],
+  missing: string[],
+  details: string[],
+) {
+  if (ok === true) {
+    const line = `${label}: ${currentValue} / target ${targetValue} PASS`;
+    passed.push(line);
+    details.push(line);
+    return;
+  }
+  if (ok === false) {
+    const line = `${label}: ${currentValue} / target ${targetValue} FAIL`;
+    missing.push(line);
+    details.push(line);
+    return;
+  }
+  const line = `${label}: unavailable because ${unavailableReason}`;
+  missing.push(line);
+  details.push(line);
+}
+
+function metricOrUnavailable(value: number | null, formatter: (value: number | null) => string) {
+  return value === null ? "unavailable" : formatter(value);
 }
 
 function signalStatus(score: number | null, active: boolean, missing: string[]): SignalStatus {
@@ -1219,6 +1245,7 @@ function signalStatus(score: number | null, active: boolean, missing: string[]):
 function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind): SignalReadiness {
   const passed: string[] = [];
   const missing: string[] = [];
+  const details: string[] = [];
   const t = asset.thresholds;
   const funding = metrics.fundingAbsExtreme;
   const liquidity = metrics.liquidityHealthy;
@@ -1230,12 +1257,12 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     const ratioOk = metrics.buyRatio5m === null ? null : metrics.buyRatio5m > 60;
     const flowOk = metrics.netFlow5m === null ? null : metrics.netFlow5m >= t.flow5mUsd;
     const fundingOk = funding === null ? null : !funding;
-    condition(priceOk, "15m price confirms up", `price 15m > ${formatPct(t.price15mPct, 2, "", false)}`, passed, missing);
-    condition(oiOk, "OI 15m expanding", `OI 15m >= ${formatPct(t.oi15mPct, 2, "", false)}`, passed, missing);
-    condition(ratioOk, "buyers dominate tape", "taker buy ratio > 60%", passed, missing);
-    condition(flowOk, "aggressive buy flow threshold met", `net buy flow 5m >= ${formatUsd(t.flow5mUsd)}`, passed, missing);
-    condition(liquidity, "liquidity healthy", "liquidity must be healthy", passed, missing);
-    condition(fundingOk, "funding not extreme", "funding already extreme", passed, missing);
+    condition(priceOk, "Price 15m", metricOrUnavailable(metrics.price15m, (value) => formatPct(value, 2)), `> ${formatPct(t.price15mPct, 2, "", false)}`, "/api/hl/candles priceChange15mPct missing", passed, missing, details);
+    condition(oiOk, "OI 15m", metricOrUnavailable(metrics.oi15m, (value) => formatPct(value, 2)), `>= ${formatPct(t.oi15mPct, 2, "", false)}`, "backend OI history has not reached 15 minutes", passed, missing, details);
+    condition(ratioOk, "Taker buy ratio", metricOrUnavailable(metrics.buyRatio5m, (value) => formatPct(value, 1, "unavailable", false)), "> 60.0%", "WebSocket trades not streaming", passed, missing, details);
+    condition(flowOk, "Net buy flow 5m", metricOrUnavailable(metrics.netFlow5m, formatUsd), `>= ${formatUsd(t.flow5mUsd)}`, "WebSocket trades not streaming", passed, missing, details);
+    condition(liquidity, "Liquidity", metrics.spreadBps === null || metrics.depth10Bps === null ? "unavailable" : `spread ${metrics.spreadBps.toFixed(2)} bps / depth ${formatUsd(metrics.depth10Bps)}`, `spread <= 4 bps and depth >= ${formatUsd(t.minDepthUsd)}`, "/api/hl/book spreadBps or depth10bpsUsd missing", passed, missing, details);
+    condition(fundingOk, "Funding", metricOrUnavailable(metrics.fundingPct, formatFunding), `abs < ${formatFunding(t.fundingPct * 2)}`, "/api/hl/markets fundingRaw missing", passed, missing, details);
     if ([metrics.price15m, metrics.oi15m, metrics.buyRatio5m, metrics.netFlow5m].every((value) => value !== null) && liquidity !== null && funding !== null) {
       rawScores = [
         componentScore(Math.max(0, metrics.price15m as number), t.price15mPct) ?? 0,
@@ -1254,12 +1281,12 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     const ratioOk = metrics.sellRatio5m === null ? null : metrics.sellRatio5m > 60;
     const flowOk = metrics.netFlow5m === null ? null : metrics.netFlow5m <= -t.flow5mUsd;
     const fundingOk = funding === null ? null : !funding;
-    condition(priceOk, "15m price confirms down", `price 15m < -${formatPct(t.price15mPct, 2, "", false)}`, passed, missing);
-    condition(oiOk, "OI 15m expanding", `OI 15m >= ${formatPct(t.oi15mPct, 2, "", false)}`, passed, missing);
-    condition(ratioOk, "sellers dominate tape", "taker sell ratio > 60%", passed, missing);
-    condition(flowOk, "aggressive sell flow threshold met", `net sell flow 5m >= ${formatUsd(t.flow5mUsd)}`, passed, missing);
-    condition(liquidity, "liquidity healthy", "liquidity must be healthy", passed, missing);
-    condition(fundingOk, "funding not extreme", "funding already extreme", passed, missing);
+    condition(priceOk, "Price 15m", metricOrUnavailable(metrics.price15m, (value) => formatPct(value, 2)), `< -${formatPct(t.price15mPct, 2, "", false)}`, "/api/hl/candles priceChange15mPct missing", passed, missing, details);
+    condition(oiOk, "OI 15m", metricOrUnavailable(metrics.oi15m, (value) => formatPct(value, 2)), `>= ${formatPct(t.oi15mPct, 2, "", false)}`, "backend OI history has not reached 15 minutes", passed, missing, details);
+    condition(ratioOk, "Taker sell ratio", metricOrUnavailable(metrics.sellRatio5m, (value) => formatPct(value, 1, "unavailable", false)), "> 60.0%", "WebSocket trades not streaming", passed, missing, details);
+    condition(flowOk, "Net sell flow 5m", metricOrUnavailable(metrics.netFlow5m, formatUsd), `<= -${formatUsd(t.flow5mUsd)}`, "WebSocket trades not streaming", passed, missing, details);
+    condition(liquidity, "Liquidity", metrics.spreadBps === null || metrics.depth10Bps === null ? "unavailable" : `spread ${metrics.spreadBps.toFixed(2)} bps / depth ${formatUsd(metrics.depth10Bps)}`, `spread <= 4 bps and depth >= ${formatUsd(t.minDepthUsd)}`, "/api/hl/book spreadBps or depth10bpsUsd missing", passed, missing, details);
+    condition(fundingOk, "Funding", metricOrUnavailable(metrics.fundingPct, formatFunding), `abs < ${formatFunding(t.fundingPct * 2)}`, "/api/hl/markets fundingRaw missing", passed, missing, details);
     if ([metrics.price15m, metrics.oi15m, metrics.sellRatio5m, metrics.netFlow5m].every((value) => value !== null) && liquidity !== null && funding !== null) {
       rawScores = [
         componentScore(Math.abs(metrics.price15m as number), t.price15mPct) ?? 0,
@@ -1277,10 +1304,10 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     const oiOk = metrics.oi4h === null ? null : metrics.oi4h >= t.oi4hPct;
     const priceOk = metrics.price15m === null ? null : metrics.price15m <= t.price15mPct * 0.35;
     const positioningOk = metrics.buyRatio5m === null ? null : metrics.buyRatio5m >= 55 || (metrics.netFlow15m ?? 0) > 0;
-    condition(fundingOk, "positive funding is stretched", `funding > ${formatFunding(t.fundingPct)}`, passed, missing);
-    condition(oiOk, "OI 4h elevated", `OI 4h >= ${formatPct(t.oi4hPct, 2, "", false)}`, passed, missing);
-    condition(priceOk, "price momentum stalled", "price must stall or fade", passed, missing);
-    condition(positioningOk, "long-side pressure visible", "long-side positioning not crowded yet", passed, missing);
+    condition(fundingOk, "Hourly funding", metricOrUnavailable(metrics.fundingPct, formatFunding), `> ${formatFunding(t.fundingPct)}`, "/api/hl/markets fundingRaw missing", passed, missing, details);
+    condition(oiOk, "OI 4h", metricOrUnavailable(metrics.oi4h, (value) => formatPct(value, 2)), `>= ${formatPct(t.oi4hPct, 2, "", false)}`, "backend OI history has not reached 240 minutes", passed, missing, details);
+    condition(priceOk, "Price momentum", metricOrUnavailable(metrics.price15m, (value) => formatPct(value, 2)), `<= ${formatPct(t.price15mPct * 0.35, 2, "", false)}`, "/api/hl/candles priceChange15mPct missing", passed, missing, details);
+    condition(positioningOk, "Long-side taker pressure", metrics.buyRatio5m === null ? "unavailable" : `${formatPct(metrics.buyRatio5m, 1, "unavailable", false)} buy ratio / ${formatUsd(metrics.netFlow15m)}`, "buy ratio >= 55% or net flow 15m > $0", "WebSocket trades not streaming", passed, missing, details);
     if ([metrics.oi4h, metrics.price15m, metrics.buyRatio5m, metrics.netFlow15m].every((value) => value !== null) && metrics.fundingAbsExtreme !== null) {
       rawScores = [
         fundingOk ? 100 : 0,
@@ -1296,10 +1323,10 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     const oiOk = metrics.oi4h === null ? null : metrics.oi4h >= t.oi4hPct;
     const priceOk = metrics.price15m === null ? null : metrics.price15m >= -t.price15mPct * 0.35;
     const positioningOk = metrics.sellRatio5m === null ? null : metrics.sellRatio5m >= 55 || (metrics.netFlow15m ?? 0) < 0;
-    condition(fundingOk, "negative funding is stretched", `funding < -${formatPct(t.fundingPct, 4, "", false)}`, passed, missing);
-    condition(oiOk, "OI 4h elevated", `OI 4h >= ${formatPct(t.oi4hPct, 2, "", false)}`, passed, missing);
-    condition(priceOk, "downside momentum stalled", "price must stall or bounce", passed, missing);
-    condition(positioningOk, "short-side pressure visible", "short-side positioning not crowded yet", passed, missing);
+    condition(fundingOk, "Hourly funding", metricOrUnavailable(metrics.fundingPct, formatFunding), `< -${formatPct(t.fundingPct, 4, "", false)}`, "/api/hl/markets fundingRaw missing", passed, missing, details);
+    condition(oiOk, "OI 4h", metricOrUnavailable(metrics.oi4h, (value) => formatPct(value, 2)), `>= ${formatPct(t.oi4hPct, 2, "", false)}`, "backend OI history has not reached 240 minutes", passed, missing, details);
+    condition(priceOk, "Downside momentum", metricOrUnavailable(metrics.price15m, (value) => formatPct(value, 2)), `>= -${formatPct(t.price15mPct * 0.35, 2, "", false)}`, "/api/hl/candles priceChange15mPct missing", passed, missing, details);
+    condition(positioningOk, "Short-side taker pressure", metrics.sellRatio5m === null ? "unavailable" : `${formatPct(metrics.sellRatio5m, 1, "unavailable", false)} sell ratio / ${formatUsd(metrics.netFlow15m)}`, "sell ratio >= 55% or net flow 15m < $0", "WebSocket trades not streaming", passed, missing, details);
     if ([metrics.oi4h, metrics.price15m, metrics.sellRatio5m, metrics.netFlow15m].every((value) => value !== null) && metrics.fundingAbsExtreme !== null) {
       rawScores = [
         fundingOk ? 100 : 0,
@@ -1321,7 +1348,8 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
     active,
     passed,
     missing,
-    explanation: active ? `${asset.shortName} has an active ${kind.toLowerCase()} setup.` : missing[0] || "Not evaluated: waiting for price/funding/OI/flow data",
+    details,
+    explanation: active ? `${asset.shortName} has an active ${kind.toLowerCase()} setup.` : details[0] || "Not evaluated: waiting for price/funding/OI/flow data",
   };
 }
 
@@ -1909,7 +1937,7 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
     <div className="table-wrap">
       <table>
         <thead>
-          <tr><th>Asset</th><th>Setup</th><th>Score</th><th>Status</th><th>Missing condition</th><th>Action</th></tr>
+          <tr><th>Asset</th><th>Setup</th><th>Score</th><th>Status</th><th>Passed conditions</th><th>Missing conditions</th><th>Current value / target value</th><th>Action</th></tr>
         </thead>
         <tbody>
           {rows.map((signal) => (
@@ -1918,8 +1946,10 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
               <td>{signal.kind}</td>
               <td>{signal.score === null ? "No score" : `${signal.score}%`}</td>
               <td>{signal.status}</td>
-              <td>{signal.active ? "All conditions passed" : signal.missing.slice(0, 2).join(", ") || signal.explanation}</td>
-              <td><button className="table-action" disabled={signal.score === null} onClick={() => onAlert(signal)}>{signal.score === null ? "Needs data" : "Create alert"}</button></td>
+              <td>{signal.passed.length ? signal.passed.join(" | ") : "No condition passed yet"}</td>
+              <td>{signal.missing.length ? signal.missing.join(" | ") : "No missing condition"}</td>
+              <td>{signal.details.join(" | ")}</td>
+              <td><button className="table-action" disabled={signal.score === null} onClick={() => onAlert(signal)}>{signal.score === null ? "Not evaluable" : "Create alert"}</button></td>
             </tr>
           ))}
         </tbody>
