@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-const page = fs.readFileSync("app/page.tsx", "utf8");
+const page = `${fs.readFileSync("app/page.tsx", "utf8")}\n${fs.readFileSync("app/hypurrscope-client.tsx", "utf8")}`;
 
 const required = [
   ["BTC flow", page.includes("flow5mUsd: 10_000_000")],

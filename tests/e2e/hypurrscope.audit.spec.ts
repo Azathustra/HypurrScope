@@ -63,6 +63,37 @@ test("overview loads cards without market loading placeholders when APIs are ok"
   }
 });
 
+test("public homepage HTML does not expose card loading placeholders", async ({ page }) => {
+  const response = await page.request.get("/");
+  expect(response.ok()).toBeTruthy();
+  const html = await response.text();
+  for (const placeholder of [
+    "Price Loading",
+    "Funding Loading",
+    "Open interest Loading",
+    "24h volume Loading",
+    "Spread Loading",
+    "Depth Loading",
+    "updatedAt missing",
+  ]) {
+    expect(html, placeholder).not.toContain(placeholder);
+  }
+});
+
+test("snapshot endpoint inserts rows and OI history exposes snapshot counts", async ({ page }) => {
+  const before = await apiOk(page, "/api/hl/oi-history?asset=BTC");
+  const snapshot = await page.request.post("/api/cron/snapshot");
+  expect(snapshot.ok(), "snapshot HTTP status").toBeTruthy();
+  const snapshotPayload = await snapshot.json();
+  expect(snapshotPayload.ok, "snapshot ok").toBe(true);
+  expect(snapshotPayload.insertedAssets, "snapshot assets").toBeDefined();
+
+  const after = await apiOk(page, "/api/hl/oi-history?asset=BTC");
+  expect(after.snapshotCount, "BTC snapshotCount").toBeGreaterThanOrEqual(before.snapshotCount || 0);
+  expect(after.currentOiUsd, "BTC current OI").not.toBeNull();
+  expect(after.availableHistoryMinutes, "BTC available history").not.toBeUndefined();
+});
+
 test("closest setups include all four presets for BTC ETH HYPE", async ({ page }) => {
   await overview(page);
   const panel = page.locator(".radar-panel").filter({ hasText: "Closest setups" });
@@ -144,8 +175,21 @@ test("recent flow does not remain connecting forever when websocket streams", as
 test("debug websocket page exposes subscriptions and timestamps", async ({ page }) => {
   await page.goto("/debug/ws");
   await expect(page.getByRole("heading", { name: "HypurrScope WebSocket debug" })).toBeVisible();
-  await expect(page.getByText(/websocket status:/i)).toBeVisible();
-  await expect(page.getByText("trades")).toBeVisible();
-  await expect(page.getByText("l2Book")).toBeVisible();
-  await expect(page.getByText("activeAssetCtx")).toBeVisible();
+  await expect(page.getByText(/websocket status:\s*streaming/i)).toBeVisible({ timeout: 30_000 });
+  const proof = await page.locator("pre").last().textContent();
+  const parsed = JSON.parse(proof || "{}");
+  expect(parsed.websocketStatus).toBe("streaming");
+  for (const field of [
+    "btcTradesLastTimestamp",
+    "ethTradesLastTimestamp",
+    "hypeTradesLastTimestamp",
+    "btcL2BookLastTimestamp",
+    "ethL2BookLastTimestamp",
+    "hypeL2BookLastTimestamp",
+    "btcActiveAssetCtxLastTimestamp",
+    "ethActiveAssetCtxLastTimestamp",
+    "hypeActiveAssetCtxLastTimestamp",
+  ]) {
+    expect(parsed[field], field).toBeTruthy();
+  }
 });
