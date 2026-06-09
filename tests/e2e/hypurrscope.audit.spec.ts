@@ -33,6 +33,7 @@ async function waitForLiveFlowMetrics(page: import("@playwright/test").Page) {
     await expect(row.locator('[data-col="taker-sell-ratio-5m"]'), `${asset} takerSellRatio5m`).toContainText(/%/, { timeout: 30_000 });
     await expect(row.locator('[data-col="buy-notional-5m"]'), `${asset} buyNotional5m`).toContainText(/\$/, { timeout: 30_000 });
     await expect(row.locator('[data-col="sell-notional-5m"]'), `${asset} sellNotional5m`).toContainText(/\$/, { timeout: 30_000 });
+    await expect(row.locator('[data-col="net-flow-5m"]'), `${asset} netFlow5m`).toContainText(/\$/, { timeout: 30_000 });
     await expect(row.locator('[data-col="net-buy-flow-5m"]'), `${asset} netBuyFlow5m`).toContainText(/\$/, { timeout: 30_000 });
     await expect(row.locator('[data-col="net-sell-flow-5m"]'), `${asset} netSellFlow5m`).toContainText(/\$/, { timeout: 30_000 });
     await expect(row.locator('[data-col="cvd-5m"]'), `${asset} CVD 5m`).toContainText(/\$/, { timeout: 30_000 });
