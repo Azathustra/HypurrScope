@@ -229,6 +229,14 @@ type OiHistoryResponse = {
     oi4h: number;
   };
   snapshotCount?: number;
+  cadenceStatus?: "healthy" | "healthy_recent_with_historical_gap" | "degraded";
+  lastSnapshotAgeSeconds?: number | null;
+  averageSnapshotIntervalSecondsLast60m?: number | null;
+  averageSnapshotIntervalSecondsLast4h?: number | null;
+  expectedSnapshotCountLast60m?: number;
+  actualSnapshotCountLast60m?: number;
+  missingSnapshotIntervalsLast60m?: number;
+  missingSnapshotIntervalsLast4h?: number;
   status: OiHistoryStatus;
   message?: string;
   error?: string;
@@ -2453,8 +2461,8 @@ function AlertPresetGrid({
           <article className="preset-card" key={kind}>
             <header>
               <div>
-                <span>{asset.shortName} preset</span>
-                <strong>{kind}</strong>
+                <span>Preset alert</span>
+                <strong>{asset.shortName} {kind}</strong>
               </div>
               <em>Template</em>
             </header>
@@ -3849,7 +3857,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
         {view === "wallet" && (
           <>
             <PageHead title="Wallet Scanner" subtitle="Beta read-only scan. Public Hyperliquid address only." />
-            <Panel title="Read-only wallet input" right="no wallet connect">
+            <Panel title="Read-only wallet input" right="public address only">
               <form className="wallet-row" onSubmit={(event) => { event.preventDefault(); scanWallet(); }}>
                 <input value={wallet} onChange={(event) => setWallet(event.target.value)} placeholder="0x..." />
                 <button className="primary-action" disabled={walletLoading}>{walletLoading ? "Scanning..." : "Scan"}</button>
@@ -3857,8 +3865,8 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
               {walletError ? <div className="form-error">{walletError}</div> : null}
               {!walletResult && !walletError ? (
                 <div className="compact-empty">
-                  Paste a public Hyperliquid wallet to scan open positions and liquidation risk.
-                  <small>Read-only scan. Never paste a private key. No wallet signature is requested.</small>
+                  Paste a public Hyperliquid address to scan open positions and liquidation risk.
+                  <small>Read-only scan. Public address lookup only; no approval or secret is requested.</small>
                 </div>
               ) : null}
               {walletResult ? <WalletScanResult result={walletResult} /> : null}
