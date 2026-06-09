@@ -49,7 +49,7 @@ button {
 
 .hs-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: 252px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -87,7 +87,7 @@ button {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: 20px;
+  padding: 18px;
   border-right: 1px solid var(--line);
   background: rgba(8, 10, 10, 0.94);
 }
@@ -128,15 +128,16 @@ button {
 
 .hs-rail nav {
   display: grid;
-  gap: 8px;
-  margin-top: 32px;
+  gap: 7px;
+  margin-top: 28px;
 }
 
 .hs-rail nav button {
   display: grid;
   gap: 4px;
   width: 100%;
-  padding: 12px 14px;
+  min-height: 54px;
+  padding: 10px 12px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
@@ -144,8 +145,15 @@ button {
   text-align: left;
 }
 
+.hs-rail nav button span {
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
 .hs-rail nav button small {
   color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.25;
 }
 
 .hs-rail nav button:hover,
@@ -164,6 +172,21 @@ button {
   color: var(--muted);
   font-size: 0.78rem;
   line-height: 1.45;
+}
+
+.rail-footer .data-pill {
+  width: 100%;
+  justify-content: center;
+  border-radius: 8px;
+}
+
+.rail-section-label {
+  margin: 10px 4px 2px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .status {
@@ -203,8 +226,8 @@ button {
   z-index: 20;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
+  justify-content: flex-end;
+  gap: 12px;
   min-height: 72px;
   padding: 14px 28px;
   border-bottom: 1px solid rgba(40, 48, 44, 0.82);
@@ -213,7 +236,7 @@ button {
 }
 
 .mobile-brand {
-  display: flex;
+  display: none;
   min-width: 210px;
 }
 
@@ -221,12 +244,33 @@ button {
   display: none;
 }
 
+.mobile-tabs button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 820;
+}
+
+.mobile-tabs button:hover,
+.mobile-tabs button.active {
+  border-color: rgba(124, 247, 199, 0.25);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
 .controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   justify-content: flex-end;
-  min-width: 330px;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .top-nav {
@@ -2942,8 +2986,11 @@ td {
     display: flex;
   }
 
-  .top-nav {
+  .mobile-tabs {
+    position: relative;
+    display: flex;
     order: 3;
+    gap: 6px;
     justify-content: flex-start;
     width: 100%;
     overflow-x: auto;

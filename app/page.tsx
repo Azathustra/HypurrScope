@@ -2616,6 +2616,34 @@ export default function Page() {
 
   return (
     <main className={`hs-shell ${theme === "light" ? "theme-light" : ""}`}>
+      <aside className="hs-rail">
+        <div className="brand">
+          <span>HS</span>
+          <div>
+            <strong>HypurrScope</strong>
+            <small>Read-only market intelligence. No wallet permissions.</small>
+          </div>
+        </div>
+        <nav>
+          {PRIMARY_NAV_ITEMS.map((item: { id: View; label: string; description: string }) => (
+            <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => setView(item.id)}>
+              <span>{item.label}</span>
+              <small>{item.description}</small>
+            </button>
+          ))}
+          <div className="rail-section-label">More</div>
+          {MORE_NAV_ITEMS.map((item: { id: View; label: string; description: string }) => (
+            <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => setView(item.id)}>
+              <span>{item.label}</span>
+              <small>{item.description}</small>
+            </button>
+          ))}
+        </nav>
+        <div className="rail-footer">
+          <span className={`data-pill ${dataMode}`}>{dataStatusText}</span>
+          <p>Production mode uses live data only unless demo mode is explicitly enabled.</p>
+        </div>
+      </aside>
       <section className="hs-page">
         <header className="topbar">
           <div className="mobile-brand">
@@ -2625,21 +2653,6 @@ export default function Page() {
               <small>Read-only market intelligence. No wallet permissions.</small>
             </div>
           </div>
-          <nav className="top-nav">
-            {PRIMARY_NAV_ITEMS.map((item: { id: View; label: string; description: string }) => (
-              <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => setView(item.id)}>{item.label}</button>
-            ))}
-            <div className="top-more">
-              <button className={MORE_NAV_ITEMS.some((item) => item.id === view) ? "active" : ""} onClick={() => setMoreOpen((current) => !current)}>More</button>
-              {moreOpen || MORE_NAV_ITEMS.some((item) => item.id === view) ? (
-                <div className="more-nav">
-                  {MORE_NAV_ITEMS.map((item) => (
-                    <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => { setView(item.id); setMoreOpen(false); }}>{item.label}</button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </nav>
           <div className="controls">
             <span className={`data-pill ${dataMode}`}>{dataStatusText}</span>
             <label>
@@ -2669,6 +2682,21 @@ export default function Page() {
             <button className="primary top-alert-btn" onClick={() => setView("alerts")}>Create alert</button>
             <button className="icon-btn" onClick={loadMarketData} aria-label="Refresh">R</button>
           </div>
+          <nav className="mobile-tabs">
+            {PRIMARY_NAV_ITEMS.map((item: { id: View; label: string; description: string }) => (
+              <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => setView(item.id)}>{item.label}</button>
+            ))}
+            <div className="top-more">
+              <button className={MORE_NAV_ITEMS.some((item) => item.id === view) ? "active" : ""} onClick={() => setMoreOpen((current) => !current)}>More</button>
+              {moreOpen || MORE_NAV_ITEMS.some((item) => item.id === view) ? (
+                <div className="more-nav">
+                  {MORE_NAV_ITEMS.map((item) => (
+                    <button className={view === item.id ? "active" : ""} key={item.id} onClick={() => { setView(item.id); setMoreOpen(false); }}>{item.label}</button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </nav>
         </header>
         {dataMode === "demo" ? <div className="data-banner">Demo mode. Live values are not mixed with production data.</div> : null}
         {dataMode === "unavailable" ? <div className="data-banner warning">Data unavailable. HypurrScope is retrying live Hyperliquid endpoints.</div> : null}
