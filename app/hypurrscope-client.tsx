@@ -2128,17 +2128,17 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
         </thead>
         <tbody>
           {rows.map((signal) => (
-            <tr key={`${signal.asset}-${signal.kind}`}>
-              <td><strong>{signal.asset}</strong></td>
-              <td>{signal.kind}</td>
-              <td>{signal.structureScore === null ? "Structure unavailable" : `${signal.structureScore}%`}</td>
-              <td>{signal.flowScore === null ? `unavailable${signal.flowMissing.length ? `: ${signal.flowMissing.join(", ")}` : ""}` : `${signal.flowScore}%`}</td>
-              <td>{signal.finalScore === null ? "not evaluable" : `${signal.finalScore}%`}</td>
-              <td>{signal.status}</td>
-              <td>{signal.passed.length ? signal.passed.join(" | ") : "No condition passed yet"}</td>
-              <td>{signal.missing.length ? signal.missing.join(" | ") : "No missing condition"}</td>
-              <td>{signal.details.join(" | ")}</td>
-              <td><button className="table-action" disabled={signal.finalScore === null} onClick={() => onAlert(signal)}>{signal.finalScore === null ? "Not evaluable" : "Create alert"}</button></td>
+            <tr key={`${signal.asset}-${signal.kind}`} data-testid={`closest-setup-${signal.asset}-${signal.kind.replace(/\s+/g, "-").toLowerCase()}`}>
+              <td data-col="asset"><strong>{signal.asset}</strong></td>
+              <td data-col="setup">{signal.kind}</td>
+              <td data-col="structure-score">{signal.structureScore === null ? "Structure unavailable" : `${signal.structureScore}%`}</td>
+              <td data-col="flow-score">{signal.flowScore === null ? `unavailable${signal.flowMissing.length ? `: ${signal.flowMissing.join(", ")}` : ""}` : `${signal.flowScore}%`}</td>
+              <td data-col="final-score">{signal.finalScore === null ? "not evaluable" : `${signal.finalScore}%`}</td>
+              <td data-col="status">{signal.status}</td>
+              <td data-col="passed-conditions">{signal.passed.length ? signal.passed.join(" | ") : "No condition passed yet"}</td>
+              <td data-col="failed-conditions">{signal.missing.length ? signal.missing.join(" | ") : "No missing condition"}</td>
+              <td data-col="current-target">{signal.details.join(" | ")}</td>
+              <td data-col="action"><button className="table-action" disabled={signal.finalScore === null} onClick={() => onAlert(signal)}>{signal.finalScore === null ? "Not evaluable" : "Create alert"}</button></td>
             </tr>
           ))}
         </tbody>
@@ -2268,17 +2268,17 @@ function FlowMetricsDebugTable({ metricsByAsset }: { metricsByAsset: Record<ApiC
           {ASSETS.map((asset) => {
             const metrics = metricsByAsset[asset.apiCoin];
             return (
-              <tr key={asset.apiCoin}>
-                <td><strong>{asset.shortName}</strong></td>
-                <td>{formatPct(metrics.takerBuyRatio5m, 1, "collecting", false)}</td>
-                <td>{formatPct(metrics.takerSellRatio5m, 1, "collecting", false)}</td>
-                <td>{formatUsd(metrics.buyNotional5m, "collecting")}</td>
-                <td>{formatUsd(metrics.sellNotional5m, "collecting")}</td>
-                <td className={directionClass(metrics.netBuyFlow5m)}>{formatUsd(metrics.netBuyFlow5m, "collecting")}</td>
-                <td className={directionClass(metrics.netSellFlow5m)}>{formatUsd(metrics.netSellFlow5m, "collecting")}</td>
-                <td className={directionClass(metrics.cvd5m)}>{formatUsd(metrics.cvd5m, "collecting")}</td>
-                <td className={directionClass(metrics.cvd15m)}>{formatUsd(metrics.cvd15m, "collecting")}</td>
-                <td className={directionClass(metrics.cvd1h)}>{formatUsd(metrics.cvd1h, "collecting")}</td>
+              <tr key={asset.apiCoin} data-testid={`flow-metrics-${asset.apiCoin}`}>
+                <td data-col="asset"><strong>{asset.shortName}</strong></td>
+                <td data-col="taker-buy-ratio-5m">{formatPct(metrics.takerBuyRatio5m, 1, "collecting", false)}</td>
+                <td data-col="taker-sell-ratio-5m">{formatPct(metrics.takerSellRatio5m, 1, "collecting", false)}</td>
+                <td data-col="buy-notional-5m">{formatUsd(metrics.buyNotional5m, "collecting")}</td>
+                <td data-col="sell-notional-5m">{formatUsd(metrics.sellNotional5m, "collecting")}</td>
+                <td data-col="net-buy-flow-5m" className={directionClass(metrics.netBuyFlow5m)}>{formatUsd(metrics.netBuyFlow5m, "collecting")}</td>
+                <td data-col="net-sell-flow-5m" className={directionClass(metrics.netSellFlow5m)}>{formatUsd(metrics.netSellFlow5m, "collecting")}</td>
+                <td data-col="cvd-5m" className={directionClass(metrics.cvd5m)}>{formatUsd(metrics.cvd5m, "collecting")}</td>
+                <td data-col="cvd-15m" className={directionClass(metrics.cvd15m)}>{formatUsd(metrics.cvd15m, "collecting")}</td>
+                <td data-col="cvd-1h" className={directionClass(metrics.cvd1h)}>{formatUsd(metrics.cvd1h, "collecting")}</td>
               </tr>
             );
           })}
@@ -2310,14 +2310,14 @@ function TradeSideMappingDebugTable({ assetStates }: { assetStates: Record<ApiCo
         </thead>
         <tbody>
           {rows.map(({ asset, trade }) => (
-            <tr key={`${asset.apiCoin}-${trade.id}`}>
-              <td>{new Date(trade.time).toLocaleTimeString()}</td>
-              <td><strong>{asset.shortName}</strong></td>
-              <td>{trade.rawSide || "-"}</td>
-              <td className={trade.side === "Buy" ? "positive" : "negative"}>{trade.side}</td>
-              <td>{formatUsd(trade.price)}</td>
-              <td>{trade.size.toFixed(4)}</td>
-              <td>{formatUsd(trade.notionalUsd)}</td>
+            <tr key={`${asset.apiCoin}-${trade.id}`} data-testid="trade-side-row">
+              <td data-col="timestamp">{new Date(trade.time).toLocaleTimeString()}</td>
+              <td data-col="asset"><strong>{asset.shortName}</strong></td>
+              <td data-col="raw-side">{trade.rawSide || "-"}</td>
+              <td data-col="interpreted-side" className={trade.side === "Buy" ? "positive" : "negative"}>{trade.side}</td>
+              <td data-col="price">{formatUsd(trade.price)}</td>
+              <td data-col="size">{trade.size.toFixed(4)}</td>
+              <td data-col="notional">{formatUsd(trade.notionalUsd)}</td>
             </tr>
           ))}
         </tbody>
