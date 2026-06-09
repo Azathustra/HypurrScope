@@ -33,6 +33,22 @@ function minutesBetween(start: string, end: string) {
   return Math.max(0, Math.floor((Date.parse(end) - Date.parse(start)) / 60_000));
 }
 
+function gapRows(sorted: number[]) {
+  return sorted.slice(1).map((ts, index) => ({
+    from: new Date(sorted[index]).toISOString(),
+    to: new Date(ts).toISOString(),
+    gapSeconds: Math.round((ts - sorted[index]) / 1000),
+    missingApprox: Math.max(0, Math.round((ts - sorted[index]) / 60_000) - 1),
+  }));
+}
+
+function windowGaps(sorted: number[], nowMs: number, minutes: number) {
+  const start = nowMs - minutes * 60_000;
+  const points = [start].concat(sorted.filter((ts) => ts >= start && ts <= nowMs));
+  if (sorted.length && sorted[sorted.length - 1] < nowMs) points.push(nowMs);
+  return gapRows(points).filter((gap) => gap.gapSeconds > 90);
+}
+
 function cadenceDiagnostics(timestamps: string[]) {
   if (!timestamps.length) {
     return {
@@ -42,23 +58,37 @@ function cadenceDiagnostics(timestamps: string[]) {
       actualSnapshotCount: 0,
       averageSnapshotIntervalSeconds: null,
       missingSnapshotIntervals: [],
+      health: {
+        cadenceStatus: "degraded",
+        averageSnapshotIntervalSeconds: null,
+        lastSnapshotAgeSeconds: null,
+        missingSnapshotIntervalsLast60m: 60,
+        missingSnapshotIntervalsLast4h: 240,
+        missingSnapshotIntervalsLast60mDetails: [],
+        missingSnapshotIntervalsLast4hDetails: [],
+      },
     };
   }
 
   const sorted = timestamps.map((ts) => Date.parse(ts)).filter(Number.isFinite).sort((a, b) => a - b);
+  const nowMs = Date.now();
   const oldest = sorted[0];
   const newest = sorted[sorted.length - 1];
   const expectedSnapshotCount = Math.floor((newest - oldest) / 60_000) + 1;
-  const gaps = sorted.slice(1).map((ts, index) => ({
-    from: new Date(sorted[index]).toISOString(),
-    to: new Date(ts).toISOString(),
-    gapSeconds: Math.round((ts - sorted[index]) / 1000),
-    missingApprox: Math.max(0, Math.round((ts - sorted[index]) / 60_000) - 1),
-  }));
+  const gaps = gapRows(sorted);
   const missingSnapshotIntervals = gaps.filter((gap) => gap.gapSeconds > 90);
   const averageSnapshotIntervalSeconds = gaps.length
     ? Math.round(gaps.reduce((sum, gap) => sum + gap.gapSeconds, 0) / gaps.length)
     : null;
+  const missingLast60 = windowGaps(sorted, nowMs, 60);
+  const missingLast4h = windowGaps(sorted, nowMs, 240);
+  const lastSnapshotAgeSeconds = Math.max(0, Math.round((nowMs - newest) / 1000));
+  const cadenceStatus =
+    missingLast60.length || lastSnapshotAgeSeconds > 120
+      ? "degraded"
+      : missingSnapshotIntervals.length
+        ? "healthy_recent_with_historical_gap"
+        : "healthy";
 
   return {
     oldestSnapshotTs: new Date(oldest).toISOString(),
@@ -67,6 +97,15 @@ function cadenceDiagnostics(timestamps: string[]) {
     actualSnapshotCount: sorted.length,
     averageSnapshotIntervalSeconds,
     missingSnapshotIntervals,
+    health: {
+      cadenceStatus,
+      averageSnapshotIntervalSeconds,
+      lastSnapshotAgeSeconds,
+      missingSnapshotIntervalsLast60m: missingLast60.length,
+      missingSnapshotIntervalsLast4h: missingLast4h.length,
+      missingSnapshotIntervalsLast60mDetails: missingLast60,
+      missingSnapshotIntervalsLast4hDetails: missingLast4h,
+    },
   };
 }
 
