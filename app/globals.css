@@ -1704,94 +1704,16 @@ td {
   color: var(--text);
 }
 
-.nft-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.nft-card,
 .flow-link,
 .dat-card {
   color: inherit;
   text-decoration: none;
 }
 
-.nft-card {
-  display: grid;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-2);
-}
-
-.nft-card:hover,
 .flow-card:hover,
 .dat-card:hover,
 .external-card:hover {
   border-color: rgba(124, 247, 199, 0.42);
-}
-
-.nft-media {
-  display: grid;
-  aspect-ratio: 1;
-  place-items: center;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
-  background: #0a0d0c;
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
-.nft-media img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.nft-media img.preview {
-  transform: scale(1.9);
-  transform-origin: 9% center;
-}
-
-.nft-card div:last-of-type {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.nft-card strong,
-.nft-card p {
-  color: var(--text);
-}
-
-.nft-card span {
-  color: var(--muted);
-  font-size: 0.78rem;
-}
-
-.nft-card p {
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 0;
-  padding: 9px 10px;
-  border: 1px solid rgba(124, 247, 199, 0.28);
-  border-radius: 8px;
-  background: rgba(8, 10, 10, 0.42);
-  color: var(--mint);
-  font-weight: 820;
-}
-
-.nft-card p::before {
-  color: var(--muted);
-  content: "Reported sale";
-  font-size: 0.72rem;
-  font-weight: 650;
 }
 
 .external-card {
@@ -3098,7 +3020,6 @@ td {
 
   .twap-grid,
   .twap-columns,
-  .nft-grid,
   .dat-grid,
   .flow-summary,
   .chart-context-strip,
@@ -3419,6 +3340,18 @@ td {
   color: var(--mint);
 }
 
+.inline-link {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--mint);
+  font-size: inherit;
+  font-weight: 850;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .risk-summary,
 .asset-grid,
 .metric-grid,
@@ -3429,7 +3362,7 @@ td {
 }
 
 .risk-summary {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 20px 24px 0;
 }
 
@@ -3544,6 +3477,14 @@ td {
   font-size: 0.92rem;
 }
 
+.asset-source {
+  display: block;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
 .two-panels {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   margin: 12px 24px 0;
@@ -3596,6 +3537,17 @@ td {
   text-transform: uppercase;
 }
 
+.watchlist-table table {
+  min-width: 1180px;
+}
+
+.watchlist-table td small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
 .compact-empty {
   display: grid;
   gap: 8px;
@@ -3620,6 +3572,13 @@ td {
   margin: 12px 24px 0;
 }
 
+.alert-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
 .alert-filter-row {
   display: flex;
   flex-wrap: wrap;
@@ -3628,6 +3587,7 @@ td {
 }
 
 .alert-filter-row button,
+.alert-tabs button,
 .chart-toolbar button {
   min-height: 34px;
   padding: 0 12px;
@@ -3640,6 +3600,7 @@ td {
 }
 
 .alert-filter-row button.active,
+.alert-tabs button.active,
 .chart-toolbar button.active {
   border-color: rgba(124, 247, 199, 0.55);
   background: rgba(124, 247, 199, 0.1);
@@ -4149,6 +4110,27 @@ button:disabled {
   width: 100%;
 }
 
+.form-error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 88, 110, 0.34);
+  border-radius: 8px;
+  background: rgba(255, 88, 110, 0.08);
+  color: var(--red);
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
+.wallet-result {
+  display: grid;
+  gap: 12px;
+}
+
+.wallet-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
 @media (max-width: 1180px) {
   .risk-shell {
     grid-template-columns: 1fr;
@@ -4174,7 +4156,8 @@ button:disabled {
   .risk-summary,
   .asset-grid,
   .two-panels,
-  .metric-grid {
+  .metric-grid,
+  .wallet-metrics {
     grid-template-columns: 1fr;
   }
 

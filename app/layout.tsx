@@ -5,9 +5,9 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export const metadata: Metadata = {
-  title: "HypurrScope | BTC ETH HYPE Risk Radar",
+  title: "HypurrScope | BTC ETH HYPE Hyperliquid Risk Radar",
   description:
-    "Read-only Hyperliquid risk radar for BTC, ETH and HYPE market structure, flow, OI, funding and alert-ready setups.",
+    "Track BTC, ETH and HYPE perps on Hyperliquid with live open interest, funding, taker flow, liquidity, closest setups and alerts.",
 };
 
 export default function RootLayout({
