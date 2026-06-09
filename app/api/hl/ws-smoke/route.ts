@@ -104,6 +104,7 @@ export async function GET(request: Request) {
   let error: string | null = null;
   let closeCode: number | null = null;
   let closeReason: string | null = null;
+  let sendErrors: string[] = [];
 
   return await new Promise<Response>((resolve) => {
     let finished = false;
@@ -126,6 +127,12 @@ export async function GET(request: Request) {
 
       const endedAt = nowIso();
       const ok = connected && rawMessagesCount > 0 && ASSETS.every((asset) => Boolean(perAssetLastTimestamps[asset].trades || perAssetLastTimestamps[asset].l2Book));
+      if (!ok && !error) {
+        if (!connected) error = `WebSocket did not open within ${seconds}s`;
+        else if (!subscriptionsSent.length) error = "WebSocket opened but no subscriptions were attempted";
+        else if (rawMessagesCount === 0) error = `WebSocket connected and ${subscriptionsSent.length} subscriptions were attempted, but no messages arrived within ${seconds}s`;
+        else error = "WebSocket messages arrived, but BTC/ETH/HYPE trades or l2Book timestamps were not all observed";
+      }
       resolve(noStore({
         ok,
         attemptedUrl: WS_URL,
@@ -142,6 +149,7 @@ export async function GET(request: Request) {
         perAssetLastTimestamps,
         lastRawMessagePreview,
         error,
+        sendErrors,
         closeCode,
         closeReason,
       }, ok ? 200 : 502));
@@ -151,11 +159,27 @@ export async function GET(request: Request) {
 
     ws.on("open", () => {
       connected = true;
-      SUBSCRIPTIONS.forEach((subscription) => {
+      for (const subscription of SUBSCRIPTIONS) {
         const key = keyFor(subscription);
-        ws.send(JSON.stringify({ method: "subscribe", subscription }));
+        const payload = JSON.stringify({ method: "subscribe", subscription });
         subscriptionsSent.push(key);
-      });
+        try {
+          ws.send(payload, (err) => {
+            if (!err) return;
+            const message = `send failed for ${key}: ${err.message}`;
+            sendErrors.push(message);
+            error = error || message;
+          });
+        } catch (err) {
+          const message = `send threw for ${key}: ${err instanceof Error ? err.message : String(err)}`;
+          sendErrors.push(message);
+          error = error || message;
+        }
+      }
+      if (!subscriptionsSent.length) {
+        error = "WebSocket opened but no subscriptions were attempted";
+        finish();
+      }
     });
 
     ws.on("message", (raw) => {
