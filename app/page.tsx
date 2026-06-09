@@ -149,6 +149,8 @@ type AssetState = {
   sourceUpdatedAtIso: string | null;
   missingFields: string[];
   dataError: string | null;
+  candleError: string | null;
+  bookError: string | null;
   requestFailed: boolean;
 };
 
@@ -172,6 +174,34 @@ type HlMarketsResponse = {
   assets?: HlMarketAsset[];
   error?: string;
   updatedAt?: string;
+};
+
+type HlCandlesResponse = {
+  ok: boolean;
+  coin: ApiCoin;
+  interval: string;
+  candlesCount?: number;
+  lastClose?: number | null;
+  close15mAgo?: number | null;
+  close1hAgo?: number | null;
+  priceChange15mPct?: number | null;
+  priceChange1hPct?: number | null;
+  candles?: unknown[];
+  updatedAt?: string;
+  error?: string;
+};
+
+type HlBookResponse = {
+  ok: boolean;
+  coin: ApiCoin;
+  bestBid?: number | null;
+  bestAsk?: number | null;
+  mid?: number | null;
+  spreadBps?: number | null;
+  depth10bpsUsd?: number | null;
+  depth25bpsUsd?: number | null;
+  updatedAt?: string;
+  error?: string;
 };
 
 type MetricBundle = {
@@ -372,6 +402,8 @@ function emptyAssetState(): AssetState {
     sourceUpdatedAtIso: null,
     missingFields: [],
     dataError: null,
+    candleError: null,
+    bookError: null,
     requestFailed: false,
   };
 }
@@ -454,6 +486,27 @@ function formatMarketValue(
   return "Loading";
 }
 
+function formatCandleChange(value: number | null, label: "15m" | "1h", state: AssetState) {
+  if (Number.isFinite(value as number)) return formatPct(value, 2);
+  if (state.candleError) return state.candleError;
+  if (state.candles.length) return `${label} unavailable: candle close missing`;
+  return "Loading";
+}
+
+function formatSpread(value: number | null, state: AssetState) {
+  if (Number.isFinite(value as number)) return `${(value as number).toFixed(2)} bps`;
+  if (state.bookError) return state.bookError;
+  if (state.book) return "spread unavailable: spreadBps missing";
+  return "Loading";
+}
+
+function formatDepth10(value: number | null, state: AssetState) {
+  if (Number.isFinite(value as number)) return formatUsd(value);
+  if (state.bookError) return state.bookError;
+  if (state.book) return "depth unavailable: depth10bpsUsd missing";
+  return "Loading";
+}
+
 function directionClass(value: number | null) {
   if (!Number.isFinite(value as number)) return "";
   return (value as number) >= 0 ? "positive" : "negative";
@@ -512,17 +565,35 @@ async function fetchHlMarkets(): Promise<HlMarketsResponse> {
   return payload;
 }
 
-async function fetchCandles(coin: ApiCoin): Promise<unknown> {
-  const now = Date.now();
-  const params = new URLSearchParams({
-    coin,
-    interval: "1m",
-    startTime: String(now - 24 * 60 * 60 * 1000),
-    endTime: String(now),
-  });
-  const response = await fetch(`/api/hyperliquid/candles?${params.toString()}`, { cache: "no-store" });
-  if (!response.ok) throw new Error(`Candles failed ${coin}`);
-  return response.json();
+async function fetchCandles(coin: ApiCoin): Promise<HlCandlesResponse> {
+  const params = new URLSearchParams({ coin, interval: "1m", hours: "24" });
+  const response = await fetch(`/api/hl/candles?${params.toString()}`, { cache: "no-store" });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      ok: false,
+      coin,
+      interval: "1m",
+      error: payload?.error || `Candles failed ${coin}: ${response.status}`,
+      updatedAt: payload?.updatedAt,
+    };
+  }
+  return payload;
+}
+
+async function fetchBook(coin: ApiCoin): Promise<HlBookResponse> {
+  const params = new URLSearchParams({ coin });
+  const response = await fetch(`/api/hl/book?${params.toString()}`, { cache: "no-store" });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      ok: false,
+      coin,
+      error: payload?.error || `Book failed ${coin}: ${response.status}`,
+      updatedAt: payload?.updatedAt,
+    };
+  }
+  return payload;
 }
 
 async function fetchContextHistory(coin: ApiCoin): Promise<unknown> {
@@ -668,6 +739,24 @@ function normalizeLevel(level: any): BookLevel | null {
 }
 
 function normalizeBook(payload: any): Book | null {
+  const directBestBid = n(payload?.bestBid);
+  const directBestAsk = n(payload?.bestAsk);
+  const directSpreadBps = n(payload?.spreadBps);
+  const directDepth10 = n(payload?.depth10bpsUsd ?? payload?.depth10Bps);
+  const directDepth25 = n(payload?.depth25bpsUsd ?? payload?.depth25Bps);
+  if (directBestBid !== null && directBestAsk !== null) {
+    return {
+      bids: [],
+      asks: [],
+      bestBid: directBestBid,
+      bestAsk: directBestAsk,
+      spreadBps: directSpreadBps,
+      depth10Bps: directDepth10,
+      depth25Bps: directDepth25,
+      depth50Bps: directDepth25,
+    };
+  }
+
   const levels = payload?.levels || payload?.data?.levels;
   if (!Array.isArray(levels)) return null;
   const rawBids = Array.isArray(levels[0]) ? levels[0] : [];
@@ -1570,13 +1659,13 @@ function AssetCard({
       </button>
       <div className="asset-card-grid">
         <div><span>Price</span><strong>{formatMarketValue(state.market.price, formatUsd, "price", ["markPx"], state)}</strong></div>
-        <div><span>15m</span><strong className={directionClass(metrics.price15m)}>{formatPct(metrics.price15m, 2, "Loading")}</strong></div>
-        <div><span>1h</span><strong className={directionClass(metrics.price1h)}>{formatPct(metrics.price1h, 2, "Loading")}</strong></div>
+        <div><span>15m</span><strong className={directionClass(metrics.price15m)}>{formatCandleChange(metrics.price15m, "15m", state)}</strong></div>
+        <div><span>1h</span><strong className={directionClass(metrics.price1h)}>{formatCandleChange(metrics.price1h, "1h", state)}</strong></div>
         <div><span>Open interest</span><strong>{formatMarketValue(state.market.oiUsd, formatUsd, "open interest", ["openInterestRaw", "openInterestUsdComputed"], state)}</strong></div>
         <div><span>24h volume</span><strong>{formatMarketValue(state.market.volume24hUsd, formatUsd, "24h volume", ["dayNtlVlm"], state)}</strong></div>
         <div><span>Hourly funding</span><strong>{formatMarketValue(state.market.fundingPct, formatFunding, "funding", ["fundingRaw"], state)}</strong></div>
-        <div><span>Taker 5m</span><strong>{metrics.netFlow5m === null ? "Loading" : formatUsd(metrics.netFlow5m)}</strong></div>
-        <div><span>Depth +/-10 bps</span><strong>{formatUsd(metrics.depth10Bps, "Loading")}</strong></div>
+        <div><span>Spread</span><strong>{formatSpread(metrics.spreadBps, state)}</strong></div>
+        <div><span>Depth +/-10 bps</span><strong>{formatDepth10(metrics.depth10Bps, state)}</strong></div>
       </div>
       <small className="asset-source">Source Hyperliquid REST - Data status {dataStatus} - {sourceText}</small>
       <button className="text-action" onClick={onOpen}>View details</button>
@@ -2332,6 +2421,44 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadInitialCandlesAndBook() {
+      const [candleRows, bookRows] = await Promise.all([
+        Promise.all(ASSETS.map((asset) => fetchCandles(asset.apiCoin).then((payload) => [asset.apiCoin, payload] as const).catch((error) => [asset.apiCoin, { ok: false, coin: asset.apiCoin, interval: "1m", error: error instanceof Error ? error.message : String(error) } as HlCandlesResponse] as const))),
+        Promise.all(ASSETS.map((asset) => fetchBook(asset.apiCoin).then((payload) => [asset.apiCoin, payload] as const).catch((error) => [asset.apiCoin, { ok: false, coin: asset.apiCoin, error: error instanceof Error ? error.message : String(error) } as HlBookResponse] as const))),
+      ]);
+      if (cancelled) return;
+
+      setAssets((current) => {
+        const next = { ...current };
+        ASSET_ORDER.forEach((coin) => {
+          const candlePayload = payloadFor(candleRows, coin) as HlCandlesResponse | undefined;
+          const bookPayload = payloadFor(bookRows, coin) as HlBookResponse | undefined;
+          const candles = candlePayload?.ok ? normalizeCandles(candlePayload) : next[coin].candles;
+          const book = bookPayload?.ok ? normalizeBook(bookPayload) : next[coin].book;
+          next[coin] = {
+            ...next[coin],
+            candles,
+            book,
+            freshness: {
+              ...next[coin].freshness,
+              candles: candles.length ? Date.parse(candlePayload?.updatedAt || "") || Date.now() : next[coin].freshness.candles,
+              book: book ? Date.parse(bookPayload?.updatedAt || "") || Date.now() : next[coin].freshness.book,
+            },
+            candleError: candlePayload?.ok ? null : candlePayload?.error || next[coin].candleError,
+            bookError: bookPayload?.ok ? null : bookPayload?.error || next[coin].bookError,
+          };
+        });
+        return next;
+      });
+    }
+
+    loadInitialCandlesAndBook();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     fetch("/api/alerts", { cache: "no-store" })
       .then((response) => response.ok ? response.json() : { alerts: [] })
       .then((payload) => {
@@ -2362,8 +2489,8 @@ export default function Page() {
           Array<readonly [ApiCoin, unknown]>,
         ] = await Promise.all([
           fetchMeta(),
-          Promise.all(ASSETS.map((asset) => fetchCandles(asset.apiCoin).then((payload) => [asset.apiCoin, payload] as const))),
-          Promise.all(ASSETS.map((asset) => postInfo({ type: "l2Book", coin: asset.apiCoin, nSigFigs: 5 }).then((payload) => [asset.apiCoin, payload] as const))),
+          Promise.all(ASSETS.map((asset) => fetchCandles(asset.apiCoin).then((payload) => [asset.apiCoin, payload] as const).catch((error) => [asset.apiCoin, { ok: false, coin: asset.apiCoin, interval: "1m", error: error instanceof Error ? error.message : String(error) } as HlCandlesResponse] as const))),
+          Promise.all(ASSETS.map((asset) => fetchBook(asset.apiCoin).then((payload) => [asset.apiCoin, payload] as const).catch((error) => [asset.apiCoin, { ok: false, coin: asset.apiCoin, error: error instanceof Error ? error.message : String(error) } as HlBookResponse] as const))),
           Promise.all(ASSETS.map((asset) => postInfo({ type: "fundingHistory", coin: asset.apiCoin, startTime: requestTime - 24 * 60 * 60 * 1000, endTime: requestTime }).then((payload) => [asset.apiCoin, payload] as const).catch(() => [asset.apiCoin, []] as const))),
           Promise.all(ASSETS.map((asset) => fetchContextHistory(asset.apiCoin).then((payload) => [asset.apiCoin, payload] as const).catch(() => [asset.apiCoin, { rows: [] }] as const))),
         ]);
@@ -2375,6 +2502,8 @@ export default function Page() {
           ASSETS.forEach((asset) => {
             const previous = current[asset.apiCoin];
             const backfillMarket = meta[asset.apiCoin] || { ...EMPTY_MARKET };
+            const candlePayload = payloadFor(candlePayloads, asset.apiCoin) as HlCandlesResponse | undefined;
+            const bookPayload = payloadFor(bookPayloads, asset.apiCoin) as HlBookResponse | undefined;
             const market = {
               price: backfillMarket.price ?? previous.market.price,
               prevPrice: backfillMarket.prevPrice ?? previous.market.prevPrice,
@@ -2386,8 +2515,10 @@ export default function Page() {
               volume24hUsd: backfillMarket.volume24hUsd ?? previous.market.volume24hUsd,
               oraclePx: backfillMarket.oraclePx ?? previous.market.oraclePx,
             };
-            const candles = normalizeCandles(payloadFor(candlePayloads, asset.apiCoin));
-            const book = normalizeBook(payloadFor(bookPayloads, asset.apiCoin));
+            const candles = candlePayload?.ok ? normalizeCandles(candlePayload) : previous.candles;
+            const book = bookPayload?.ok ? normalizeBook(bookPayload) : previous.book;
+            const candleError = candlePayload?.ok ? null : candlePayload?.error || previous.candleError;
+            const bookError = bookPayload?.ok ? null : bookPayload?.error || previous.bookError;
             const contextHistory = normalizeContextHistory(payloadFor(historyPayloads, asset.apiCoin));
             const fundingHistory = appendFunding(
               normalizeFundingHistory(payloadFor(fundingPayloads, asset.apiCoin)).concat(contextHistory.fundingHistory).sort((a, b) => a.time - b.time).slice(-1000),
@@ -2404,9 +2535,11 @@ export default function Page() {
               freshness: {
                 ...previous.freshness,
                 meta: market.price !== null ? previous.sourceUpdatedAt || now : previous.freshness.meta,
-                candles: candles.length ? now : previous.freshness.candles,
-                book: book ? now : previous.freshness.book,
+                candles: candles.length ? Date.parse(candlePayload?.updatedAt || "") || now : previous.freshness.candles,
+                book: book ? Date.parse(bookPayload?.updatedAt || "") || now : previous.freshness.book,
               },
+              candleError,
+              bookError,
               requestFailed: false,
             };
           });
