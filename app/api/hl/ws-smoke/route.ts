@@ -1,4 +1,5 @@
-import WebSocket from "ws";
+import crypto from "node:crypto";
+import tls from "node:tls";
 
 type ApiCoin = "BTC" | "ETH" | "HYPE";
 type WsChannel = "allMids" | "trades" | "l2Book" | "activeAssetCtx";
@@ -10,8 +11,10 @@ export const revalidate = 0;
 export const maxDuration = 15;
 
 const ASSETS: ApiCoin[] = ["BTC", "ETH", "HYPE"];
-const WS_URL = "wss://api.hyperliquid.xyz/ws";
-const SMOKE_VERSION = "ws-smoke-v3-subscription-send-proof-2026-06-09";
+const WS_HOST = "api.hyperliquid.xyz";
+const WS_PATH = "/ws";
+const WS_URL = `wss://${WS_HOST}${WS_PATH}`;
+const SMOKE_VERSION = "ws-smoke-v4-native-tls-websocket-2026-06-09";
 const SUBSCRIPTIONS: Subscription[] = [
   { type: "allMids" },
   ...ASSETS.flatMap((coin) => [
@@ -33,6 +36,13 @@ function numericSeconds(value: string | null) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 10;
   return Math.min(10, Math.max(1, Math.floor(parsed)));
+}
+
+function noStore(payload: unknown, status = 200) {
+  return Response.json(payload, {
+    status,
+    headers: { "cache-control": "no-store, max-age=0" },
+  });
 }
 
 function assetFromPayload(payload: any): ApiCoin | null {
@@ -81,11 +91,85 @@ function emptyAssetTimestamps() {
   }])) as Record<ApiCoin, Record<Exclude<WsChannel, "allMids">, string | null>>;
 }
 
-function noStore(payload: unknown, status = 200) {
-  return Response.json(payload, {
-    status,
-    headers: { "cache-control": "no-store, max-age=0" },
-  });
+function makeClientFrame(message: string, opcode = 0x1) {
+  const payload = Buffer.from(message);
+  const mask = crypto.randomBytes(4);
+  const length = payload.length;
+  let header: Buffer;
+
+  if (length < 126) {
+    header = Buffer.alloc(2);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | length;
+  } else if (length <= 0xffff) {
+    header = Buffer.alloc(4);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(length, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(length), 2);
+  }
+
+  const masked = Buffer.alloc(length);
+  for (let index = 0; index < length; index += 1) masked[index] = payload[index] ^ mask[index % 4];
+  return Buffer.concat([header, mask, masked]);
+}
+
+function parseFrames(buffer: Buffer, onText: (text: string) => void, onClose: (code: number | null, reason: string) => void, socket: tls.TLSSocket) {
+  let offset = 0;
+
+  while (buffer.length - offset >= 2) {
+    const first = buffer[offset];
+    const second = buffer[offset + 1];
+    const opcode = first & 0x0f;
+    const masked = Boolean(second & 0x80);
+    let length = second & 0x7f;
+    let headerLength = 2;
+
+    if (length === 126) {
+      if (buffer.length - offset < 4) break;
+      length = buffer.readUInt16BE(offset + 2);
+      headerLength = 4;
+    } else if (length === 127) {
+      if (buffer.length - offset < 10) break;
+      const bigLength = buffer.readBigUInt64BE(offset + 2);
+      if (bigLength > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("WebSocket frame too large");
+      length = Number(bigLength);
+      headerLength = 10;
+    }
+
+    const maskLength = masked ? 4 : 0;
+    const frameLength = headerLength + maskLength + length;
+    if (buffer.length - offset < frameLength) break;
+
+    const mask = masked ? buffer.subarray(offset + headerLength, offset + headerLength + 4) : null;
+    const payloadStart = offset + headerLength + maskLength;
+    const payload = Buffer.from(buffer.subarray(payloadStart, payloadStart + length));
+    if (mask) {
+      for (let index = 0; index < payload.length; index += 1) payload[index] ^= mask[index % 4];
+    }
+
+    offset += frameLength;
+
+    if (opcode === 0x8) {
+      const code = payload.length >= 2 ? payload.readUInt16BE(0) : null;
+      const reason = payload.length > 2 ? payload.subarray(2).toString("utf8") : "";
+      onClose(code, reason);
+      continue;
+    }
+
+    if (opcode === 0x9) {
+      socket.write(makeClientFrame(payload.toString("binary"), 0x0a));
+      continue;
+    }
+
+    if (opcode === 0x1) onText(payload.toString("utf8"));
+  }
+
+  return buffer.subarray(offset);
 }
 
 export async function GET(request: Request) {
@@ -95,9 +179,12 @@ export async function GET(request: Request) {
   const connectionStartedAt = nowIso();
   const perChannelCounts: Record<string, number> = Object.fromEntries(SUBSCRIPTIONS.map((subscription) => [keyFor(subscription), 0]));
   const perAssetLastTimestamps = emptyAssetTimestamps();
+  const subscriptionsPlanned = SUBSCRIPTIONS.map(keyFor);
   const subscriptionsSent: string[] = [];
+  const sendErrors: string[] = [];
 
   let connected = false;
+  let handshakeComplete = false;
   let subscriptionAcksCount = 0;
   let rawMessagesCount = 0;
   let lastMessageTimestamp: string | null = null;
@@ -105,11 +192,17 @@ export async function GET(request: Request) {
   let error: string | null = null;
   let closeCode: number | null = null;
   let closeReason: string | null = null;
-  let sendErrors: string[] = [];
+  let frameBuffer = Buffer.alloc(0);
 
   return await new Promise<Response>((resolve) => {
     let finished = false;
-    const ws = new WebSocket(WS_URL, { handshakeTimeout: 5_000 });
+    const key = crypto.randomBytes(16).toString("base64");
+    const socket = tls.connect({
+      host: WS_HOST,
+      port: 443,
+      servername: WS_HOST,
+      ALPNProtocols: ["http/1.1"],
+    });
 
     function hasEnoughProof() {
       if (!connected || rawMessagesCount <= 0 || subscriptionAcksCount <= 0) return false;
@@ -121,29 +214,34 @@ export async function GET(request: Request) {
       finished = true;
       clearTimeout(timeout);
       try {
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(1000, "smoke test complete");
+        if (!socket.destroyed) socket.end(makeClientFrame(Buffer.from([0x03, 0xe8]).toString("binary"), 0x8));
       } catch {
-        // The response should still include the original error if closing fails.
+        try {
+          socket.destroy();
+        } catch {
+          // ignore close failure; the diagnostic response is more important.
+        }
       }
 
-      const endedAt = nowIso();
       const ok = connected && rawMessagesCount > 0 && ASSETS.every((asset) => Boolean(perAssetLastTimestamps[asset].trades || perAssetLastTimestamps[asset].l2Book));
       if (!ok && !error) {
-        if (!connected) error = `WebSocket did not open within ${seconds}s`;
+        if (!connected) error = `WebSocket handshake did not complete within ${seconds}s`;
         else if (!subscriptionsSent.length) error = "WebSocket opened but no subscriptions were attempted";
         else if (rawMessagesCount === 0) error = `WebSocket connected and ${subscriptionsSent.length} subscriptions were attempted, but no messages arrived within ${seconds}s`;
         else error = "WebSocket messages arrived, but BTC/ETH/HYPE trades or l2Book timestamps were not all observed";
       }
+
       resolve(noStore({
         smokeVersion: SMOKE_VERSION,
         ok,
         attemptedUrl: WS_URL,
         connected,
+        handshakeComplete,
         connectionStartedAt,
-        endedAt,
+        endedAt: nowIso(),
         durationMs: Date.now() - startedAt,
         requestedSeconds: seconds,
-        subscriptionsPlanned: SUBSCRIPTIONS.map(keyFor),
+        subscriptionsPlanned,
         subscriptionsSent,
         subscriptionAcksCount,
         rawMessagesCount,
@@ -158,23 +256,20 @@ export async function GET(request: Request) {
       }, ok ? 200 : 502));
     }
 
-    const timeout = setTimeout(finish, seconds * 1000);
-
-    ws.on("open", () => {
-      connected = true;
+    function sendSubscriptions() {
       for (const subscription of SUBSCRIPTIONS) {
-        const key = keyFor(subscription);
+        const subscriptionKey = keyFor(subscription);
         const payload = JSON.stringify({ method: "subscribe", subscription });
-        subscriptionsSent.push(key);
+        subscriptionsSent.push(subscriptionKey);
         try {
-          ws.send(payload, (err) => {
+          socket.write(makeClientFrame(payload), (err) => {
             if (!err) return;
-            const message = `send failed for ${key}: ${err.message}`;
+            const message = `send failed for ${subscriptionKey}: ${err.message}`;
             sendErrors.push(message);
             error = error || message;
           });
         } catch (err) {
-          const message = `send threw for ${key}: ${err instanceof Error ? err.message : String(err)}`;
+          const message = `send threw for ${subscriptionKey}: ${err instanceof Error ? err.message : String(err)}`;
           sendErrors.push(message);
           error = error || message;
         }
@@ -183,16 +278,16 @@ export async function GET(request: Request) {
         error = "WebSocket opened but no subscriptions were attempted";
         finish();
       }
-    });
+    }
 
-    ws.on("message", (raw) => {
+    function onText(rawText: string) {
       rawMessagesCount += 1;
       lastMessageTimestamp = nowIso();
-      lastRawMessagePreview = String(raw).slice(0, 800);
+      lastRawMessagePreview = rawText.slice(0, 800);
 
       let message: any;
       try {
-        message = JSON.parse(String(raw));
+        message = JSON.parse(rawText);
       } catch (err) {
         error = err instanceof Error ? err.message : String(err);
         return;
@@ -225,16 +320,74 @@ export async function GET(request: Request) {
         perAssetLastTimestamps[subscription.coin][assetChannel] = lastMessageTimestamp;
       }
       if (hasEnoughProof()) finish();
+    }
+
+    const timeout = setTimeout(finish, seconds * 1000);
+
+    socket.once("secureConnect", () => {
+      const requestLines = [
+        `GET ${WS_PATH} HTTP/1.1`,
+        `Host: ${WS_HOST}`,
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Key: ${key}`,
+        "Sec-WebSocket-Version: 13",
+        "User-Agent: HypurrScope/1.0",
+        "",
+        "",
+      ];
+      socket.write(requestLines.join("\r\n"));
     });
 
-    ws.on("error", (err) => {
+    socket.on("data", (chunk) => {
+      try {
+        if (!handshakeComplete) {
+          frameBuffer = Buffer.concat([frameBuffer, chunk]);
+          const headerEnd = frameBuffer.indexOf("\r\n\r\n");
+          if (headerEnd === -1) return;
+
+          const headers = frameBuffer.subarray(0, headerEnd).toString("utf8");
+          const remaining = frameBuffer.subarray(headerEnd + 4);
+          frameBuffer = remaining;
+
+          if (!/^HTTP\/1\.1 101\b/i.test(headers)) {
+            error = `WebSocket upgrade failed: ${headers.split("\r\n")[0] || "missing status line"}`;
+            finish();
+            return;
+          }
+
+          const accept = headers.match(/sec-websocket-accept:\s*(.+)\r?$/im)?.[1]?.trim();
+          const expectedAccept = crypto.createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+          if (accept !== expectedAccept) {
+            error = "WebSocket upgrade failed: invalid Sec-WebSocket-Accept";
+            finish();
+            return;
+          }
+
+          connected = true;
+          handshakeComplete = true;
+          sendSubscriptions();
+        } else {
+          frameBuffer = Buffer.concat([frameBuffer, chunk]);
+        }
+
+        frameBuffer = parseFrames(frameBuffer, onText, (code, reason) => {
+          closeCode = code;
+          closeReason = reason;
+          if (!finished) finish();
+        }, socket);
+      } catch (err) {
+        error = err instanceof Error ? err.message : String(err);
+        finish();
+      }
+    });
+
+    socket.on("error", (err) => {
       error = err instanceof Error ? err.message : String(err);
-      if (!connected && rawMessagesCount === 0) finish();
+      if (!finished && (!connected || rawMessagesCount === 0)) finish();
     });
 
-    ws.on("close", (code, reason) => {
-      closeCode = code;
-      closeReason = reason?.toString() || "";
+    socket.on("close", () => {
       if (!finished && (!connected || rawMessagesCount === 0)) finish();
     });
   });
