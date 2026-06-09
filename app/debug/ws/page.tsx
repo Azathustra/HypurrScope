@@ -1,19 +1,9 @@
-"use client";
-
-import { useEffect, useMemo, useRef, useState } from "react";
-
 type ApiCoin = "BTC" | "ETH" | "HYPE";
-type WsStatus = "connecting" | "connected" | "streaming" | "stale" | "reconnecting" | "error";
 type WsChannel = "allMids" | "trades" | "l2Book" | "candle" | "activeAssetCtx";
 type Subscription = { type: WsChannel; coin?: ApiCoin; interval?: "1m" };
-type Row = {
-  key: string;
-  channel: WsChannel;
-  asset: ApiCoin | "all";
-  acknowledgedAt: number | null;
-  lastMessageAt: number | null;
-  error: string | null;
-};
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const ASSETS: ApiCoin[] = ["BTC", "ETH", "HYPE"];
 const WS_URL = "wss://api.hyperliquid.xyz/ws";
@@ -31,348 +21,379 @@ function keyFor(subscription: Subscription) {
   return `${subscription.type}${subscription.coin ? `:${subscription.coin}` : ""}${subscription.interval ? `:${subscription.interval}` : ""}`;
 }
 
-function initialRows() {
-  return Object.fromEntries(SUBSCRIPTIONS.map((subscription) => [keyFor(subscription), {
-    key: keyFor(subscription),
-    channel: subscription.type,
-    asset: subscription.coin || "all",
-    acknowledgedAt: null,
-    lastMessageAt: null,
-    error: null,
-  } satisfies Row])) as Record<string, Row>;
+function rowId(key: string, field: string) {
+  return `row-${key.replace(/[^a-z0-9]/gi, "-")}-${field}`;
 }
 
-function stamp(value: number | null) {
-  return value ? new Date(value).toISOString() : null;
-}
-
-function age(value: number | null) {
-  if (!value) return "waiting";
-  const seconds = Math.max(0, Math.round((Date.now() - value) / 1000));
-  return seconds < 90 ? `${seconds}s ago` : `${Math.round(seconds / 60)}m ago`;
-}
-
-function assetFromPayload(payload: any): ApiCoin | null {
-  const row = Array.isArray(payload) ? payload[0] : payload;
-  const coin = row?.coin || row?.s || row?.asset || row?.coinName ||
-    row?.ctx?.coin || row?.ctx?.s ||
-    row?.candle?.s || row?.candle?.coin;
-  return ASSETS.includes(coin) ? coin : null;
-}
-
-function subscriptionFromAck(message: any): Subscription | null {
-  const raw = message?.subscription || message?.data?.subscription || message?.data;
-  const type = raw?.type;
-  if (!["allMids", "trades", "l2Book", "candle", "activeAssetCtx"].includes(type)) return null;
-  const coin = ASSETS.includes(raw?.coin) ? raw.coin as ApiCoin : undefined;
-  return {
-    type,
-    coin,
-    interval: raw?.interval === "1m" ? "1m" : undefined,
+function debugScript() {
+  return `
+(function () {
+  var ASSETS = ${JSON.stringify(ASSETS)};
+  var WS_URL = ${JSON.stringify(WS_URL)};
+  var SUBSCRIPTIONS = ${JSON.stringify(SUBSCRIPTIONS)};
+  var rows = {};
+  var socket = null;
+  var reconnectTimer = null;
+  var stopped = false;
+  var reconnectAttempts = 0;
+  var state = {
+    hydratedAt: null,
+    browserCanUseWebSocket: null,
+    attemptedUrl: WS_URL,
+    websocketStatus: "connecting",
+    connectionStartedAt: null,
+    lastMessageTimestamp: null,
+    reconnectCount: 0,
+    lastError: null,
+    closeCode: null,
+    closeReason: null,
+    lastSubscriptionSent: null,
+    userAgent: null,
+    rawMessagesCount: 0,
+    subscriptionAcksCount: 0,
+    lastRawMessagePreview: null
   };
-}
 
-function subscriptionFromLiveMessage(channel: string, data: any, message: any): Subscription | null {
-  if (channel === "allMids") return { type: "allMids" };
-  if (channel === "trades") {
-    const rows = Array.isArray(data) ? data : Array.isArray(data?.trades) ? data.trades : [data];
-    const coin = assetFromPayload(rows) || assetFromPayload(data) || message?.subscription?.coin;
-    return ASSETS.includes(coin) ? { type: "trades", coin } : null;
+  function keyFor(subscription) {
+    return subscription.type + (subscription.coin ? ":" + subscription.coin : "") + (subscription.interval ? ":" + subscription.interval : "");
   }
-  if (channel === "l2Book") {
-    const coin = assetFromPayload(data) || message?.subscription?.coin;
-    return ASSETS.includes(coin) ? { type: "l2Book", coin } : null;
+
+  function safeId(key, field) {
+    return "row-" + key.replace(/[^a-z0-9]/gi, "-") + "-" + field;
   }
-  if (channel === "candle") {
-    const coin = assetFromPayload(data) || message?.subscription?.coin;
-    return ASSETS.includes(coin) ? { type: "candle", coin, interval: "1m" } : null;
+
+  function stamp(value) {
+    return value || null;
   }
-  if (channel === "activeAssetCtx") {
-    const coin = assetFromPayload(data) || message?.subscription?.coin;
-    return ASSETS.includes(coin) ? { type: "activeAssetCtx", coin } : null;
+
+  function age(value) {
+    if (!value) return "waiting";
+    var seconds = Math.max(0, Math.round((Date.now() - Date.parse(value)) / 1000));
+    return seconds < 90 ? seconds + "s ago" : Math.round(seconds / 60) + "m ago";
   }
-  return null;
+
+  function setText(id, value) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = value == null || value === "" ? "waiting" : String(value);
+  }
+
+  function log(message) {
+    var line = new Date().toISOString() + " " + message;
+    console.info("[HypurrScope debug/ws] " + message);
+    var logs = document.getElementById("browser-console-logs");
+    if (logs) logs.textContent = line + "\\n" + (logs.textContent || "").replace("waiting for browser WebSocket", "");
+  }
+
+  function assetFromPayload(payload) {
+    if (!payload) return null;
+    if (Array.isArray(payload)) {
+      if (typeof payload[0] === "string" && ASSETS.indexOf(payload[0]) >= 0) return payload[0];
+      return assetFromPayload(payload[0]);
+    }
+    var coin = payload.coin || payload.s || payload.asset || payload.coinName ||
+      (payload.ctx && (payload.ctx.coin || payload.ctx.s)) ||
+      (payload.candle && (payload.candle.s || payload.candle.coin));
+    return ASSETS.indexOf(coin) >= 0 ? coin : null;
+  }
+
+  function subscriptionFromAck(message) {
+    var raw = (message && message.subscription) ||
+      (message && message.data && message.data.subscription) ||
+      (message && message.data);
+    var type = raw && raw.type;
+    if (["allMids", "trades", "l2Book", "candle", "activeAssetCtx"].indexOf(type) < 0) return null;
+    var subscription = { type: type };
+    if (ASSETS.indexOf(raw.coin) >= 0) subscription.coin = raw.coin;
+    if (raw.interval === "1m") subscription.interval = "1m";
+    return subscription;
+  }
+
+  function subscriptionFromLiveMessage(channel, data, message) {
+    if (channel === "allMids") return { type: "allMids" };
+    if (channel === "trades") {
+      var tradeRows = Array.isArray(data) ? data : (data && Array.isArray(data.trades) ? data.trades : [data]);
+      var tradeCoin = assetFromPayload(tradeRows) || assetFromPayload(data) || (message.subscription && message.subscription.coin);
+      return ASSETS.indexOf(tradeCoin) >= 0 ? { type: "trades", coin: tradeCoin } : null;
+    }
+    if (channel === "l2Book") {
+      var bookCoin = assetFromPayload(data) || (message.subscription && message.subscription.coin);
+      return ASSETS.indexOf(bookCoin) >= 0 ? { type: "l2Book", coin: bookCoin } : null;
+    }
+    if (channel === "candle") {
+      var candleCoin = assetFromPayload(data) || (message.subscription && message.subscription.coin);
+      return ASSETS.indexOf(candleCoin) >= 0 ? { type: "candle", coin: candleCoin, interval: "1m" } : null;
+    }
+    if (channel === "activeAssetCtx") {
+      var ctxCoin = assetFromPayload(data) || (message.subscription && message.subscription.coin);
+      return ASSETS.indexOf(ctxCoin) >= 0 ? { type: "activeAssetCtx", coin: ctxCoin } : null;
+    }
+    return null;
+  }
+
+  function ensureRow(subscription) {
+    var key = keyFor(subscription);
+    if (!rows[key]) {
+      rows[key] = {
+        key: key,
+        channel: subscription.type,
+        asset: subscription.coin || "all",
+        acknowledgedAt: null,
+        lastMessageAt: null,
+        error: null
+      };
+    }
+    return rows[key];
+  }
+
+  function markAck(subscription) {
+    var row = ensureRow(subscription);
+    row.acknowledgedAt = new Date().toISOString();
+    row.error = null;
+    log("subscription acknowledged " + row.key);
+  }
+
+  function markMessage(subscription) {
+    var row = ensureRow(subscription);
+    var now = new Date().toISOString();
+    row.lastMessageAt = now;
+    row.error = null;
+    state.websocketStatus = "streaming";
+    state.lastMessageTimestamp = now;
+    state.lastError = null;
+  }
+
+  function proof() {
+    return {
+      hydratedAt: state.hydratedAt,
+      browserCanUseWebSocket: state.browserCanUseWebSocket,
+      attemptedUrl: state.attemptedUrl,
+      websocketStatus: state.websocketStatus,
+      connectionStartedAt: state.connectionStartedAt,
+      lastMessageTimestamp: state.lastMessageTimestamp,
+      reconnectCount: state.reconnectCount,
+      lastError: state.lastError,
+      closeCode: state.closeCode,
+      closeReason: state.closeReason,
+      lastSubscriptionSent: state.lastSubscriptionSent,
+      userAgent: state.userAgent,
+      rawMessagesCount: state.rawMessagesCount,
+      subscriptionAcksCount: state.subscriptionAcksCount,
+      lastRawMessagePreview: state.lastRawMessagePreview,
+      btcTradesLastTimestamp: stamp(rows["trades:BTC"] && rows["trades:BTC"].lastMessageAt),
+      ethTradesLastTimestamp: stamp(rows["trades:ETH"] && rows["trades:ETH"].lastMessageAt),
+      hypeTradesLastTimestamp: stamp(rows["trades:HYPE"] && rows["trades:HYPE"].lastMessageAt),
+      btcL2BookLastTimestamp: stamp(rows["l2Book:BTC"] && rows["l2Book:BTC"].lastMessageAt),
+      ethL2BookLastTimestamp: stamp(rows["l2Book:ETH"] && rows["l2Book:ETH"].lastMessageAt),
+      hypeL2BookLastTimestamp: stamp(rows["l2Book:HYPE"] && rows["l2Book:HYPE"].lastMessageAt),
+      btcCandleLastTimestamp: stamp(rows["candle:BTC:1m"] && rows["candle:BTC:1m"].lastMessageAt),
+      ethCandleLastTimestamp: stamp(rows["candle:ETH:1m"] && rows["candle:ETH:1m"].lastMessageAt),
+      hypeCandleLastTimestamp: stamp(rows["candle:HYPE:1m"] && rows["candle:HYPE:1m"].lastMessageAt),
+      btcActiveAssetCtxLastTimestamp: stamp(rows["activeAssetCtx:BTC"] && rows["activeAssetCtx:BTC"].lastMessageAt),
+      ethActiveAssetCtxLastTimestamp: stamp(rows["activeAssetCtx:ETH"] && rows["activeAssetCtx:ETH"].lastMessageAt),
+      hypeActiveAssetCtxLastTimestamp: stamp(rows["activeAssetCtx:HYPE"] && rows["activeAssetCtx:HYPE"].lastMessageAt),
+      subscribedChannels: SUBSCRIPTIONS.map(keyFor)
+    };
+  }
+
+  function render() {
+    setText("hydratedAt", state.hydratedAt);
+    setText("browserCanUseWebSocket", state.browserCanUseWebSocket === null ? "waiting" : String(state.browserCanUseWebSocket));
+    setText("attemptedUrl", state.attemptedUrl);
+    setText("websocketStatus", state.websocketStatus);
+    setText("connectionStartedAt", state.connectionStartedAt);
+    setText("lastMessageTimestamp", state.lastMessageTimestamp);
+    setText("reconnectCount", state.reconnectCount);
+    setText("lastError", state.lastError || "-");
+    setText("closeCode", state.closeCode == null ? "-" : state.closeCode);
+    setText("closeReason", state.closeReason || "-");
+    setText("lastSubscriptionSent", state.lastSubscriptionSent || "waiting");
+    setText("userAgent", state.userAgent || "waiting");
+    setText("rawMessagesCount", state.rawMessagesCount);
+    setText("subscriptionAcksCount", state.subscriptionAcksCount);
+    setText("lastRawMessagePreview", state.lastRawMessagePreview || "waiting");
+    Object.keys(rows).forEach(function (key) {
+      var row = rows[key];
+      setText(safeId(key, "ack"), row.acknowledgedAt ? age(row.acknowledgedAt) : "waiting");
+      setText(safeId(key, "last"), age(row.lastMessageAt));
+      setText(safeId(key, "iso"), row.lastMessageAt || "-");
+      setText(safeId(key, "error"), row.error || "-");
+    });
+    var machine = document.getElementById("machine-readable-proof");
+    if (machine) machine.textContent = JSON.stringify(proof(), null, 2);
+    window.__hypurrscopeWsProof = proof();
+  }
+
+  function subscribeAll(ws) {
+    SUBSCRIPTIONS.forEach(function (subscription) {
+      var key = keyFor(subscription);
+      ws.send(JSON.stringify({ method: "subscribe", subscription: subscription }));
+      state.lastSubscriptionSent = key;
+      log("sent subscription " + key);
+      render();
+    });
+  }
+
+  function scheduleReconnect() {
+    if (stopped) return;
+    state.websocketStatus = "reconnecting";
+    state.reconnectCount += 1;
+    state.lastError = state.lastError || "WebSocket disconnected; reconnecting";
+    render();
+    var delay = Math.min(15000, 1000 * Math.max(1, Math.pow(2, Math.min(reconnectAttempts, 4))));
+    reconnectAttempts += 1;
+    if (reconnectTimer) window.clearTimeout(reconnectTimer);
+    log("reconnecting in " + delay + "ms");
+    reconnectTimer = window.setTimeout(connect, delay);
+  }
+
+  function connect() {
+    if (stopped) return;
+    if (typeof window.WebSocket !== "function") {
+      state.browserCanUseWebSocket = false;
+      state.websocketStatus = "error";
+      state.lastError = "Browser WebSocket API is unavailable";
+      render();
+      return;
+    }
+    state.hydratedAt = state.hydratedAt || new Date().toISOString();
+    state.browserCanUseWebSocket = true;
+    state.userAgent = window.navigator.userAgent;
+    state.connectionStartedAt = new Date().toISOString();
+    state.websocketStatus = reconnectAttempts ? "reconnecting" : "connecting";
+    state.closeCode = null;
+    state.closeReason = null;
+    state.lastError = null;
+    render();
+    log("opening " + WS_URL);
+
+    socket = new WebSocket(WS_URL);
+    var openTimeout = window.setTimeout(function () {
+      if (!socket || socket.readyState !== WebSocket.CONNECTING) return;
+      state.websocketStatus = "error";
+      state.lastError = "WebSocket connection timed out while connecting to " + WS_URL;
+      render();
+      log(state.lastError);
+      socket.close();
+    }, 20000);
+
+    socket.onopen = function () {
+      window.clearTimeout(openTimeout);
+      reconnectAttempts = 0;
+      state.websocketStatus = "connected";
+      state.lastError = null;
+      render();
+      log("websocket connected");
+      subscribeAll(socket);
+    };
+
+    socket.onmessage = function (event) {
+      state.rawMessagesCount += 1;
+      state.lastRawMessagePreview = String(event.data || "").slice(0, 500);
+      state.lastMessageTimestamp = new Date().toISOString();
+      var message;
+      try {
+        message = JSON.parse(String(event.data || "{}"));
+      } catch (error) {
+        state.websocketStatus = "error";
+        state.lastError = error && error.message ? error.message : String(error);
+        render();
+        log("websocket parse error: " + state.lastError);
+        return;
+      }
+      var channel = String(message.channel || "");
+      var data = message.data;
+      if (channel === "subscriptionResponse") {
+        state.subscriptionAcksCount += 1;
+        var ackSubscription = subscriptionFromAck(message);
+        if (ackSubscription) markAck(ackSubscription);
+        render();
+        return;
+      }
+      if (channel === "error" || message.error) {
+        state.websocketStatus = "error";
+        state.lastError = String(message.error || (data && data.error) || "Hyperliquid WebSocket error");
+        render();
+        log("websocket error message: " + state.lastError);
+        return;
+      }
+      var liveSubscription = subscriptionFromLiveMessage(channel, data, message);
+      if (liveSubscription) markMessage(liveSubscription);
+      render();
+    };
+
+    socket.onerror = function () {
+      state.websocketStatus = "error";
+      state.lastError = "Browser WebSocket error event while connecting to " + WS_URL;
+      render();
+      log(state.lastError);
+    };
+
+    socket.onclose = function (event) {
+      window.clearTimeout(openTimeout);
+      state.closeCode = event.code;
+      state.closeReason = event.reason || "";
+      render();
+      log("websocket closed code=" + event.code + " reason=" + (event.reason || "-"));
+      scheduleReconnect();
+    };
+  }
+
+  SUBSCRIPTIONS.forEach(function (subscription) {
+    ensureRow(subscription);
+  });
+  render();
+  connect();
+  window.setInterval(render, 1000);
+})();
+`;
 }
 
 export default function DebugWsPage() {
-  const [hydratedAt, setHydratedAt] = useState<number | null>(null);
-  const [browserCanUseWebSocket, setBrowserCanUseWebSocket] = useState<boolean | null>(null);
-  const [websocketStatus, setWebsocketStatus] = useState<WsStatus>("connecting");
-  const [connectionStartedAt, setConnectionStartedAt] = useState<number | null>(null);
-  const [lastMessageTimestamp, setLastMessageTimestamp] = useState<number | null>(null);
-  const [reconnectCount, setReconnectCount] = useState(0);
-  const [lastError, setLastError] = useState<string | null>(null);
-  const [closeCode, setCloseCode] = useState<number | null>(null);
-  const [closeReason, setCloseReason] = useState<string | null>(null);
-  const [lastSubscriptionSent, setLastSubscriptionSent] = useState<string | null>(null);
-  const [userAgent, setUserAgent] = useState<string | null>(null);
-  const [rawMessagesCount, setRawMessagesCount] = useState(0);
-  const [subscriptionAcksCount, setSubscriptionAcksCount] = useState(0);
-  const [lastRawMessagePreview, setLastRawMessagePreview] = useState<string | null>(null);
-  const [rows, setRows] = useState<Record<string, Row>>(() => initialRows());
-  const [logs, setLogs] = useState<string[]>([]);
-  const socketRef = useRef<WebSocket | null>(null);
-  const reconnectRef = useRef<number | null>(null);
-  const attemptsRef = useRef(0);
-  const stoppedRef = useRef(false);
-
-  function log(message: string) {
-    const line = `${new Date().toISOString()} ${message}`;
-    console.info(`[HypurrScope debug/ws] ${message}`);
-    setLogs((current) => [line, ...current].slice(0, 100));
-  }
-
-  function markAck(subscription: Subscription, at: number) {
-    const key = keyFor(subscription);
-    setRows((current) => ({
-      ...current,
-      [key]: {
-        ...(current[key] || { key, channel: subscription.type, asset: subscription.coin || "all", acknowledgedAt: null, lastMessageAt: null, error: null }),
-        acknowledgedAt: at,
-        error: null,
-      },
-    }));
-    log(`subscription acknowledged ${key}`);
-  }
-
-  function markMessage(subscription: Subscription, at: number) {
-    const key = keyFor(subscription);
-    setRows((current) => ({
-      ...current,
-      [key]: {
-        ...(current[key] || { key, channel: subscription.type, asset: subscription.coin || "all", acknowledgedAt: null, lastMessageAt: null, error: null }),
-        lastMessageAt: at,
-        error: null,
-      },
-    }));
-    setWebsocketStatus("streaming");
-    setLastError(null);
-    setLastMessageTimestamp(at);
-  }
-
-  useEffect(() => {
-    stoppedRef.current = false;
-    setHydratedAt(Date.now());
-    setBrowserCanUseWebSocket(typeof window.WebSocket === "function");
-    setUserAgent(window.navigator.userAgent);
-
-    function subscribeAll(socket: WebSocket) {
-      SUBSCRIPTIONS.forEach((subscription) => {
-        const key = keyFor(subscription);
-        socket.send(JSON.stringify({ method: "subscribe", subscription }));
-        setLastSubscriptionSent(key);
-        log(`sent subscription ${key}`);
-      });
-    }
-
-    function scheduleReconnect() {
-      if (stoppedRef.current) return;
-      setWebsocketStatus("reconnecting");
-      setReconnectCount((current) => current + 1);
-      setLastError((current) => current || "WebSocket disconnected; reconnecting");
-      const delay = Math.min(15_000, 1_000 * Math.max(1, 2 ** Math.min(attemptsRef.current, 4)));
-      attemptsRef.current += 1;
-      if (reconnectRef.current) window.clearTimeout(reconnectRef.current);
-      log(`reconnecting in ${delay}ms`);
-      reconnectRef.current = window.setTimeout(connect, delay);
-    }
-
-    function connect() {
-      if (stoppedRef.current) return;
-      if (typeof window.WebSocket !== "function") {
-        setWebsocketStatus("error");
-        setLastError("Browser WebSocket API is unavailable");
-        return;
-      }
-
-      setCloseCode(null);
-      setCloseReason(null);
-      setWebsocketStatus(attemptsRef.current ? "reconnecting" : "connecting");
-      setLastError(null);
-      log(`opening ${WS_URL}`);
-
-      const socket = new WebSocket(WS_URL);
-      socketRef.current = socket;
-      const openTimeout = window.setTimeout(() => {
-        if (socket.readyState !== WebSocket.CONNECTING) return;
-        const error = `WebSocket connection timed out while connecting to ${WS_URL}`;
-        setWebsocketStatus("error");
-        setLastError(error);
-        log(error);
-        socket.close();
-      }, 20_000);
-
-      socket.onopen = () => {
-        window.clearTimeout(openTimeout);
-        attemptsRef.current = 0;
-        setConnectionStartedAt(Date.now());
-        setWebsocketStatus("connected");
-        setLastError(null);
-        log("websocket connected");
-        subscribeAll(socket);
-      };
-
-      socket.onmessage = (event) => {
-        const at = Date.now();
-        setRawMessagesCount((current) => current + 1);
-        setLastRawMessagePreview(String(event.data || "").slice(0, 500));
-        setLastMessageTimestamp(at);
-
-        let message: any;
-        try {
-          message = JSON.parse(String(event.data || "{}"));
-        } catch (error) {
-          const errorText = error instanceof Error ? error.message : String(error);
-          setWebsocketStatus("error");
-          setLastError(errorText);
-          log(`websocket parse error: ${errorText}`);
-          return;
-        }
-
-        const channel = String(message.channel || "");
-        const data = message.data;
-
-        if (channel === "subscriptionResponse") {
-          setSubscriptionAcksCount((current) => current + 1);
-          const subscription = subscriptionFromAck(message);
-          if (subscription) markAck(subscription, at);
-          return;
-        }
-
-        if (channel === "error" || message.error) {
-          const errorText = String(message.error || data?.error || "Hyperliquid WebSocket error");
-          setWebsocketStatus("error");
-          setLastError(errorText);
-          log(`websocket error message: ${errorText}`);
-          return;
-        }
-
-        const subscription = subscriptionFromLiveMessage(channel, data, message);
-        if (subscription) markMessage(subscription, at);
-      };
-
-      socket.onerror = () => {
-        setWebsocketStatus("error");
-        setLastError(`Browser WebSocket error event while connecting to ${WS_URL}`);
-        log(`Browser WebSocket error event while connecting to ${WS_URL}`);
-      };
-
-      socket.onclose = (event) => {
-        window.clearTimeout(openTimeout);
-        setCloseCode(event.code);
-        setCloseReason(event.reason || "");
-        log(`websocket closed code=${event.code} reason=${event.reason || "-"}`);
-        scheduleReconnect();
-      };
-    }
-
-    connect();
-    const staleTimer = window.setInterval(() => {
-      setLastMessageTimestamp((current) => {
-        if (!current || Date.now() - current <= 90_000) return current;
-        setWebsocketStatus((status) => status === "streaming" || status === "connected" ? "stale" : status);
-        setLastError("No WebSocket messages for 90s");
-        return current;
-      });
-    }, 1_000);
-
-    return () => {
-      stoppedRef.current = true;
-      window.clearInterval(staleTimer);
-      if (reconnectRef.current) window.clearTimeout(reconnectRef.current);
-      if (socketRef.current) socketRef.current.close();
-      socketRef.current = null;
-    };
-  }, []);
-
-  const proof = useMemo(() => ({
-    hydratedAt: stamp(hydratedAt),
-    browserCanUseWebSocket,
-    attemptedUrl: WS_URL,
-    websocketStatus,
-    connectionStartedAt: stamp(connectionStartedAt),
-    lastMessageTimestamp: stamp(lastMessageTimestamp),
-    reconnectCount,
-    lastError,
-    closeCode,
-    closeReason,
-    lastSubscriptionSent,
-    userAgent,
-    rawMessagesCount,
-    subscriptionAcksCount,
-    lastRawMessagePreview,
-    btcTradesLastTimestamp: stamp(rows["trades:BTC"]?.lastMessageAt ?? null),
-    ethTradesLastTimestamp: stamp(rows["trades:ETH"]?.lastMessageAt ?? null),
-    hypeTradesLastTimestamp: stamp(rows["trades:HYPE"]?.lastMessageAt ?? null),
-    btcL2BookLastTimestamp: stamp(rows["l2Book:BTC"]?.lastMessageAt ?? null),
-    ethL2BookLastTimestamp: stamp(rows["l2Book:ETH"]?.lastMessageAt ?? null),
-    hypeL2BookLastTimestamp: stamp(rows["l2Book:HYPE"]?.lastMessageAt ?? null),
-    btcCandleLastTimestamp: stamp(rows["candle:BTC:1m"]?.lastMessageAt ?? null),
-    ethCandleLastTimestamp: stamp(rows["candle:ETH:1m"]?.lastMessageAt ?? null),
-    hypeCandleLastTimestamp: stamp(rows["candle:HYPE:1m"]?.lastMessageAt ?? null),
-    btcActiveAssetCtxLastTimestamp: stamp(rows["activeAssetCtx:BTC"]?.lastMessageAt ?? null),
-    ethActiveAssetCtxLastTimestamp: stamp(rows["activeAssetCtx:ETH"]?.lastMessageAt ?? null),
-    hypeActiveAssetCtxLastTimestamp: stamp(rows["activeAssetCtx:HYPE"]?.lastMessageAt ?? null),
-    subscribedChannels: SUBSCRIPTIONS.map(keyFor),
-  }), [
-    hydratedAt,
-    browserCanUseWebSocket,
-    websocketStatus,
-    connectionStartedAt,
-    lastMessageTimestamp,
-    reconnectCount,
-    lastError,
-    closeCode,
-    closeReason,
-    lastSubscriptionSent,
-    userAgent,
-    rawMessagesCount,
-    subscriptionAcksCount,
-    lastRawMessagePreview,
-    rows,
-  ]);
-
   return (
     <main style={{ minHeight: "100vh", margin: 0, padding: 24, background: "#050807", color: "#d7fbe9", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }}>
       <h1 style={{ margin: "0 0 12px", fontSize: 18 }}>HypurrScope WebSocket debug</h1>
       <section style={{ border: "1px solid #244338", padding: 16, marginBottom: 18 }}>
-        <p><strong>hydratedAt:</strong> <span>{stamp(hydratedAt) || "waiting"}</span></p>
-        <p><strong>browserCanUseWebSocket:</strong> <span>{browserCanUseWebSocket === null ? "waiting" : String(browserCanUseWebSocket)}</span></p>
-        <p><strong>attemptedUrl:</strong> <span>{WS_URL}</span></p>
-        <p><strong>websocketStatus:</strong> <span>{websocketStatus}</span></p>
-        <p><strong>connectionStartedAt:</strong> <span>{stamp(connectionStartedAt) || "waiting"}</span></p>
-        <p><strong>lastMessageTimestamp:</strong> <span>{stamp(lastMessageTimestamp) || "waiting"}</span></p>
-        <p><strong>reconnectCount:</strong> <span>{reconnectCount}</span></p>
-        <p><strong>lastError:</strong> <span>{lastError || "-"}</span></p>
-        <p><strong>closeCode:</strong> <span>{closeCode ?? "-"}</span></p>
-        <p><strong>closeReason:</strong> <span>{closeReason || "-"}</span></p>
-        <p><strong>lastSubscriptionSent:</strong> <span>{lastSubscriptionSent || "waiting"}</span></p>
-        <p><strong>userAgent:</strong> <span>{userAgent || "waiting"}</span></p>
-        <p><strong>rawMessagesCount:</strong> <span>{rawMessagesCount}</span></p>
-        <p><strong>subscriptionAcksCount:</strong> <span>{subscriptionAcksCount}</span></p>
-        <p><strong>lastRawMessagePreview:</strong> <span>{lastRawMessagePreview || "waiting"}</span></p>
+        <p><strong>hydratedAt:</strong> <span id="hydratedAt">waiting</span></p>
+        <p><strong>browserCanUseWebSocket:</strong> <span id="browserCanUseWebSocket">waiting</span></p>
+        <p><strong>attemptedUrl:</strong> <span id="attemptedUrl">{WS_URL}</span></p>
+        <p><strong>websocketStatus:</strong> <span id="websocketStatus">connecting</span></p>
+        <p><strong>connectionStartedAt:</strong> <span id="connectionStartedAt">waiting</span></p>
+        <p><strong>lastMessageTimestamp:</strong> <span id="lastMessageTimestamp">waiting</span></p>
+        <p><strong>reconnectCount:</strong> <span id="reconnectCount">0</span></p>
+        <p><strong>lastError:</strong> <span id="lastError">-</span></p>
+        <p><strong>closeCode:</strong> <span id="closeCode">-</span></p>
+        <p><strong>closeReason:</strong> <span id="closeReason">-</span></p>
+        <p><strong>lastSubscriptionSent:</strong> <span id="lastSubscriptionSent">waiting</span></p>
+        <p><strong>userAgent:</strong> <span id="userAgent">waiting</span></p>
+        <p><strong>rawMessagesCount:</strong> <span id="rawMessagesCount">0</span></p>
+        <p><strong>subscriptionAcksCount:</strong> <span id="subscriptionAcksCount">0</span></p>
+        <p><strong>lastRawMessagePreview:</strong> <span id="lastRawMessagePreview">waiting</span></p>
       </section>
       <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 18, fontSize: 12 }}>
         <thead>
           <tr><th>channel</th><th>asset</th><th>ack</th><th>last message</th><th>last message ISO</th><th>error</th></tr>
         </thead>
         <tbody>
-          {Object.values(rows).map((row) => (
-            <tr key={row.key}>
-              <td>{row.channel}</td>
-              <td>{row.asset}</td>
-              <td>{row.acknowledgedAt ? age(row.acknowledgedAt) : "waiting"}</td>
-              <td>{age(row.lastMessageAt)}</td>
-              <td>{stamp(row.lastMessageAt) || "-"}</td>
-              <td>{row.error || "-"}</td>
-            </tr>
-          ))}
+          {SUBSCRIPTIONS.map((subscription) => {
+            const key = keyFor(subscription);
+            return (
+              <tr key={key}>
+                <td>{subscription.type}</td>
+                <td>{subscription.coin || "all"}</td>
+                <td id={rowId(key, "ack")}>waiting</td>
+                <td id={rowId(key, "last")}>waiting</td>
+                <td id={rowId(key, "iso")}>-</td>
+                <td id={rowId(key, "error")}>-</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       <h2 style={{ margin: "0 0 12px", fontSize: 15 }}>Browser console logs</h2>
-      <pre style={{ marginBottom: 18, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.5 }}>{logs.length ? logs.join("\n") : "waiting for browser hydration"}</pre>
+      <pre id="browser-console-logs" style={{ marginBottom: 18, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.5 }}>waiting for browser WebSocket</pre>
       <h2 style={{ margin: "0 0 12px", fontSize: 15 }}>Machine-readable proof</h2>
-      <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.5 }}>{JSON.stringify(proof, null, 2)}</pre>
+      <pre id="machine-readable-proof" style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.5 }}>waiting</pre>
+      <script dangerouslySetInnerHTML={{ __html: debugScript() }} />
     </main>
   );
 }
