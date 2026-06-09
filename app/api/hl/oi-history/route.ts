@@ -42,11 +42,32 @@ function gapRows(sorted: number[]) {
   }));
 }
 
-function windowGaps(sorted: number[], nowMs: number, minutes: number) {
+function missingIntervals(gaps: ReturnType<typeof gapRows>, maxHealthyGapSeconds = 75) {
+  return gaps
+    .filter((gap) => gap.gapSeconds > maxHealthyGapSeconds)
+    .reduce((sum, gap) => sum + Math.max(1, gap.missingApprox), 0);
+}
+
+function averageIntervalSeconds(sorted: number[]) {
+  const gaps = gapRows(sorted);
+  if (!gaps.length) return null;
+  return Math.round(gaps.reduce((sum, gap) => sum + gap.gapSeconds, 0) / gaps.length);
+}
+
+function windowDiagnostics(sorted: number[], nowMs: number, minutes: number) {
   const start = nowMs - minutes * 60_000;
-  const points = [start].concat(sorted.filter((ts) => ts >= start && ts <= nowMs));
-  if (sorted.length && sorted[sorted.length - 1] < nowMs) points.push(nowMs);
-  return gapRows(points).filter((gap) => gap.gapSeconds > 90);
+  const points = sorted.filter((ts) => ts >= start && ts <= nowMs);
+  const gaps = gapRows(points);
+  const newest = sorted[sorted.length - 1] || null;
+  const lastSnapshotAgeSeconds = newest === null ? null : Math.max(0, Math.round((nowMs - newest) / 1000));
+  const trailingMissing = lastSnapshotAgeSeconds !== null && lastSnapshotAgeSeconds > 90 ? 1 : 0;
+  return {
+    expectedSnapshotCount: minutes,
+    actualSnapshotCount: points.length,
+    averageSnapshotIntervalSeconds: averageIntervalSeconds(points),
+    missingSnapshotIntervals: points.length ? missingIntervals(gaps) + trailingMissing : minutes,
+    missingSnapshotIntervalDetails: gaps.filter((gap) => gap.gapSeconds > 75),
+  };
 }
 
 function cadenceDiagnostics(timestamps: string[]) {
@@ -58,10 +79,22 @@ function cadenceDiagnostics(timestamps: string[]) {
       actualSnapshotCount: 0,
       averageSnapshotIntervalSeconds: null,
       missingSnapshotIntervals: [],
+      cadenceStatus: "degraded",
+      lastSnapshotAgeSeconds: null,
+      averageSnapshotIntervalSecondsLast60m: null,
+      averageSnapshotIntervalSecondsLast4h: null,
+      expectedSnapshotCountLast60m: 60,
+      actualSnapshotCountLast60m: 0,
+      missingSnapshotIntervalsLast60m: 60,
+      missingSnapshotIntervalsLast4h: 240,
       health: {
         cadenceStatus: "degraded",
         averageSnapshotIntervalSeconds: null,
         lastSnapshotAgeSeconds: null,
+        averageSnapshotIntervalSecondsLast60m: null,
+        averageSnapshotIntervalSecondsLast4h: null,
+        expectedSnapshotCountLast60m: 60,
+        actualSnapshotCountLast60m: 0,
         missingSnapshotIntervalsLast60m: 60,
         missingSnapshotIntervalsLast4h: 240,
         missingSnapshotIntervalsLast60mDetails: [],
@@ -80,13 +113,13 @@ function cadenceDiagnostics(timestamps: string[]) {
   const averageSnapshotIntervalSeconds = gaps.length
     ? Math.round(gaps.reduce((sum, gap) => sum + gap.gapSeconds, 0) / gaps.length)
     : null;
-  const missingLast60 = windowGaps(sorted, nowMs, 60);
-  const missingLast4h = windowGaps(sorted, nowMs, 240);
+  const last60 = windowDiagnostics(sorted, nowMs, 60);
+  const last4h = windowDiagnostics(sorted, nowMs, 240);
   const lastSnapshotAgeSeconds = Math.max(0, Math.round((nowMs - newest) / 1000));
   const cadenceStatus =
-    missingLast60.length || lastSnapshotAgeSeconds > 120
+    last60.missingSnapshotIntervals > 0 || lastSnapshotAgeSeconds >= 90
       ? "degraded"
-      : missingSnapshotIntervals.length
+      : missingSnapshotIntervals.length || last4h.missingSnapshotIntervals > 0
         ? "healthy_recent_with_historical_gap"
         : "healthy";
 
@@ -97,14 +130,26 @@ function cadenceDiagnostics(timestamps: string[]) {
     actualSnapshotCount: sorted.length,
     averageSnapshotIntervalSeconds,
     missingSnapshotIntervals,
+    cadenceStatus,
+    lastSnapshotAgeSeconds,
+    averageSnapshotIntervalSecondsLast60m: last60.averageSnapshotIntervalSeconds,
+    averageSnapshotIntervalSecondsLast4h: last4h.averageSnapshotIntervalSeconds,
+    expectedSnapshotCountLast60m: last60.expectedSnapshotCount,
+    actualSnapshotCountLast60m: last60.actualSnapshotCount,
+    missingSnapshotIntervalsLast60m: last60.missingSnapshotIntervals,
+    missingSnapshotIntervalsLast4h: last4h.missingSnapshotIntervals,
     health: {
       cadenceStatus,
       averageSnapshotIntervalSeconds,
       lastSnapshotAgeSeconds,
-      missingSnapshotIntervalsLast60m: missingLast60.length,
-      missingSnapshotIntervalsLast4h: missingLast4h.length,
-      missingSnapshotIntervalsLast60mDetails: missingLast60,
-      missingSnapshotIntervalsLast4hDetails: missingLast4h,
+      averageSnapshotIntervalSecondsLast60m: last60.averageSnapshotIntervalSeconds,
+      averageSnapshotIntervalSecondsLast4h: last4h.averageSnapshotIntervalSeconds,
+      expectedSnapshotCountLast60m: last60.expectedSnapshotCount,
+      actualSnapshotCountLast60m: last60.actualSnapshotCount,
+      missingSnapshotIntervalsLast60m: last60.missingSnapshotIntervals,
+      missingSnapshotIntervalsLast4h: last4h.missingSnapshotIntervals,
+      missingSnapshotIntervalsLast60mDetails: last60.missingSnapshotIntervalDetails,
+      missingSnapshotIntervalsLast4hDetails: last4h.missingSnapshotIntervalDetails,
     },
   };
 }
