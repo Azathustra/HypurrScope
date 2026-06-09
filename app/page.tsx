@@ -151,6 +151,7 @@ type AssetState = {
   dataError: string | null;
   candleError: string | null;
   bookError: string | null;
+  backendOi: OiHistoryResponse | null;
   requestFailed: boolean;
 };
 
@@ -202,6 +203,31 @@ type HlBookResponse = {
   depth25bpsUsd?: number | null;
   updatedAt?: string;
   error?: string;
+};
+
+type OiHistoryStatus = "ready" | "warming_up" | "insufficient_history" | "error";
+
+type OiHistoryResponse = {
+  ok: boolean;
+  asset: ApiCoin;
+  currentOiUsd: number | null;
+  oiUsd15mAgo: number | null;
+  oiUsd1hAgo: number | null;
+  oiUsd4hAgo: number | null;
+  oiChange15mPct: number | null;
+  oiChange1hPct: number | null;
+  oiChange4hPct: number | null;
+  availableHistoryMinutes: number;
+  requiredHistoryMinutes: {
+    oi15m: number;
+    oi1h: number;
+    oi4h: number;
+  };
+  snapshotCount?: number;
+  status: OiHistoryStatus;
+  message?: string;
+  error?: string;
+  updatedAt?: string;
 };
 
 type MetricBundle = {
@@ -404,6 +430,7 @@ function emptyAssetState(): AssetState {
     dataError: null,
     candleError: null,
     bookError: null,
+    backendOi: null,
     requestFailed: false,
   };
 }
@@ -590,6 +617,31 @@ async function fetchBook(coin: ApiCoin): Promise<HlBookResponse> {
       ok: false,
       coin,
       error: payload?.error || `Book failed ${coin}: ${response.status}`,
+      updatedAt: payload?.updatedAt,
+    };
+  }
+  return payload;
+}
+
+async function fetchOiHistory(asset: ApiCoin): Promise<OiHistoryResponse> {
+  const params = new URLSearchParams({ asset });
+  const response = await fetch(`/api/hl/oi-history?${params.toString()}`, { cache: "no-store" });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.ok) {
+    return {
+      ok: false,
+      asset,
+      currentOiUsd: null,
+      oiUsd15mAgo: null,
+      oiUsd1hAgo: null,
+      oiUsd4hAgo: null,
+      oiChange15mPct: null,
+      oiChange1hPct: null,
+      oiChange4hPct: null,
+      availableHistoryMinutes: 0,
+      requiredHistoryMinutes: { oi15m: 15, oi1h: 60, oi4h: 240 },
+      status: "error",
+      error: payload?.error || `OI history failed ${asset}: ${response.status}`,
       updatedAt: payload?.updatedAt,
     };
   }
@@ -852,6 +904,17 @@ function oiWarmupLabel(history: OiPoint[], requiredMinutes: number) {
   return `Warming up OI history: ${Math.max(0, spanMinutes)}m / ${requiredMinutes}m`;
 }
 
+function oiBackendLabel(state: AssetState, requiredMinutes: number) {
+  const backend = state.backendOi;
+  if (!backend) return "Loading backend OI history";
+  if (!backend.ok || backend.status === "error") return backend.error || "Backend OI history error";
+  if (backend.message) return backend.message;
+  if (backend.status === "ready") return "";
+  const available = Math.max(0, Math.floor(backend.availableHistoryMinutes || 0));
+  const label = available === 0 && (backend.snapshotCount || 0) > 0 ? "<1" : String(available);
+  return `Warming up OI history: ${label}m / ${requiredMinutes}m`;
+}
+
 function priceChange(candles: Candle[], lookbackMs: number) {
   if (candles.length < 2) return null;
   const last = candles[candles.length - 1];
@@ -918,13 +981,14 @@ function metricsFor(asset: AssetConfig, state: AssetState): MetricBundle {
       ? null
       : spreadBps <= 4 && depth10Bps >= asset.thresholds.minDepthUsd;
   const funding = state.market.fundingPct;
+  const backendOi = state.backendOi?.ok ? state.backendOi : null;
   return {
     price15m: priceChange(state.candles, 15 * 60_000),
     price1h: priceChange(state.candles, 60 * 60_000),
     price24h: state.market.price !== null && state.market.prevPrice ? ((state.market.price - state.market.prevPrice) / state.market.prevPrice) * 100 : null,
-    oi15m: oiChange(state.oiHistory, state.market.oiUsd, 15 * 60_000),
-    oi1h: oiChange(state.oiHistory, state.market.oiUsd, 60 * 60_000),
-    oi4h: oiChange(state.oiHistory, state.market.oiUsd, 4 * 60 * 60_000),
+    oi15m: n(backendOi?.oiChange15mPct),
+    oi1h: n(backendOi?.oiChange1hPct),
+    oi4h: n(backendOi?.oiChange4hPct),
     takerBuy5m: five.buy,
     takerSell5m: five.sell,
     takerBuy15m: fifteen.buy,
@@ -2130,9 +2194,9 @@ function WatchlistTable({
                 <td>{formatUsd(state.market.price)}</td>
                 <td className={directionClass(metrics.price15m)}>{formatPct(metrics.price15m)}</td>
                 <td className={directionClass(metrics.price1h)}>{formatPct(metrics.price1h)}</td>
-                <td>{formatPct(metrics.oi15m, 2, oiWarmupLabel(state.oiHistory, 15))}</td>
-                <td>{formatPct(metrics.oi1h, 2, oiWarmupLabel(state.oiHistory, 60))}</td>
-                <td>{formatPct(metrics.oi4h, 2, oiWarmupLabel(state.oiHistory, 240))}</td>
+                <td>{formatPct(metrics.oi15m, 2, oiBackendLabel(state, 15))}</td>
+                <td>{formatPct(metrics.oi1h, 2, oiBackendLabel(state, 60))}</td>
+                <td>{formatPct(metrics.oi4h, 2, oiBackendLabel(state, 240))}</td>
                 <td className={directionClass(state.market.fundingPct)}>{formatFunding(state.market.fundingPct)}</td>
                 <td className={directionClass(metrics.netFlow5m)}>{metrics.netFlow5m === null ? "Connecting" : formatUsd(metrics.netFlow5m)}</td>
                 <td className={directionClass(metrics.cvd15m)}>{metrics.cvd15m === null ? "Connecting" : formatUsd(metrics.cvd15m)}</td>
@@ -2456,6 +2520,56 @@ export default function Page() {
 
     loadInitialCandlesAndBook();
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBackendOiHistory() {
+      const rows = await Promise.all(
+        ASSETS.map((asset) => fetchOiHistory(asset.apiCoin)
+          .then((payload) => [asset.apiCoin, payload] as const)
+          .catch((error) => [asset.apiCoin, {
+            ok: false,
+            asset: asset.apiCoin,
+            currentOiUsd: null,
+            oiUsd15mAgo: null,
+            oiUsd1hAgo: null,
+            oiUsd4hAgo: null,
+            oiChange15mPct: null,
+            oiChange1hPct: null,
+            oiChange4hPct: null,
+            availableHistoryMinutes: 0,
+            requiredHistoryMinutes: { oi15m: 15, oi1h: 60, oi4h: 240 },
+            status: "error",
+            error: error instanceof Error ? error.message : String(error),
+          } as OiHistoryResponse] as const)),
+      );
+      if (cancelled) return;
+
+      setAssets((current) => {
+        const next = { ...current };
+        ASSET_ORDER.forEach((coin) => {
+          const backendOi = payloadFor(rows, coin) as OiHistoryResponse | undefined;
+          next[coin] = {
+            ...next[coin],
+            backendOi: backendOi || next[coin].backendOi,
+            market: {
+              ...next[coin].market,
+              oiUsd: n(backendOi?.currentOiUsd) ?? next[coin].market.oiUsd,
+            },
+          };
+        });
+        return next;
+      });
+    }
+
+    loadBackendOiHistory();
+    const timer = window.setInterval(loadBackendOiHistory, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -2996,7 +3110,7 @@ export default function Page() {
             <section className="metric-grid">
               <AssetMetricCard label="Price" value={formatUsd(selectedState.market.price)} meta={`15m ${formatPct(selectedMetrics.price15m)} / 1h ${formatPct(selectedMetrics.price1h)}`} title="Price uses Hyperliquid markPx, with allMids as live fallback." timestamp={selectedState.freshness.meta} />
               <AssetMetricCard label="24h volume" value={formatUsd(selectedState.market.volume24hUsd)} meta={`RVOL 5m ${selectedMetrics.relativeVolume5m === null ? "insufficient history" : `${selectedMetrics.relativeVolume5m.toFixed(2)}x`}`} timestamp={selectedState.freshness.meta} />
-              <AssetMetricCard label="Open Interest USD" value={formatUsd(selectedState.market.oiUsd)} meta={`15m ${formatPct(selectedMetrics.oi15m, 2, oiWarmupLabel(selectedState.oiHistory, 15))} / 1h ${formatPct(selectedMetrics.oi1h, 2, oiWarmupLabel(selectedState.oiHistory, 60))} / 4h ${formatPct(selectedMetrics.oi4h, 2, oiWarmupLabel(selectedState.oiHistory, 240))}`} title="Open interest is the current notional value of open perp positions." timestamp={selectedState.freshness.meta} />
+              <AssetMetricCard label="Open Interest USD" value={formatUsd(selectedState.market.oiUsd)} meta={`15m ${formatPct(selectedMetrics.oi15m, 2, oiBackendLabel(selectedState, 15))} / 1h ${formatPct(selectedMetrics.oi1h, 2, oiBackendLabel(selectedState, 60))} / 4h ${formatPct(selectedMetrics.oi4h, 2, oiBackendLabel(selectedState, 240))}`} title="Open interest is the current notional value of open perp positions." timestamp={selectedState.freshness.meta} />
               <AssetMetricCard label="Hourly funding" value={formatFunding(selectedState.market.fundingPct)} meta="raw funding converted to percent" title="Funding shows which side pays to hold perp exposure." timestamp={selectedState.freshness.meta} />
               <AssetMetricCard label="Taker pressure" value={selectedMetrics.netFlow5m === null ? "Loading" : formatUsd(selectedMetrics.netFlow5m)} meta={`5m buy ${formatPct(selectedMetrics.buyRatio5m, 1, "Loading", false)} / 15m ${formatUsd(selectedMetrics.netFlow15m)}`} title="Taker pressure estimates aggressive buy versus sell notional." timestamp={selectedState.freshness.trades} />
               <AssetMetricCard label="Spread + depth" value={selectedMetrics.spreadBps === null ? "Loading" : `${selectedMetrics.spreadBps.toFixed(2)} bps`} meta={`Depth +/-10 bps ${formatUsd(selectedMetrics.depth10Bps)} / +/-25 bps ${formatUsd(selectedMetrics.depth25Bps)}`} title="Liquidity uses spread and +/-10 bps near-book depth from the order book." timestamp={selectedState.freshness.book} />
