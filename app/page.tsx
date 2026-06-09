@@ -8,7 +8,6 @@ type ConnectionState = "loading" | "live" | "stale" | "failed";
 type SignalKind = "Fresh Long" | "Fresh Short" | "Crowded Long" | "Crowded Short";
 type ChartMode = "price" | "oi" | "cvd" | "funding";
 type ChartInterval = "1m" | "5m" | "15m" | "1h";
-type AlertTab = "presets" | "builder" | "saved";
 type AlertFilter = "All" | ApiCoin | "Enabled" | "Disabled";
 type AlertDestination = "Browser" | "Telegram" | "Discord" | "Webhook";
 type TriggerMode = "all" | "any";
@@ -107,6 +106,24 @@ type ChartDataset =
       latest: number | null;
       emptyReason: string;
     };
+
+type LogicalRange = {
+  from: number;
+  to: number;
+};
+
+type ValueRange = {
+  min: number;
+  max: number;
+};
+
+type ChartDragState = {
+  area: "plot" | "xAxis" | "yAxis";
+  startX: number;
+  startY: number;
+  startRange: LogicalRange;
+  startYRange: ValueRange;
+};
 
 type FreshnessMap = Partial<Record<"meta" | "candles" | "book" | "trades" | "ws", number>>;
 
@@ -952,8 +969,19 @@ function formatChartTime(time: number, interval: ChartInterval) {
 
 function TradingChart({ state, mode, interval }: { state: AssetState; mode: ChartMode; interval: ChartInterval }) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [logicalRange, setLogicalRange] = useState<LogicalRange | null>(null);
+  const [manualYRange, setManualYRange] = useState<ValueRange | null>(null);
+  const [drag, setDrag] = useState<ChartDragState | null>(null);
   const dataset = useMemo(() => buildChartDataset(state, mode, interval), [state, mode, interval]);
   const points = dataset.points;
+
+  useEffect(() => {
+    setHoverIndex(null);
+    setLogicalRange(null);
+    setManualYRange(null);
+    setDrag(null);
+  }, [mode, interval]);
+
   const needsMore = points.length < 2;
   if (needsMore) {
     return (
@@ -973,31 +1001,179 @@ function TradingChart({ state, mode, interval }: { state: AssetState; mode: Char
   const chartBottom = height - plot.bottom;
   const plotWidth = chartRight - plot.left;
   const plotHeight = chartBottom - plot.top;
-  const span = Math.max(dataset.max - dataset.min, Math.max(Math.abs(dataset.max), 1) * 0.001);
-  const x = (index: number) => plot.left + (index / Math.max(1, points.length - 1)) * plotWidth;
-  const y = (value: number) => plot.top + (1 - (value - dataset.min) / span) * plotHeight;
-  const yTicks = [dataset.max, dataset.min + span * 0.75, dataset.min + span * 0.5, dataset.min + span * 0.25, dataset.min];
-  const tickIndexes = [0, Math.floor((points.length - 1) / 2), points.length - 1];
-  const activeIndex = clamp(hoverIndex ?? points.length - 1, 0, points.length - 1);
+  const minWindow = Math.min(Math.max(points.length - 1, 1), 18);
+  const maxWindow = Math.max(points.length - 1, 1);
+  const defaultBars = Math.min(points.length, interval === "1m" ? 170 : interval === "5m" ? 190 : 220);
+
+  function normalizeRange(range: LogicalRange): LogicalRange {
+    if (points.length <= 2) return { from: 0, to: points.length - 1 };
+    const width = clamp(range.to - range.from, minWindow, maxWindow);
+    let from = range.from;
+    let to = from + width;
+    if (from < 0) {
+      from = 0;
+      to = width;
+    }
+    if (to > points.length - 1) {
+      to = points.length - 1;
+      from = to - width;
+    }
+    return { from, to };
+  }
+
+  function zoomRange(range: LogicalRange, anchor: number, factor: number): LogicalRange {
+    const current = normalizeRange(range);
+    const width = Math.max(current.to - current.from, 1);
+    const nextWidth = clamp(width * factor, minWindow, maxWindow);
+    const ratio = clamp((anchor - current.from) / width, 0, 1);
+    return normalizeRange({
+      from: anchor - nextWidth * ratio,
+      to: anchor + nextWidth * (1 - ratio),
+    });
+  }
+
+  const currentRange = normalizeRange(logicalRange || { from: Math.max(0, points.length - defaultBars), to: points.length - 1 });
+  const fromIndex = clamp(Math.floor(currentRange.from), 0, points.length - 1);
+  const toIndex = clamp(Math.ceil(currentRange.to), fromIndex + 1, points.length - 1);
+  const visiblePoints = points.slice(fromIndex, toIndex + 1);
+  const visibleValues = dataset.kind === "candles"
+    ? (visiblePoints as Candle[]).flatMap((candle: Candle) => [candle.high, candle.low])
+    : (visiblePoints as ChartPoint[]).map((point: ChartPoint) => point.value);
+  const visibleMin = Math.min(...visibleValues);
+  const visibleMax = Math.max(...visibleValues);
+  const autoSpan = Math.max(visibleMax - visibleMin, Math.max(Math.abs(visibleMax), 1) * 0.001);
+  const autoYRange = { min: visibleMin - autoSpan * 0.08, max: visibleMax + autoSpan * 0.08 };
+  const yRange = manualYRange || autoYRange;
+  const span = Math.max(yRange.max - yRange.min, Math.max(Math.abs(yRange.max), 1) * 0.001);
+  const x = (index: number) => plot.left + ((index - currentRange.from) / Math.max(1, currentRange.to - currentRange.from)) * plotWidth;
+  const y = (value: number) => plot.top + (1 - (value - yRange.min) / span) * plotHeight;
+  const valueAtY = (svgY: number) => yRange.min + (1 - clamp((svgY - plot.top) / plotHeight, 0, 1)) * span;
+  const yTicks = [yRange.max, yRange.min + span * 0.75, yRange.min + span * 0.5, yRange.min + span * 0.25, yRange.min];
+  const tickIndexes = Array.from(new Set([
+    fromIndex,
+    Math.round(fromIndex + (toIndex - fromIndex) * 0.25),
+    Math.round(fromIndex + (toIndex - fromIndex) * 0.5),
+    Math.round(fromIndex + (toIndex - fromIndex) * 0.75),
+    toIndex,
+  ]));
+  const activeIndex = clamp(hoverIndex ?? toIndex, fromIndex, toIndex);
   const active = points[activeIndex];
   const activeValue = active ? dataset.kind === "candles" ? (active as Candle).close : (active as ChartPoint).value : null;
   const latestLabel = dataset.latest === null ? "Loading" : formatChartValue(dataset.latest, mode);
   const linePoints = dataset.kind === "line"
-    ? (points as ChartPoint[]).map((point: ChartPoint, index: number) => `${x(index)},${y(point.value)}`).join(" ")
+    ? (visiblePoints as ChartPoint[]).map((point: ChartPoint, index: number) => `${x(fromIndex + index)},${y(point.value)}`).join(" ")
     : "";
-  const candleWidth = dataset.kind === "candles" ? clamp((plotWidth / Math.max(1, points.length)) * 0.64, 2, 12) : 0;
+  const candleWidth = dataset.kind === "candles" ? clamp((plotWidth / Math.max(1, visiblePoints.length)) * 0.64, 2, 12) : 0;
 
-  function handlePointer(event: React.PointerEvent<SVGSVGElement>) {
+  function svgPoint(event: React.PointerEvent<SVGSVGElement> | React.WheelEvent<SVGSVGElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
-    const svgX = ((event.clientX - rect.left) / rect.width) * width;
-    const rawIndex = Math.round(((svgX - plot.left) / plotWidth) * (points.length - 1));
-    setHoverIndex(clamp(rawIndex, 0, points.length - 1));
+    return {
+      svgX: ((event.clientX - rect.left) / rect.width) * width,
+      svgY: ((event.clientY - rect.top) / rect.height) * height,
+    };
+  }
+
+  function areaFor(svgX: number, svgY: number): "plot" | "xAxis" | "yAxis" {
+    if (svgX >= chartRight) return "yAxis";
+    if (svgY >= chartBottom) return "xAxis";
+    return "plot";
+  }
+
+  function setRangeFromDrag(nextRange: LogicalRange) {
+    setLogicalRange(normalizeRange(nextRange));
+  }
+
+  function handlePointerDown(event: React.PointerEvent<SVGSVGElement>) {
+    const { svgX, svgY } = svgPoint(event);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDrag({
+      area: areaFor(svgX, svgY),
+      startX: svgX,
+      startY: svgY,
+      startRange: currentRange,
+      startYRange: yRange,
+    });
+  }
+
+  function handlePointerMove(event: React.PointerEvent<SVGSVGElement>) {
+    const { svgX, svgY } = svgPoint(event);
+    if (drag) {
+      const deltaX = svgX - drag.startX;
+      const deltaY = svgY - drag.startY;
+      const rangeWidth = Math.max(drag.startRange.to - drag.startRange.from, 1);
+
+      if (drag.area === "plot" || drag.area === "xAxis") {
+        const deltaBars = -(deltaX / plotWidth) * rangeWidth;
+        setRangeFromDrag({ from: drag.startRange.from + deltaBars, to: drag.startRange.to + deltaBars });
+      }
+
+      if (drag.area === "plot") {
+        const yShift = (deltaY / plotHeight) * Math.max(drag.startYRange.max - drag.startYRange.min, 1);
+        setManualYRange({ min: drag.startYRange.min + yShift, max: drag.startYRange.max + yShift });
+      }
+
+      if (drag.area === "yAxis") {
+        const center = (drag.startYRange.max + drag.startYRange.min) / 2;
+        const nextSpan = Math.max((drag.startYRange.max - drag.startYRange.min) * Math.exp(deltaY / 180), Math.abs(center) * 0.0001, 0.000001);
+        setManualYRange({ min: center - nextSpan / 2, max: center + nextSpan / 2 });
+      }
+      return;
+    }
+
+    const rawIndex = Math.round(currentRange.from + ((svgX - plot.left) / plotWidth) * (currentRange.to - currentRange.from));
+    setHoverIndex(clamp(rawIndex, fromIndex, toIndex));
+  }
+
+  function handleWheel(event: React.WheelEvent<SVGSVGElement>) {
+    event.preventDefault();
+    const { svgX, svgY } = svgPoint(event);
+    const area = areaFor(svgX, svgY);
+    const currentYRange = manualYRange || autoYRange;
+
+    if (area === "yAxis") {
+      const anchor = valueAtY(svgY);
+      const factor = event.deltaY > 0 ? 1.14 : 0.88;
+      setManualYRange({
+        min: anchor - (anchor - currentYRange.min) * factor,
+        max: anchor + (currentYRange.max - anchor) * factor,
+      });
+      return;
+    }
+
+    if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      const deltaBars = (event.deltaX / plotWidth) * Math.max(currentRange.to - currentRange.from, 1);
+      setLogicalRange(normalizeRange({ from: currentRange.from + deltaBars, to: currentRange.to + deltaBars }));
+      return;
+    }
+
+    const anchor = currentRange.from + clamp((svgX - plot.left) / plotWidth, 0, 1) * (currentRange.to - currentRange.from);
+    setLogicalRange(zoomRange(currentRange, anchor, event.deltaY > 0 ? 1.16 : 0.86));
+  }
+
+  function resetChart() {
+    setLogicalRange(null);
+    setManualYRange(null);
+    setHoverIndex(null);
+    setDrag(null);
   }
 
   return (
     <div className="radar-chart trading-chart">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${dataset.label} chart`} onPointerMove={handlePointer} onPointerLeave={() => setHoverIndex(null)}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label={`${dataset.label} chart`}
+        onDoubleClick={resetChart}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={() => setDrag(null)}
+        onPointerCancel={() => setDrag(null)}
+        onPointerLeave={() => { if (!drag) setHoverIndex(null); }}
+        onWheel={handleWheel}
+      >
         <rect x={plot.left} y={plot.top} width={plotWidth} height={plotHeight} className="chart-plot-bg" />
+        <rect x={chartRight} y={plot.top} width={plot.right - 8} height={plotHeight} className="chart-axis-zone y-axis" />
+        <rect x={plot.left} y={chartBottom} width={plotWidth} height={plot.bottom - 8} className="chart-axis-zone x-axis" />
         {yTicks.map((tick: number) => {
           const yPos = y(tick);
           return (
@@ -1017,9 +1193,9 @@ function TradingChart({ state, mode, interval }: { state: AssetState; mode: Char
             </g>
           );
         })}
-        {dataset.kind === "candles" && (points as Candle[]).map((candle: Candle, index: number) => {
+        {dataset.kind === "candles" && (visiblePoints as Candle[]).map((candle: Candle, index: number) => {
           const up = candle.close >= candle.open;
-          const xPos = x(index);
+          const xPos = x(fromIndex + index);
           const openY = y(candle.open);
           const closeY = y(candle.close);
           return (
@@ -1348,21 +1524,6 @@ function AlertPresetGrid({
   );
 }
 
-function AlertTabs({ active, onChange }: { active: AlertTab; onChange: (tab: AlertTab) => void }) {
-  const tabs: Array<[AlertTab, string]> = [
-    ["presets", "Presets"],
-    ["builder", "Create your own"],
-    ["saved", "My alerts"],
-  ];
-  return (
-    <div className="alert-tabs">
-      {tabs.map(([key, label]) => (
-        <button className={active === key ? "active" : ""} key={key} onClick={() => onChange(key)}>{label}</button>
-      ))}
-    </div>
-  );
-}
-
 function NumberField({
   label,
   value,
@@ -1509,7 +1670,6 @@ export default function Page() {
   const [backfillReady, setBackfillReady] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<number | undefined>();
   const [alerts, setAlerts] = useState<AlertRule[]>([]);
-  const [alertTab, setAlertTab] = useState<AlertTab>("presets");
   const [alertFilter, setAlertFilter] = useState<AlertFilter>("All");
   const [customDraft, setCustomDraft] = useState<CustomAlertDraft>(() => defaultCustomDraft(ASSET_BY_COIN.HYPE));
   const [wallet, setWallet] = useState("");
@@ -1735,7 +1895,6 @@ export default function Page() {
       return [rule].concat(current).slice(0, 60);
     });
     setView("alerts");
-    setAlertTab("saved");
   }
 
   function createAlert(signal: SignalReadiness) {
@@ -1959,42 +2118,23 @@ export default function Page() {
         {view === "alerts" && (
           <>
             <PageHead title="Alerts" subtitle="Presets and custom rules are controlled by the selected BTC / ETH / HYPE asset." />
-            <Panel title={`${selectedAsset.shortName} alert console`} right={`${alerts.length} saved`}>
-              <AlertTabs active={alertTab} onChange={setAlertTab} />
-              {alertTab === "presets" && (
-                <>
-                  <div className="alert-section-head">
-                    <strong>{selectedAsset.shortName} preset alerts</strong>
-                    <span>{selectedAsset.bucket} thresholds</span>
-                  </div>
-                  <AlertPresetGrid asset={selectedAsset} alerts={alerts} onCreate={createPresetAlert} />
-                </>
-              )}
-              {alertTab === "builder" && (
-                <>
-                  <div className="alert-section-head">
-                    <strong>Create your own</strong>
-                    <span>{selectedAsset.shortName} defaults are loaded from the selected asset.</span>
-                  </div>
-                  <CustomAlertBuilder
-                    asset={selectedAsset}
-                    draft={customDraft}
-                    duplicate={customDuplicate}
-                    onChange={setCustomDraft}
-                    onCreate={createCustomAlert}
-                  />
-                </>
-              )}
-              {alertTab === "saved" && (
-                <>
-                  <div className="alert-section-head">
-                    <strong>My alerts</strong>
-                    <span>Saved alerts across BTC, ETH and HYPE.</span>
-                  </div>
-                  <MyAlertsTable alerts={alerts} filter={alertFilter} onFilter={setAlertFilter} onToggle={toggleAlert} />
-                </>
-              )}
+            <section className="alert-stack">
+              <Panel title={`${selectedAsset.shortName} preset alerts`} right={`${selectedAsset.bucket} thresholds`}>
+                <AlertPresetGrid asset={selectedAsset} alerts={alerts} onCreate={createPresetAlert} />
               </Panel>
+              <Panel title="Create your own" right={`${selectedAsset.shortName} defaults`}>
+                <CustomAlertBuilder
+                  asset={selectedAsset}
+                  draft={customDraft}
+                  duplicate={customDuplicate}
+                  onChange={setCustomDraft}
+                  onCreate={createCustomAlert}
+                />
+              </Panel>
+              <Panel title="My alerts" right={`${alerts.length} saved`}>
+                <MyAlertsTable alerts={alerts} filter={alertFilter} onFilter={setAlertFilter} onToggle={toggleAlert} />
+              </Panel>
+            </section>
           </>
         )}
 

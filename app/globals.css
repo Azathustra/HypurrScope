@@ -3614,7 +3614,12 @@ td {
   font-size: 0.74rem;
 }
 
-.alert-tabs,
+.alert-stack {
+  display: grid;
+  gap: 12px;
+  margin: 12px 24px 0;
+}
+
 .alert-filter-row {
   display: flex;
   flex-wrap: wrap;
@@ -3622,7 +3627,6 @@ td {
   margin-bottom: 14px;
 }
 
-.alert-tabs button,
 .alert-filter-row button,
 .chart-toolbar button {
   min-height: 34px;
@@ -3635,7 +3639,6 @@ td {
   font-weight: 850;
 }
 
-.alert-tabs button.active,
 .alert-filter-row button.active,
 .chart-toolbar button.active {
   border-color: rgba(124, 247, 199, 0.55);
@@ -3947,6 +3950,7 @@ button:disabled {
   display: block;
   width: 100%;
   height: 390px;
+  cursor: crosshair;
   touch-action: none;
   user-select: none;
 }
@@ -3955,6 +3959,19 @@ button:disabled {
   fill: rgba(5, 10, 8, 0.92);
   stroke: rgba(124, 247, 199, 0.14);
   stroke-width: 1;
+}
+
+.chart-axis-zone {
+  fill: transparent;
+  pointer-events: all;
+}
+
+.chart-axis-zone.y-axis {
+  cursor: ns-resize;
+}
+
+.chart-axis-zone.x-axis {
+  cursor: ew-resize;
 }
 
 .chart-grid {
@@ -4194,6 +4211,7 @@ button:disabled {
   .risk-summary,
   .asset-grid,
   .two-panels,
+  .alert-stack,
   .metric-grid,
   .radar-panel,
   .asset-header,
