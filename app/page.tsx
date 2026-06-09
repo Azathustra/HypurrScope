@@ -10,11 +10,13 @@ type SignalKind = "Fresh Long" | "Fresh Short" | "Crowded Long" | "Crowded Short
 type ChartMode = "price" | "oi" | "cvd" | "funding";
 type ChartInterval = "1m" | "5m" | "15m" | "1h";
 type AlertFilter = "All" | ApiCoin | "Enabled" | "Disabled";
-type FlowFilter = "All" | ApiCoin | "Large trades" | "Taker bursts" | "OI spikes" | "Funding stress" | "TWAP-like";
+type FlowFilter = "All" | ApiCoin | "Large trades" | "Taker bursts";
 type AlertDestination = "Browser" | "Telegram" | "Webhook";
 type TriggerMode = "all" | "any";
 type AlertTab = "presets" | "builder" | "saved";
-type FlowStatus = "connecting" | "collecting" | "ready" | "stale";
+type FlowStatus = "connecting" | "collecting" | "streaming" | "stale" | "reconnecting" | "error";
+type WebSocketStatus = "connecting" | "connected" | "streaming" | "stale" | "reconnecting" | "error";
+type WsChannel = "allMids" | "trades" | "l2Book" | "candle" | "activeAssetCtx";
 type SignalStatus = "active" | "near" | "inactive" | "warming_up" | "not_evaluable";
 
 type AssetConfig = {
@@ -276,9 +278,14 @@ type FlowEvent = {
   time: number;
   asset: ApiCoin;
   event: string;
+  eventType: string;
   side: "Buy" | "Sell" | "Mixed" | "-";
   size: string;
+  notionalUsd: number | null;
+  price: number | null;
   context: string;
+  source: "websocket trades";
+  status: "live" | "stale";
 };
 
 type AlertRule = {
@@ -321,6 +328,33 @@ type CustomAlertDraft = {
 type FlowDisplayState = {
   status: FlowStatus;
   minutes: number;
+  wsStatus: WebSocketStatus;
+  tradeStreamsActive: boolean;
+  hypeError: string | null;
+};
+
+type WsSubscription = {
+  type: WsChannel;
+  coin?: ApiCoin;
+  interval?: "1m";
+};
+
+type WsSubscriptionDebug = {
+  key: string;
+  channel: WsChannel;
+  asset: ApiCoin | "all";
+  acknowledgedAt: number | null;
+  lastMessageAt: number | null;
+  error: string | null;
+};
+
+type WsDebugState = {
+  status: WebSocketStatus;
+  connectedAt: number | null;
+  lastMessageAt: number | null;
+  reconnects: number;
+  error: string | null;
+  subscriptions: Record<string, WsSubscriptionDebug>;
 };
 
 type WalletPosition = {
@@ -403,6 +437,15 @@ const CHART_INTERVALS: Array<{ key: ChartInterval; label: string; ms: number }> 
   { key: "1h", label: "1h", ms: 60 * 60_000 },
 ];
 const HYPERLIQUID_WS_URL = "wss://api.hyperliquid.xyz/ws";
+const WS_SUBSCRIPTIONS: WsSubscription[] = [
+  { type: "allMids" },
+  ...ASSET_ORDER.flatMap((coin): WsSubscription[] => [
+    { type: "trades", coin },
+    { type: "l2Book", coin },
+    { type: "candle", coin, interval: "1m" as const },
+    { type: "activeAssetCtx", coin },
+  ]),
+];
 const EMPTY_MARKET: MarketCtx = {
   price: null,
   prevPrice: null,
@@ -450,6 +493,94 @@ function n(value: unknown) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function subscriptionKey(subscription: WsSubscription) {
+  const coin = subscription.coin ? `:${subscription.coin}` : "";
+  const interval = subscription.interval ? `:${subscription.interval}` : "";
+  return `${subscription.type}${coin}${interval}`;
+}
+
+function subscriptionFromMessage(data: any): WsSubscription | null {
+  const raw = data?.subscription || data?.data?.subscription;
+  const type = raw?.type;
+  if (!["allMids", "trades", "l2Book", "candle", "activeAssetCtx"].includes(type)) return null;
+  const coin = ASSET_ORDER.includes(raw?.coin) ? raw.coin as ApiCoin : undefined;
+  return {
+    type,
+    coin,
+    interval: raw?.interval === "1m" ? "1m" : undefined,
+  } as WsSubscription;
+}
+
+function messageAsset(data: any): ApiCoin | null {
+  const coin = data?.coin || data?.s || data?.ctx?.coin;
+  return ASSET_ORDER.includes(coin) ? coin : null;
+}
+
+function createWsDebugState(status: WebSocketStatus, previous?: WsDebugState): WsDebugState {
+  const subscriptions = Object.fromEntries(WS_SUBSCRIPTIONS.map((subscription) => {
+    const key = subscriptionKey(subscription);
+    const old = previous?.subscriptions[key];
+    return [key, {
+      key,
+      channel: subscription.type,
+      asset: subscription.coin || "all",
+      acknowledgedAt: old?.acknowledgedAt ?? null,
+      lastMessageAt: old?.lastMessageAt ?? null,
+      error: old?.error ?? null,
+    } satisfies WsSubscriptionDebug];
+  })) as Record<string, WsSubscriptionDebug>;
+
+  return {
+    status,
+    connectedAt: previous?.connectedAt ?? null,
+    lastMessageAt: previous?.lastMessageAt ?? null,
+    reconnects: previous?.reconnects ?? 0,
+    error: previous?.error ?? null,
+    subscriptions,
+  };
+}
+
+function markWsSubscription(state: WsDebugState, subscription: WsSubscription, timestamp: number) {
+  const key = subscriptionKey(subscription);
+  const current = state.subscriptions[key] || {
+    key,
+    channel: subscription.type,
+    asset: subscription.coin || "all",
+    acknowledgedAt: null,
+    lastMessageAt: null,
+    error: null,
+  };
+  return {
+    ...state,
+    subscriptions: {
+      ...state.subscriptions,
+      [key]: { ...current, acknowledgedAt: timestamp, error: null },
+    },
+  };
+}
+
+function markWsMessage(state: WsDebugState, subscription: WsSubscription, timestamp: number) {
+  const key = subscriptionKey(subscription);
+  const current = state.subscriptions[key] || {
+    key,
+    channel: subscription.type,
+    asset: subscription.coin || "all",
+    acknowledgedAt: null,
+    lastMessageAt: null,
+    error: null,
+  };
+  return {
+    ...state,
+    status: "streaming" as WebSocketStatus,
+    lastMessageAt: timestamp,
+    error: null,
+    subscriptions: {
+      ...state.subscriptions,
+      [key]: { ...current, lastMessageAt: timestamp, error: null },
+    },
+  };
 }
 
 function median(values: number[]) {
@@ -876,12 +1007,11 @@ function mergeCandle(existing: Candle[], incoming: Candle) {
 }
 
 function appendTrades(existing: Trade[], incoming: Trade[]) {
-  const cutoff = Date.now() - 60 * 60 * 1000;
   const byId = new Map<string, Trade>();
   existing.concat(incoming).forEach((trade) => {
-    if (trade.time >= cutoff) byId.set(trade.id, trade);
+    byId.set(trade.id, trade);
   });
-  return Array.from(byId.values()).sort((a, b) => b.time - a.time).slice(0, 500);
+  return Array.from(byId.values()).sort((a, b) => b.time - a.time).slice(0, 3000);
 }
 
 function appendOi(existing: OiPoint[], oiUsd: number | null) {
@@ -1163,7 +1293,9 @@ function signalBadge(signal: SignalReadiness | null) {
 
 function buildFlowEvents(asset: AssetConfig, state: AssetState, metrics: MetricBundle): FlowEvent[] {
   const events: FlowEvent[] = [];
-  const recentTrades = windowTrades(state.trades, 60 * 60_000);
+  const recentTrades = state.trades;
+  const sourceStatus: FlowEvent["status"] = freshnessState(state.freshness.trades) === "stale" ? "stale" : "live";
+
   recentTrades
     .filter((trade) => trade.notionalUsd >= asset.thresholds.largeTradeUsd)
     .slice(0, 15)
@@ -1173,68 +1305,33 @@ function buildFlowEvents(asset: AssetConfig, state: AssetState, metrics: MetricB
         time: trade.time,
         asset: asset.apiCoin,
         event: "Large trade",
+        eventType: "Large trade",
         side: trade.side,
         size: formatUsd(trade.notionalUsd),
-        context: `threshold ${formatUsd(asset.thresholds.largeTradeUsd)}`,
+        notionalUsd: trade.notionalUsd,
+        price: trade.price,
+        context: `single taker ${trade.side.toLowerCase()} >= ${formatUsd(asset.thresholds.largeTradeUsd)}`,
+        source: "websocket trades",
+        status: sourceStatus,
       });
     });
 
   if (metrics.netFlow5m !== null && Math.abs(metrics.netFlow5m) >= asset.thresholds.flow5mUsd) {
+    const side = metrics.netFlow5m >= 0 ? "Buy" : "Sell";
     events.push({
-      id: `${asset.apiCoin}-burst-${Math.round(Date.now() / 60_000)}`,
+      id: `${asset.apiCoin}-burst-${side}-${Math.round(Date.now() / 60_000)}`,
       time: Date.now(),
       asset: asset.apiCoin,
       event: "Flow burst",
-      side: metrics.netFlow5m >= 0 ? "Buy" : "Sell",
+      eventType: "Flow burst",
+      side,
       size: formatUsd(Math.abs(metrics.netFlow5m)),
-      context: `5m threshold ${formatUsd(asset.thresholds.flow5mUsd)}`,
+      notionalUsd: Math.abs(metrics.netFlow5m),
+      price: state.market.price,
+      context: `5m net ${side.toLowerCase()} flow >= ${formatUsd(asset.thresholds.flow5mUsd)}`,
+      source: "websocket trades",
+      status: sourceStatus,
     });
-  }
-
-  if (metrics.oi15m !== null && metrics.oi15m >= asset.thresholds.oi15mPct) {
-    events.push({
-      id: `${asset.apiCoin}-oi15-${Math.round(Date.now() / 60_000)}`,
-      time: Date.now(),
-      asset: asset.apiCoin,
-      event: "OI spike",
-      side: "-",
-      size: formatPct(metrics.oi15m),
-      context: `15m threshold ${formatPct(asset.thresholds.oi15mPct, 2, "", false)}`,
-    });
-  }
-
-  if (metrics.fundingPct !== null && Math.abs(metrics.fundingPct) >= asset.thresholds.fundingPct) {
-    events.push({
-      id: `${asset.apiCoin}-funding-${Math.round(Date.now() / 60_000)}`,
-      time: Date.now(),
-      asset: asset.apiCoin,
-      event: "Funding stress",
-      side: metrics.fundingPct >= 0 ? "Buy" : "Sell",
-      size: formatFunding(metrics.fundingPct),
-      context: `crowded threshold +/-${formatPct(asset.thresholds.fundingPct, 3, "", false)}`,
-    });
-  }
-
-  if (asset.apiCoin === "HYPE") {
-    const sameSide = recentTrades.slice(0, 12);
-    const buyCount = sameSide.filter((trade) => trade.side === "Buy").length;
-    const sellCount = sameSide.filter((trade) => trade.side === "Sell").length;
-    const dominantSide = buyCount >= sellCount ? "Buy" : "Sell";
-    const dominant = sameSide.filter((trade) => trade.side === dominantSide);
-    const sizes = dominant.map((trade) => trade.notionalUsd);
-    const mid = median(sizes);
-    const similar = mid ? dominant.filter((trade) => Math.abs(trade.notionalUsd - mid) / mid < 0.35).length : 0;
-    if (dominant.length >= 6 && similar >= 4) {
-      events.push({
-        id: `HYPE-twap-${Math.round(Date.now() / 60_000)}`,
-        time: Date.now(),
-        asset: "HYPE",
-        event: "TWAP-like heuristic",
-        side: dominantSide,
-        size: formatUsd(dominant.reduce((sum, trade) => sum + trade.notionalUsd, 0)),
-        context: "same-side repeated trades with similar sizes",
-      });
-    }
   }
 
   return events.sort((a, b) => b.time - a.time).slice(0, 25);
@@ -1251,9 +1348,14 @@ function normalizeStoredFlowEvents(payload: any): FlowEvent[] {
         time,
         asset: row.asset as ApiCoin,
         event: String(row.eventType || "").replaceAll("_", " "),
+        eventType: String(row.eventType || "").replaceAll("_", " "),
         side: row.side || "-",
         size: row.notionalUsd === null || row.notionalUsd === undefined ? "-" : formatUsd(n(row.notionalUsd)),
+        notionalUsd: n(row.notionalUsd),
+        price: n(row.price),
         context: String(row.context || row.signalHint || "stored backend event"),
+        source: "websocket trades",
+        status: "live",
       } satisfies FlowEvent;
     })
     .filter((event: FlowEvent | null): event is FlowEvent => event !== null);
@@ -1271,11 +1373,8 @@ function parseUsdLabel(label: string) {
 
 function flowEventPayload(event: FlowEvent) {
   const eventType =
-    event.event === "Large trade" ? "large_trade" :
-    event.event === "Flow burst" ? "flow_burst" :
-    event.event === "OI spike" ? "oi_spike" :
-    event.event === "Funding stress" ? "funding_stress" :
-    event.event.includes("TWAP") ? "twap_like_heuristic" :
+    event.eventType === "Large trade" ? "large_trade" :
+    event.eventType === "Flow burst" ? "flow_burst" :
     "liquidity_thin";
   return {
     id: event.id,
@@ -1283,10 +1382,12 @@ function flowEventPayload(event: FlowEvent) {
     asset: event.asset,
     eventType,
     side: event.side,
-    notionalUsd: parseUsdLabel(event.size),
-    price: null,
+    notionalUsd: event.notionalUsd,
+    price: event.price,
     context: event.context,
-    signalHint: event.event,
+    signalHint: event.eventType,
+    source: event.source,
+    status: event.status,
     rawPayload: event,
     createdAt: new Date(event.time).toISOString(),
   };
@@ -1779,12 +1880,15 @@ function FlowEventsTable({ events, flowState }: { events: FlowEvent[]; flowState
   if (!events.length) {
     const emptyText =
       flowState.status === "connecting" ? "Connecting to trade stream" :
-      flowState.status === "collecting" ? `Collecting flow history: ${flowState.minutes}m / 60m` :
+      flowState.status === "reconnecting" ? "Reconnecting to Hyperliquid trade stream" :
+      flowState.status === "collecting" ? `Collecting live flow: ${flowState.minutes}m since page open` :
       flowState.status === "stale" ? "Trade stream stale" :
-      "No events above threshold in last 60m";
+      flowState.status === "error" ? "Trade stream error" :
+      "Streaming. No events above threshold since page open";
     return (
       <div className="compact-empty">
         {emptyText}.
+        {flowState.hypeError ? <small>{flowState.hypeError}</small> : null}
         <small>Large trades: BTC $1M, ETH $500K, HYPE $100K. Flow bursts: BTC $10M, ETH $6M, HYPE $1.5M.</small>
       </div>
     );
@@ -1793,17 +1897,20 @@ function FlowEventsTable({ events, flowState }: { events: FlowEvent[]; flowState
     <div className="table-wrap">
       <table>
         <thead>
-          <tr><th>Time</th><th>Asset</th><th>Event</th><th>Side</th><th>Size</th><th>Context</th></tr>
+          <tr><th>Time</th><th>Asset</th><th>Event</th><th>Side</th><th>Notional</th><th>Price</th><th>Context</th><th>Source</th><th>Status</th></tr>
         </thead>
         <tbody>
           {events.map((event) => (
             <tr key={event.id}>
               <td>{new Date(event.time).toLocaleTimeString()}</td>
               <td><strong>{event.asset}</strong></td>
-              <td>{event.event}</td>
+              <td>{event.eventType}</td>
               <td className={event.side === "Buy" ? "positive" : event.side === "Sell" ? "negative" : ""}>{event.side}</td>
               <td>{event.size}</td>
+              <td>{formatUsd(event.price, "-")}</td>
               <td>{event.context}</td>
+              <td>{event.source}</td>
+              <td>{event.status}</td>
             </tr>
           ))}
         </tbody>
@@ -2227,25 +2334,27 @@ function FlowStatusCards({
   const strongestFlow = mostActive ? metricsByAsset[mostActive.apiCoin].netFlow5m : null;
   const label =
     flowState.status === "connecting" ? "Connecting" :
-    flowState.status === "collecting" ? "Collecting history" :
+    flowState.status === "reconnecting" ? "Reconnecting" :
+    flowState.status === "collecting" ? "Collecting live flow" :
     flowState.status === "stale" ? "Stale" :
-    events.length ? "Streaming" : "No events above threshold";
+    flowState.status === "error" ? "Error" :
+    "Streaming";
   return (
     <section className="risk-summary flow-summary">
       <article>
-        <span>Stream status</span>
+        <span>WebSocket status</span>
         <strong>{label}</strong>
-        <small>{flowState.status === "collecting" ? `${flowState.minutes}m / 60m collected` : "Hyperliquid trades feed"}</small>
+        <small>{flowState.hypeError || (flowState.status === "streaming" && !events.length ? "No events above threshold since page open." : `${flowState.minutes}m since page open`)}</small>
       </article>
       <article>
-        <span>Events last 60m</span>
+        <span>Events since page open</span>
         <strong>{events.length}</strong>
-        <small>Large trades, bursts, OI spikes, funding stress and HYPE TWAP-like heuristics.</small>
+        <small>Large trades and 5m taker-flow bursts only.</small>
       </article>
       <article>
         <span>Largest event</span>
         <strong>{largestEvent ? largestEvent.size : "None yet"}</strong>
-        <small>{largestEvent ? `${largestEvent.asset} ${largestEvent.event}` : "Waiting for a qualifying trade."}</small>
+        <small>{largestEvent ? `${largestEvent.asset} ${largestEvent.eventType}` : flowState.hypeError || "Waiting for a qualifying trade."}</small>
       </article>
       <article>
         <span>Strongest net flow</span>
@@ -2259,15 +2368,13 @@ function FlowStatusCards({
 function filterFlowEvents(events: FlowEvent[], filter: FlowFilter) {
   if (filter === "All") return events;
   if (ASSET_ORDER.includes(filter as ApiCoin)) return events.filter((event) => event.asset === filter);
-  if (filter === "Large trades") return events.filter((event) => event.event === "Large trade");
-  if (filter === "Taker bursts") return events.filter((event) => event.event === "Flow burst");
-  if (filter === "OI spikes") return events.filter((event) => event.event === "OI spike");
-  if (filter === "TWAP-like") return events.filter((event) => event.event.includes("TWAP"));
-  return events.filter((event) => event.event === "Funding stress");
+  if (filter === "Large trades") return events.filter((event) => event.eventType === "Large trade");
+  if (filter === "Taker bursts") return events.filter((event) => event.eventType === "Flow burst");
+  return [];
 }
 
 function FlowFilterRow({ filter, onFilter }: { filter: FlowFilter; onFilter: (filter: FlowFilter) => void }) {
-  const filters: FlowFilter[] = ["All", "BTC", "ETH", "HYPE", "Large trades", "Taker bursts", "OI spikes", "Funding stress", "TWAP-like"];
+  const filters: FlowFilter[] = ["All", "BTC", "ETH", "HYPE", "Large trades", "Taker bursts"];
   return (
     <div className="alert-filter-row">
       {filters.map((item) => (
@@ -2342,7 +2449,16 @@ function WalletScanResult({ result }: { result: WalletResult }) {
   );
 }
 
-function QAPanel({ assets, metricsByAsset }: { assets: Record<ApiCoin, AssetState>; metricsByAsset: Record<ApiCoin, MetricBundle> }) {
+function QAPanel({
+  assets,
+  metricsByAsset,
+  wsDebug,
+}: {
+  assets: Record<ApiCoin, AssetState>;
+  metricsByAsset: Record<ApiCoin, MetricBundle>;
+  wsDebug: WsDebugState;
+}) {
+  const subscriptions = Object.values(wsDebug.subscriptions);
   return (
     <Panel title="QA source panel" right="enabled with ?qa=1">
       <div className="table-wrap">
@@ -2375,12 +2491,48 @@ function QAPanel({ assets, metricsByAsset }: { assets: Record<ApiCoin, AssetStat
           </tbody>
         </table>
       </div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>WebSocket status</th><th>Connected at</th><th>Last message</th><th>Reconnects</th><th>Error</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>{wsDebug.status}</strong></td>
+              <td>{wsDebug.connectedAt ? new Date(wsDebug.connectedAt).toLocaleTimeString() : "-"}</td>
+              <td>{wsDebug.lastMessageAt ? ageLabel(wsDebug.lastMessageAt) : "-"}</td>
+              <td>{wsDebug.reconnects}</td>
+              <td>{wsDebug.error || "-"}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Channel</th><th>Asset</th><th>Subscription ack</th><th>Last message</th><th>Error</th></tr></thead>
+          <tbody>
+            {subscriptions.map((subscription) => (
+              <tr key={subscription.key}>
+                <td>{subscription.channel}</td>
+                <td><strong>{subscription.asset}</strong></td>
+                <td>{subscription.acknowledgedAt ? new Date(subscription.acknowledgedAt).toLocaleTimeString() : "Waiting"}</td>
+                <td>{subscription.lastMessageAt ? ageLabel(subscription.lastMessageAt) : "Waiting"}</td>
+                <td>{subscription.error || "-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Panel>
   );
 }
 
 export default function Page() {
   const wsRef = useRef<WebSocket | null>(null);
+  const wsReconnectRef = useRef<number | null>(null);
+  const wsPingRef = useRef<number | null>(null);
+  const wsStaleRef = useRef<number | null>(null);
+  const wsAttemptRef = useRef(0);
+  const wsLastMessageRef = useRef<number | null>(null);
+  const flowOpenedAtRef = useRef(Date.now());
   const [assets, setAssets] = useState<Record<ApiCoin, AssetState>>(initialAssets);
   const [selected, setSelected] = useState<ApiCoin>("HYPE");
   const [view, setView] = useState<View>("overview");
@@ -2393,7 +2545,7 @@ export default function Page() {
   const [alertFilter, setAlertFilter] = useState<AlertFilter>("All");
   const [alertTab, setAlertTab] = useState<AlertTab>("presets");
   const [flowFilter, setFlowFilter] = useState<FlowFilter>("All");
-  const [storedFlowEvents, setStoredFlowEvents] = useState<FlowEvent[]>([]);
+  const [wsDebug, setWsDebug] = useState<WsDebugState>(() => createWsDebugState("connecting"));
   const [customDraft, setCustomDraft] = useState<CustomAlertDraft>(() => defaultCustomDraft(ASSET_BY_COIN.HYPE));
   const [wallet, setWallet] = useState("");
   const [walletError, setWalletError] = useState("");
@@ -2582,13 +2734,6 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/flow-events", { cache: "no-store" })
-      .then((response) => response.ok ? response.json() : { events: [] })
-      .then((payload) => setStoredFlowEvents(normalizeStoredFlowEvents(payload)))
-      .catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
 
     async function loadBackfill() {
@@ -2682,124 +2827,230 @@ export default function Page() {
 
   useEffect(() => {
     if (!backfillReady) return;
-    const ws = new WebSocket(HYPERLIQUID_WS_URL);
-    wsRef.current = ws;
+    let stopped = false;
 
-    const send = (subscription: Record<string, unknown>) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ method: "subscribe", subscription }));
+    const clearWsTimers = () => {
+      if (wsReconnectRef.current) window.clearTimeout(wsReconnectRef.current);
+      if (wsPingRef.current) window.clearInterval(wsPingRef.current);
+      if (wsStaleRef.current) window.clearInterval(wsStaleRef.current);
+      wsReconnectRef.current = null;
+      wsPingRef.current = null;
+      wsStaleRef.current = null;
     };
 
-    ws.onopen = () => {
-      setConnection("live");
-      send({ type: "allMids" });
-      ASSETS.forEach((asset) => {
-        send({ type: "candle", coin: asset.apiCoin, interval: "1m" });
-        send({ type: "trades", coin: asset.apiCoin });
-        send({ type: "l2Book", coin: asset.apiCoin });
-        send({ type: "activeAssetCtx", coin: asset.apiCoin });
+    const subscribeAll = (ws: WebSocket) => {
+      WS_SUBSCRIPTIONS.forEach((subscription) => {
+        ws.send(JSON.stringify({ method: "subscribe", subscription }));
       });
     };
 
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        const channel = String(message.channel || "");
-        const data = message.data;
+    function reconnect() {
+      if (stopped) return;
+      clearWsTimers();
+      setConnection("stale");
+      setWsDebug((current) => ({
+        ...current,
+        status: "reconnecting",
+        reconnects: current.reconnects + 1,
+        error: "WebSocket disconnected; reconnecting",
+      }));
+      const delay = Math.min(15_000, 1_000 * Math.max(1, 2 ** Math.min(wsAttemptRef.current, 4)));
+      wsAttemptRef.current += 1;
+      wsReconnectRef.current = window.setTimeout(connect, delay);
+    }
+
+    function connect() {
+      if (stopped) return;
+      const ws = new WebSocket(HYPERLIQUID_WS_URL);
+      wsRef.current = ws;
+      setWsDebug((current) => ({
+        ...createWsDebugState(wsAttemptRef.current > 0 ? "reconnecting" : "connecting", current),
+        reconnects: current.reconnects,
+        error: null,
+      }));
+
+      ws.onopen = () => {
         const now = Date.now();
+        wsAttemptRef.current = 0;
+        wsLastMessageRef.current = null;
+        setConnection("live");
         setLastUpdate(now);
+        setWsDebug((current) => ({
+          ...createWsDebugState("connected", current),
+          connectedAt: now,
+          reconnects: current.reconnects,
+          error: null,
+        }));
+        subscribeAll(ws);
 
-        if (channel === "allMids" && data?.mids) {
-          setAssets((current) => {
-            const next = { ...current };
-            ASSET_ORDER.forEach((coin) => {
-              const price = n(data.mids[coin]);
-              if (price !== null) {
-                next[coin] = {
-                  ...next[coin],
-                  market: { ...next[coin].market, price },
-                  freshness: { ...next[coin].freshness, meta: now, ws: now },
-                };
-              }
-            });
-            return next;
+        wsPingRef.current = window.setInterval(() => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          if (!wsLastMessageRef.current && Date.now() - now > 45_000) ws.close();
+        }, 30_000);
+
+        wsStaleRef.current = window.setInterval(() => {
+          setWsDebug((current) => {
+            const last = current.lastMessageAt || current.connectedAt;
+            if (!last || Date.now() - last < 90_000 || current.status === "reconnecting" || current.status === "connecting") return current;
+            setConnection("stale");
+            return { ...current, status: "stale", error: "No WebSocket messages for 90s" };
           });
-        }
+        }, 5_000);
+      };
 
-        if (channel === "candle") {
-          const coin = data?.s || data?.coin;
-          if (ASSET_ORDER.includes(coin)) {
-            const candle = normalizeCandles([data]).slice(-1)[0];
-            if (candle) patchAsset(coin, (state) => ({
-              ...state,
-              candles: mergeCandle(state.candles, candle),
-              freshness: { ...state.freshness, candles: now, ws: now },
-            }));
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          const channel = String(message.channel || "");
+          const data = message.data;
+          const now = Date.now();
+          wsLastMessageRef.current = now;
+          setLastUpdate(now);
+
+          if (channel === "subscriptionResponse") {
+            const subscription = subscriptionFromMessage(message);
+            if (subscription) setWsDebug((current) => markWsSubscription(current, subscription, now));
+            return;
           }
-        }
 
-        if (channel === "trades") {
-          const rawRows = Array.isArray(data) ? data : [];
-          const coin = rawRows[0]?.coin || rawRows[0]?.s || message?.subscription?.coin;
-          if (ASSET_ORDER.includes(coin)) {
-            const trades = rawRows.map(normalizeTrade).filter((trade: Trade | null): trade is Trade => trade !== null);
-            patchAsset(coin, (state) => ({
-              ...state,
-              trades: appendTrades(state.trades, trades),
-              freshness: { ...state.freshness, trades: now, ws: now },
-            }));
+          if (channel === "error" || message.error) {
+            const errorText = String(message.error || data?.error || "Hyperliquid WebSocket error");
+            const subscription = subscriptionFromMessage(message);
+            setWsDebug((current) => {
+              const next = { ...current, status: "error" as WebSocketStatus, error: errorText };
+              if (!subscription) return next;
+              const key = subscriptionKey(subscription);
+              const row = next.subscriptions[key];
+              return {
+                ...next,
+                subscriptions: {
+                  ...next.subscriptions,
+                  [key]: row ? { ...row, error: errorText } : {
+                    key,
+                    channel: subscription.type,
+                    asset: subscription.coin || "all",
+                    acknowledgedAt: null,
+                    lastMessageAt: null,
+                    error: errorText,
+                  },
+                },
+              };
+            });
+            setConnection("stale");
+            return;
           }
-        }
 
-        if (channel === "l2Book") {
-          const coin = data?.coin;
-          if (ASSET_ORDER.includes(coin)) {
-            const book = normalizeBook(data);
-            if (book) patchAsset(coin, (state) => ({
-              ...state,
-              book,
-              freshness: { ...state.freshness, book: now, ws: now },
-            }));
+          if (channel === "allMids" && data?.mids) {
+            setWsDebug((current) => markWsMessage(current, { type: "allMids" }, now));
+            setAssets((current) => {
+              const next = { ...current };
+              ASSET_ORDER.forEach((coin) => {
+                const price = n(data.mids[coin]);
+                if (price !== null) {
+                  next[coin] = {
+                    ...next[coin],
+                    market: { ...next[coin].market, price },
+                    freshness: { ...next[coin].freshness, meta: now, ws: now },
+                  };
+                }
+              });
+              return next;
+            });
           }
-        }
 
-        if (channel === "activeAssetCtx") {
-          const coin = data?.coin || data?.ctx?.coin;
-          const ctx = data?.ctx || data;
-          if (ASSET_ORDER.includes(coin)) {
-            const price = n(ctx.markPx ?? ctx.midPx ?? ctx.oraclePx);
-            const midPx = n(ctx.midPx);
-            const fundingRaw = n(ctx.funding);
-            const openInterest = n(ctx.openInterest);
-            const oiUsd = openInterest !== null && price !== null ? openInterest * price : null;
-            patchAsset(coin, (state) => ({
-              ...state,
-              market: {
-                ...state.market,
-                price: price ?? state.market.price,
-                midPx: midPx ?? state.market.midPx,
-                fundingPct: fundingRaw === null ? state.market.fundingPct : fundingRaw * 100,
-                premium: n(ctx.premium) ?? state.market.premium,
-                openInterestRaw: openInterest ?? state.market.openInterestRaw,
-                oiUsd: oiUsd ?? state.market.oiUsd,
-                volume24hUsd: n(ctx.dayNtlVlm) ?? state.market.volume24hUsd,
-                oraclePx: n(ctx.oraclePx) ?? state.market.oraclePx,
-              },
-              oiHistory: appendOi(state.oiHistory, oiUsd ?? state.market.oiUsd),
-              fundingHistory: appendFunding(state.fundingHistory, fundingRaw === null ? state.market.fundingPct : fundingRaw * 100),
-              freshness: { ...state.freshness, meta: now, ws: now },
-            }));
+          if (channel === "candle") {
+            const rows = Array.isArray(data) ? data : [data];
+            rows.forEach((row) => {
+              const coin = messageAsset(row);
+              if (!coin) return;
+              setWsDebug((current) => markWsMessage(current, { type: "candle", coin, interval: "1m" }, now));
+              const candle = normalizeCandles([row]).slice(-1)[0];
+              if (candle) patchAsset(coin, (state) => ({
+                ...state,
+                candles: mergeCandle(state.candles, candle),
+                freshness: { ...state.freshness, candles: now, ws: now },
+              }));
+            });
           }
-        }
-      } catch {
-        return;
-      }
-    };
 
-    ws.onerror = () => setConnection("stale");
-    ws.onclose = () => setConnection((current) => current === "failed" ? "failed" : "stale");
+          if (channel === "trades") {
+            const rawRows = Array.isArray(data) ? data : Array.isArray(data?.trades) ? data.trades : [];
+            const coin = rawRows[0]?.coin || rawRows[0]?.s || messageAsset(data) || message?.subscription?.coin;
+            if (ASSET_ORDER.includes(coin)) {
+              setWsDebug((current) => markWsMessage(current, { type: "trades", coin }, now));
+              const trades = rawRows.map(normalizeTrade).filter((trade: Trade | null): trade is Trade => trade !== null);
+              patchAsset(coin, (state) => ({
+                ...state,
+                trades: appendTrades(state.trades, trades),
+                freshness: { ...state.freshness, trades: now, ws: now },
+              }));
+            }
+          }
+
+          if (channel === "l2Book") {
+            const coin = messageAsset(data);
+            if (coin) {
+              setWsDebug((current) => markWsMessage(current, { type: "l2Book", coin }, now));
+              const book = normalizeBook(data);
+              if (book) patchAsset(coin, (state) => ({
+                ...state,
+                book,
+                freshness: { ...state.freshness, book: now, ws: now },
+              }));
+            }
+          }
+
+          if (channel === "activeAssetCtx") {
+            const coin = messageAsset(data);
+            const ctx = data?.ctx || data;
+            if (coin) {
+              setWsDebug((current) => markWsMessage(current, { type: "activeAssetCtx", coin }, now));
+              const price = n(ctx.markPx ?? ctx.midPx ?? ctx.oraclePx);
+              const midPx = n(ctx.midPx);
+              const fundingRaw = n(ctx.funding);
+              const openInterest = n(ctx.openInterest);
+              const oiUsd = openInterest !== null && price !== null ? openInterest * price : null;
+              patchAsset(coin, (state) => ({
+                ...state,
+                market: {
+                  ...state.market,
+                  price: price ?? state.market.price,
+                  midPx: midPx ?? state.market.midPx,
+                  fundingPct: fundingRaw === null ? state.market.fundingPct : fundingRaw * 100,
+                  premium: n(ctx.premium) ?? state.market.premium,
+                  openInterestRaw: openInterest ?? state.market.openInterestRaw,
+                  oiUsd: oiUsd ?? state.market.oiUsd,
+                  volume24hUsd: n(ctx.dayNtlVlm) ?? state.market.volume24hUsd,
+                  oraclePx: n(ctx.oraclePx) ?? state.market.oraclePx,
+                },
+                oiHistory: appendOi(state.oiHistory, oiUsd ?? state.market.oiUsd),
+                fundingHistory: appendFunding(state.fundingHistory, fundingRaw === null ? state.market.fundingPct : fundingRaw * 100),
+                freshness: { ...state.freshness, meta: now, ws: now },
+              }));
+            }
+          }
+        } catch (error) {
+          setWsDebug((current) => ({
+            ...current,
+            status: "error",
+            error: error instanceof Error ? error.message : String(error),
+          }));
+        }
+      };
+
+      ws.onerror = () => {
+        setConnection("stale");
+        setWsDebug((current) => ({ ...current, status: "error", error: "Hyperliquid WebSocket error" }));
+      };
+      ws.onclose = () => reconnect();
+    }
+
+    connect();
 
     return () => {
-      ws.close();
+      stopped = true;
+      clearWsTimers();
+      if (wsRef.current) wsRef.current.close();
       wsRef.current = null;
     };
   }, [backfillReady]);
@@ -2818,17 +3069,29 @@ export default function Page() {
     const assetState = assets[coin];
     return assetState.market.price !== null && assetState.market.fundingPct !== null && assetState.market.oiUsd !== null && assetState.candles.length >= 2 && assetState.book !== null;
   });
-  const tradeTimes = ASSET_ORDER.flatMap((coin) => assets[coin].trades.map((trade) => trade.time));
-  const oldestTrade = tradeTimes.length ? Math.min(...tradeTimes) : null;
-  const latestTrade = tradeTimes.length ? Math.max(...tradeTimes) : null;
-  const flowHistoryMinutes = oldestTrade ? Math.min(60, Math.max(0, Math.floor((Date.now() - oldestTrade) / 60_000))) : 0;
-  const tradeStreamConnected = ASSET_ORDER.some((coin) => Boolean(assets[coin].freshness.trades));
-  const tradeStreamStale = latestTrade !== null && Date.now() - latestTrade > 120_000;
-  const flowState: FlowDisplayState =
-    connection === "stale" || tradeStreamStale ? { status: "stale", minutes: flowHistoryMinutes } :
-    !tradeStreamConnected ? { status: "connecting", minutes: 0 } :
-    flowHistoryMinutes < 60 ? { status: "collecting", minutes: flowHistoryMinutes } :
-    { status: "ready", minutes: 60 };
+  const flowSinceOpenMinutes = Math.max(0, Math.floor((nowTick - flowOpenedAtRef.current) / 60_000));
+  const tradeSubscriptions = ASSET_ORDER.map((coin) => wsDebug.subscriptions[subscriptionKey({ type: "trades", coin })]);
+  const tradeStreamsActive = tradeSubscriptions.every((subscription) => Boolean(subscription?.lastMessageAt));
+  const tradeStreamStale = tradeSubscriptions.some((subscription) => Boolean(subscription?.lastMessageAt && nowTick - subscription.lastMessageAt > 120_000));
+  const hypeTrade = wsDebug.subscriptions[subscriptionKey({ type: "trades", coin: "HYPE" })];
+  const hypeError =
+    hypeTrade?.error ||
+    (hypeTrade?.lastMessageAt && nowTick - hypeTrade.lastMessageAt > 120_000 ? "HYPE trades stream is stale." : null) ||
+    (!hypeTrade?.lastMessageAt && flowSinceOpenMinutes >= 2 && wsDebug.connectedAt ? "HYPE trades stream has not received messages yet." : null);
+  const flowStatus: FlowStatus =
+    wsDebug.status === "error" ? "error" :
+    wsDebug.status === "reconnecting" ? "reconnecting" :
+    wsDebug.status === "stale" || tradeStreamStale || connection === "stale" ? "stale" :
+    !wsDebug.connectedAt ? "connecting" :
+    !tradeStreamsActive ? "collecting" :
+    "streaming";
+  const flowState: FlowDisplayState = {
+    status: flowStatus,
+    minutes: flowSinceOpenMinutes,
+    wsStatus: wsDebug.status,
+    tradeStreamsActive,
+    hypeError,
+  };
   const state = marketState(signals, metricsByAsset, dataReady, connection);
   const selectedAsset = ASSET_BY_COIN[selected];
   const selectedState = assets[selected];
@@ -2847,19 +3110,10 @@ export default function Page() {
   const liveFlowEvents = useMemo(() => ASSETS.flatMap((asset) => buildFlowEvents(asset, assets[asset.apiCoin], metricsByAsset[asset.apiCoin]))
     .sort((a, b) => b.time - a.time)
     .slice(0, 40), [assets, metricsByAsset]);
-  const flowEvents = Array.from(new Map(storedFlowEvents.concat(liveFlowEvents).map((event) => [event.id, event])).values())
+  const flowEvents = Array.from(new Map(liveFlowEvents.map((event) => [event.id, event])).values())
     .sort((a, b) => b.time - a.time)
     .slice(0, 60);
   const filteredFlowEvents = filterFlowEvents(flowEvents, flowFilter);
-
-  useEffect(() => {
-    if (!liveFlowEvents.length) return;
-    void fetch("/api/flow-events", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(liveFlowEvents.map(flowEventPayload)),
-    }).catch(() => undefined);
-  }, [liveFlowEvents]);
 
   useEffect(() => {
     setCustomDraft(defaultCustomDraft(selectedAsset));
@@ -2980,8 +3234,12 @@ export default function Page() {
   }
 
   const connectionLabel =
+    wsDebug.status === "streaming" ? "Streaming" :
+    wsDebug.status === "connected" ? "Connected" :
+    wsDebug.status === "reconnecting" ? "Reconnecting" :
+    wsDebug.status === "error" ? "Error" :
     connection === "failed" ? "Error" :
-    connection === "loading" ? "Warming up" :
+    connection === "loading" || wsDebug.status === "connecting" ? "Warming up" :
     connection === "stale" ? "Stale" :
     dataReady ? "Connected" :
     "Warming up";
@@ -3042,8 +3300,8 @@ export default function Page() {
               </article>
               <article>
                 <span>Flow status</span>
-                <strong>{flowState.status === "ready" ? "Streaming" : flowState.status === "collecting" ? "Collecting" : flowState.status === "stale" ? "Stale" : "Connecting"}</strong>
-                <small>{flowState.status === "collecting" ? `${flowState.minutes}m / 60m history collected` : "Recent flow uses live trades only."}</small>
+                <strong>{flowState.status === "streaming" ? "Streaming" : flowState.status === "collecting" ? "Collecting" : flowState.status === "reconnecting" ? "Reconnecting" : flowState.status === "stale" ? "Stale" : flowState.status === "error" ? "Error" : "Connecting"}</strong>
+                <small>{flowState.status === "streaming" ? "Live flow since page open." : `Collecting live flow: ${flowState.minutes}m since page open.`}</small>
               </article>
               <article>
                 <span>Alerts</span>
@@ -3073,7 +3331,7 @@ export default function Page() {
               <Panel title="Closest setups" right={activeSignals.length ? `${activeSignals.length} active` : "No active setup"}>
                 <SignalTable signals={signals} onAlert={createAlert} />
               </Panel>
-              <Panel title="Recent Flow Events" right="last 60m">
+              <Panel title="Recent Flow Events" right="since page open">
                 <FlowEventsTable events={flowEvents} flowState={flowState} />
               </Panel>
             </section>
@@ -3142,7 +3400,7 @@ export default function Page() {
                   {selectedSignals.map((signal) => <ReadinessCard signal={signal} key={signal.kind} />)}
                 </div>
               </Panel>
-              <Panel title={`${selectedAsset.shortName} recent flow`} right="last 60m">
+              <Panel title={`${selectedAsset.shortName} recent flow`} right="since page open">
                 <FlowEventsTable events={buildFlowEvents(selectedAsset, selectedState, selectedMetrics)} flowState={flowState} />
               </Panel>
             </section>
@@ -3151,7 +3409,7 @@ export default function Page() {
 
         {view === "flow" && (
           <>
-            <PageHead title="Recent Flow" subtitle="Large trades, flow bursts, OI spikes and HYPE TWAP-like heuristics." />
+            <PageHead title="Recent Flow" subtitle="Live large trades and 5m taker-flow bursts since this page was opened." />
             <FlowStatusCards events={flowEvents} flowState={flowState} metricsByAsset={metricsByAsset} />
             <Panel title="All watched assets" right="BTC / ETH / HYPE">
               <FlowFilterRow filter={flowFilter} onFilter={setFlowFilter} />
@@ -3200,7 +3458,7 @@ export default function Page() {
           </>
         )}
 
-        {qaEnabled ? <QAPanel assets={assets} metricsByAsset={metricsByAsset} /> : null}
+        {qaEnabled ? <QAPanel assets={assets} metricsByAsset={metricsByAsset} wsDebug={wsDebug} /> : null}
       </section>
     </main>
   );
