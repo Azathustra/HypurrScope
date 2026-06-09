@@ -7,6 +7,7 @@ const checks = [
   ["Side rail exists", css.includes(".risk-rail")],
   ["Dense watchlist table", css.includes(".watchlist-table")],
   ["Alert tabs styled", css.includes(".alert-tabs")],
+  ["Panel note style", css.includes(".panel-note")],
   ["Wallet error state", css.includes(".form-error")],
   ["No Recommended now on alerts", !page.includes("Recommended now")],
   ["Preset alert copy", page.includes("Create preset alert")],

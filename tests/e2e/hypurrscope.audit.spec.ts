@@ -85,6 +85,9 @@ test("overview loads cards without market loading placeholders when APIs are ok"
   const markets = await apiOk(page, "/api/hl/markets");
   await overview(page);
   await page.waitForTimeout(5_000);
+  await expect(page.getByText("Best active setup")).toBeVisible();
+  await expect(page.getByTestId("best-active-setup")).toBeVisible();
+  await expect(page.getByTestId("closest-setup-summary")).toContainText(/Closest setup:/);
 
   for (const asset of ASSETS) {
     expect(markets.assets.some((item: any) => item.apiCoin === asset)).toBe(true);
@@ -140,6 +143,7 @@ test("closest setups include all four presets for BTC ETH HYPE", async ({ page }
   await expect(panel.getByText("Structure score")).toBeVisible();
   await expect(panel.getByText("Flow score")).toBeVisible();
   await expect(panel.getByText("Final score")).toBeVisible();
+  await expect(panel.getByText("Flow inputs")).toBeVisible();
   await expect(panel.getByText("Current value / target value")).toBeVisible();
   await expect(panel.getByText("Needs data")).toHaveCount(0);
   await expect(panel.getByText("No score")).toHaveCount(0);
@@ -150,6 +154,7 @@ test("closest setups include all four presets for BTC ETH HYPE", async ({ page }
     }
   }
   await expect(panel.getByText(/Price 15m:|Hourly funding:|Taker buy ratio:/)).toBeVisible();
+  await expect(panel.getByText(/takerBuyRatio5m|netBuyFlow5m|CVD 5m/)).toBeVisible();
 });
 
 test("live flow metrics produce numeric flowScore and finalScore for closest setups", async ({ page }) => {
@@ -170,6 +175,7 @@ test("live flow metrics produce numeric flowScore and finalScore for closest set
       await expect(row.locator('[data-col="flow-score"]'), `${asset} ${preset} flowScore`).toContainText(/^\d+%$/);
       await expect(row.locator('[data-col="final-score"]'), `${asset} ${preset} finalScore`).toContainText(/^\d+%$/);
       await expect(row.locator('[data-col="status"]'), `${asset} ${preset} status`).toContainText(/active|near|inactive/);
+      await expect(row.locator('[data-col="flow-inputs"]'), `${asset} ${preset} flow inputs`).toContainText(/takerBuyRatio5m|takerSellRatio5m|netBuyFlow5m|netSellFlow5m|CVD 5m/);
       await expect(row.locator('[data-col="current-target"]'), `${asset} ${preset} current target`).toContainText(/target|PASS|waiting|flow/i);
     }
   }
@@ -251,6 +257,7 @@ test("wallet scanner rejects invalid addresses and never asks for private creden
 
 test("recent flow does not remain connecting forever when websocket streams", async ({ page }) => {
   await waitForLiveFlowMetrics(page);
+  await expect(page.getByText("Recent Flow only shows threshold events. Flow Score uses continuous taker flow, net flow and CVD.")).toBeVisible();
   await expect(page.getByText("Flow metrics debug")).toBeVisible();
   await expect(page.getByText("Trade side mapping debug")).toBeVisible();
   await expect(page.getByText("takerBuyRatio5m")).toBeVisible();
