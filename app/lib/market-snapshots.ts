@@ -48,6 +48,7 @@ export async function ensureMarketSnapshotsTable() {
         id uuid primary key,
         ts timestamptz not null,
         asset text not null,
+        minute_bucket timestamptz,
         mark_px numeric,
         funding_raw numeric,
         funding_pct_hourly numeric,
@@ -62,6 +63,11 @@ export async function ensureMarketSnapshotsTable() {
         on market_snapshots (asset, ts desc);
       create unique index if not exists market_snapshots_asset_ts_unique_idx
         on market_snapshots (asset, ts);
+      alter table market_snapshots
+        add column if not exists minute_bucket timestamptz;
+      create unique index if not exists market_snapshots_asset_minute_unique_idx
+        on market_snapshots (asset, minute_bucket)
+        where minute_bucket is not null;
     `).then(() => undefined);
   }
   return schemaReady;
@@ -75,6 +81,7 @@ export async function insertMarketSnapshot(input: MarketSnapshotInput) {
         id,
         ts,
         asset,
+        minute_bucket,
         mark_px,
         funding_raw,
         funding_pct_hourly,
@@ -84,8 +91,8 @@ export async function insertMarketSnapshot(input: MarketSnapshotInput) {
         raw_ctx,
         source
       )
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
-      on conflict (asset, ts) do nothing
+      values ($1, $2, $3, date_trunc('minute', $2::timestamptz), $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
+      on conflict (asset, minute_bucket) where minute_bucket is not null do nothing
     `,
     [
       crypto.randomUUID(),
@@ -157,9 +164,12 @@ export async function snapshotCount(asset: SnapshotAsset) {
   const result = await getSnapshotPool().query<{ count: string }>(
     `
       select count(*)::text as count
-      from market_snapshots
-      where asset = $1
-        and open_interest_usd_computed is not null
+      from (
+        select distinct coalesce(minute_bucket, date_trunc('minute', ts)) as minute_bucket
+        from market_snapshots
+        where asset = $1
+          and open_interest_usd_computed is not null
+      ) distinct_minutes
     `,
     [asset],
   );
@@ -170,11 +180,12 @@ export async function snapshotTimeline(asset: SnapshotAsset) {
   await ensureMarketSnapshotsTable();
   const result = await getSnapshotPool().query<{ ts: string }>(
     `
-      select ts
+      select max(ts) as ts
       from market_snapshots
       where asset = $1
         and open_interest_usd_computed is not null
-      order by ts asc
+      group by coalesce(minute_bucket, date_trunc('minute', ts))
+      order by max(ts) asc
     `,
     [asset],
   );

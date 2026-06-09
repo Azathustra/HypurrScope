@@ -2257,6 +2257,7 @@ function FlowMetricsDebugTable({ metricsByAsset }: { metricsByAsset: Record<ApiC
             <th>takerSellRatio5m</th>
             <th>buyNotional5m</th>
             <th>sellNotional5m</th>
+            <th>netFlow5m</th>
             <th>netBuyFlow5m</th>
             <th>netSellFlow5m</th>
             <th>CVD 5m</th>
@@ -2274,6 +2275,7 @@ function FlowMetricsDebugTable({ metricsByAsset }: { metricsByAsset: Record<ApiC
                 <td data-col="taker-sell-ratio-5m">{formatPct(metrics.takerSellRatio5m, 1, "collecting", false)}</td>
                 <td data-col="buy-notional-5m">{formatUsd(metrics.buyNotional5m, "collecting")}</td>
                 <td data-col="sell-notional-5m">{formatUsd(metrics.sellNotional5m, "collecting")}</td>
+                <td data-col="net-flow-5m" className={directionClass(metrics.netFlow5m)}>{formatUsd(metrics.netFlow5m, "collecting")}</td>
                 <td data-col="net-buy-flow-5m" className={directionClass(metrics.netBuyFlow5m)}>{formatUsd(metrics.netBuyFlow5m, "collecting")}</td>
                 <td data-col="net-sell-flow-5m" className={directionClass(metrics.netSellFlow5m)}>{formatUsd(metrics.netSellFlow5m, "collecting")}</td>
                 <td data-col="cvd-5m" className={directionClass(metrics.cvd5m)}>{formatUsd(metrics.cvd5m, "collecting")}</td>
@@ -2306,18 +2308,18 @@ function TradeSideMappingDebugTable({ assetStates }: { assetStates: Record<ApiCo
     <div className="table-wrap">
       <table>
         <thead>
-          <tr><th>Timestamp</th><th>Asset</th><th>Raw trade side</th><th>Interpreted side</th><th>Price</th><th>Size</th><th>Notional</th></tr>
+          <tr><th>Asset</th><th>Raw trade side</th><th>Interpreted side</th><th>Price</th><th>Size</th><th>Notional</th><th>Timestamp</th></tr>
         </thead>
         <tbody>
           {rows.map(({ asset, trade }) => (
             <tr key={`${asset.apiCoin}-${trade.id}`} data-testid="trade-side-row">
-              <td data-col="timestamp">{new Date(trade.time).toLocaleTimeString()}</td>
               <td data-col="asset"><strong>{asset.shortName}</strong></td>
               <td data-col="raw-side">{trade.rawSide || "-"}</td>
               <td data-col="interpreted-side" className={trade.side === "Buy" ? "positive" : "negative"}>{trade.side}</td>
               <td data-col="price">{formatUsd(trade.price)}</td>
               <td data-col="size">{trade.size.toFixed(4)}</td>
               <td data-col="notional">{formatUsd(trade.notionalUsd)}</td>
+              <td data-col="timestamp">{new Date(trade.time).toLocaleTimeString()}</td>
             </tr>
           ))}
         </tbody>
