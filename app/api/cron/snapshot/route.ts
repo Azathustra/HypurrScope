@@ -58,6 +58,7 @@ async function runSnapshot(request: Request) {
 
     let insertedCount = 0;
     const insertedAssets: SnapshotAsset[] = [];
+    const skippedDuplicateAssets: SnapshotAsset[] = [];
 
     for (const asset of TARGET_ASSETS) {
       const row = byAsset.get(asset);
@@ -80,6 +81,8 @@ async function runSnapshot(request: Request) {
       if ((result.rowCount || 0) > 0) {
         insertedCount += result.rowCount || 0;
         insertedAssets.push(asset);
+      } else {
+        skippedDuplicateAssets.push(asset);
       }
     }
 
@@ -88,6 +91,7 @@ async function runSnapshot(request: Request) {
         ok: true,
         insertedCount,
         insertedAssets,
+        skippedDuplicateAssets,
         requestedAt,
         source: "/api/hl/markets",
       },
