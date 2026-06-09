@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { MARKET_ASSET_CONFIG } from "./lib/market-config";
 
 type ApiCoin = "BTC" | "ETH" | "HYPE";
 type View = "overview" | "watchlist" | "asset" | "flow" | "alerts" | "wallet";
@@ -15,6 +14,7 @@ type AlertDestination = "Browser" | "Telegram" | "Webhook";
 type TriggerMode = "all" | "any";
 type AlertTab = "presets" | "builder" | "saved";
 type FlowStatus = "connecting" | "collecting" | "ready" | "stale";
+type SignalStatus = "active" | "near" | "inactive" | "warming_up" | "not_evaluable";
 
 type AssetConfig = {
   apiCoin: ApiCoin;
@@ -62,13 +62,17 @@ type Book = {
   bestBid: number;
   bestAsk: number;
   spreadBps: number | null;
+  depth10Bps: number | null;
+  depth25Bps: number | null;
   depth50Bps: number | null;
 };
 
 type MarketCtx = {
   price: number | null;
   prevPrice: number | null;
+  midPx: number | null;
   fundingPct: number | null;
+  premium: number | null;
   openInterestRaw: number | null;
   oiUsd: number | null;
   volume24hUsd: number | null;
@@ -164,7 +168,11 @@ type MetricBundle = {
   relativeVolume5m: number | null;
   liquidityHealthy: boolean | null;
   spreadBps: number | null;
+  depth10Bps: number | null;
+  depth25Bps: number | null;
   depth50Bps: number | null;
+  fundingDailyPct: number | null;
+  fundingAnnualizedPct: number | null;
   fundingAbsExtreme: boolean | null;
   fundingPct: number | null;
 };
@@ -173,6 +181,7 @@ type SignalReadiness = {
   asset: ApiCoin;
   kind: SignalKind;
   score: number | null;
+  status: SignalStatus;
   active: boolean;
   passed: string[];
   missing: string[];
@@ -198,7 +207,10 @@ type AlertRule = {
   thresholds: Record<string, number | string>;
   triggerMode: TriggerMode;
   triggerCount: number;
+  cooldownSeconds: number;
   createdAt: number;
+  updatedAt: number;
+  lastTriggeredAt: number | null;
   enabled: boolean;
   destination: AlertDestination;
 };
@@ -231,20 +243,72 @@ type FlowDisplayState = {
 type WalletPosition = {
   coin: string;
   size: number | null;
+  side: "Long" | "Short" | "-";
   entryPx: number | null;
+  markPx: number | null;
   positionValue: number | null;
   unrealizedPnl: number | null;
   liquidationPx: number | null;
+  leverage: number | null;
+  marginUsed: number | null;
 };
 
 type WalletResult = {
   accountValue: number | null;
   marginUsed: number | null;
+  totalNotional: number | null;
+  withdrawable: number | null;
   unrealizedPnl: number | null;
   positions: WalletPosition[];
 };
 
-const ASSETS: AssetConfig[] = MARKET_ASSET_CONFIG;
+const ASSETS: AssetConfig[] = [
+  {
+    apiCoin: "BTC",
+    displayName: "BTC",
+    shortName: "BTC",
+    bucket: "Major",
+    thresholds: {
+      largeTradeUsd: 1_000_000,
+      flow5mUsd: 10_000_000,
+      oi15mPct: 0.8,
+      oi4hPct: 3,
+      price15mPct: 0.25,
+      fundingPct: 0.006,
+      minDepthUsd: 5_000_000,
+    },
+  },
+  {
+    apiCoin: "ETH",
+    displayName: "ETH",
+    shortName: "ETH",
+    bucket: "Large cap",
+    thresholds: {
+      largeTradeUsd: 500_000,
+      flow5mUsd: 6_000_000,
+      oi15mPct: 1.25,
+      oi4hPct: 4.5,
+      price15mPct: 0.3,
+      fundingPct: 0.008,
+      minDepthUsd: 2_000_000,
+    },
+  },
+  {
+    apiCoin: "HYPE",
+    displayName: "HYPE",
+    shortName: "HYPE",
+    bucket: "High beta",
+    thresholds: {
+      largeTradeUsd: 100_000,
+      flow5mUsd: 1_500_000,
+      oi15mPct: 2.5,
+      oi4hPct: 8,
+      price15mPct: 0.6,
+      fundingPct: 0.015,
+      minDepthUsd: 350_000,
+    },
+  },
+];
 
 const ASSET_ORDER = ASSETS.map((asset) => asset.apiCoin);
 const ASSET_BY_COIN = Object.fromEntries(ASSETS.map((asset) => [asset.apiCoin, asset])) as Record<ApiCoin, AssetConfig>;
@@ -259,7 +323,9 @@ const HYPERLIQUID_WS_URL = "wss://api.hyperliquid.xyz/ws";
 const EMPTY_MARKET: MarketCtx = {
   price: null,
   prevPrice: null,
+  midPx: null,
   fundingPct: null,
+  premium: null,
   openInterestRaw: null,
   oiUsd: null,
   volume24hUsd: null,
@@ -432,13 +498,16 @@ function normalizeMeta(payload: unknown): Partial<Record<ApiCoin, MarketCtx>> {
     if (!ASSET_ORDER.includes(asset.name as ApiCoin)) return;
     const ctx = contexts[index] || {};
     const price = n(ctx.markPx ?? ctx.midPx ?? ctx.oraclePx);
+    const midPx = n(ctx.midPx);
     const prevPrice = n(ctx.prevDayPx);
     const fundingRaw = n(ctx.funding);
     const openInterest = n(ctx.openInterest);
     result[asset.name as ApiCoin] = {
       price,
       prevPrice,
+      midPx,
       fundingPct: fundingRaw === null ? null : fundingRaw * 100,
+      premium: n(ctx.premium),
       openInterestRaw: openInterest,
       oiUsd: openInterest !== null && price !== null ? openInterest * price : null,
       volume24hUsd: n(ctx.dayNtlVlm),
@@ -495,17 +564,24 @@ function normalizeBook(payload: any): Book | null {
   const bestBid = bids[0].price;
   const bestAsk = asks[0].price;
   const mid = (bestBid + bestAsk) / 2;
-  const lower = mid * 0.999;
-  const upper = mid * 1.001;
-  const bidDepth = bids.filter((level) => level.price >= lower).reduce((sum, level) => sum + level.usd, 0);
-  const askDepth = asks.filter((level) => level.price <= upper).reduce((sum, level) => sum + level.usd, 0);
+  const depthWithinBps = (bps: number) => {
+    const lower = mid * (1 - bps / 10_000);
+    const upper = mid * (1 + bps / 10_000);
+    const bidDepth = bids.filter((level) => level.price >= lower).reduce((sum, level) => sum + level.usd, 0);
+    const askDepth = asks.filter((level) => level.price <= upper).reduce((sum, level) => sum + level.usd, 0);
+    return bidDepth + askDepth;
+  };
+  const depth10Bps = depthWithinBps(10);
+  const depth25Bps = depthWithinBps(25);
   return {
     bids,
     asks,
     bestBid,
     bestAsk,
     spreadBps: mid > 0 ? ((bestAsk - bestBid) / mid) * 10_000 : null,
-    depth50Bps: bidDepth + askDepth,
+    depth10Bps,
+    depth25Bps,
+    depth50Bps: depth10Bps,
   };
 }
 
@@ -632,11 +708,12 @@ function metricsFor(asset: AssetConfig, state: AssetState): MetricBundle {
   const fifteen = flowStats(state.trades, 15 * 60_000);
   const oneHour = flowStats(state.trades, 60 * 60_000);
   const spreadBps = state.book?.spreadBps ?? null;
-  const depth50Bps = state.book?.depth50Bps ?? null;
+  const depth10Bps = state.book?.depth10Bps ?? null;
+  const depth25Bps = state.book?.depth25Bps ?? null;
   const liquidityHealthy =
-    spreadBps === null || depth50Bps === null
+    spreadBps === null || depth10Bps === null
       ? null
-      : spreadBps <= 4 && depth50Bps >= asset.thresholds.minDepthUsd;
+      : spreadBps <= 4 && depth10Bps >= asset.thresholds.minDepthUsd;
   const funding = state.market.fundingPct;
   return {
     price15m: priceChange(state.candles, 15 * 60_000),
@@ -659,7 +736,11 @@ function metricsFor(asset: AssetConfig, state: AssetState): MetricBundle {
     relativeVolume5m: relativeVolume5m(state.candles),
     liquidityHealthy,
     spreadBps,
-    depth50Bps,
+    depth10Bps,
+    depth25Bps,
+    depth50Bps: depth10Bps,
+    fundingDailyPct: funding === null ? null : funding * 24,
+    fundingAnnualizedPct: funding === null ? null : funding * 24 * 365,
     fundingAbsExtreme: funding === null ? null : Math.abs(funding) >= asset.thresholds.fundingPct * 2,
     fundingPct: funding,
   };
@@ -673,7 +754,17 @@ function componentScore(value: number, threshold: number, inverse = false) {
 
 function condition(ok: boolean | null, passLabel: string, missingLabel: string, passed: string[], missing: string[]) {
   if (ok === true) passed.push(passLabel);
+  else if (ok === null) missing.push(`Not evaluated: waiting for ${missingLabel}`);
   else missing.push(missingLabel);
+}
+
+function signalStatus(score: number | null, active: boolean, missing: string[]): SignalStatus {
+  if (score === null) {
+    return missing.some((item) => item.toLowerCase().includes("oi") || item.toLowerCase().includes("waiting")) ? "warming_up" : "not_evaluable";
+  }
+  if (active) return "active";
+  if (score >= 70) return "near";
+  return "inactive";
 }
 
 function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind): SignalReadiness {
@@ -772,14 +863,16 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
 
   const score = rawScores.length ? Math.round(rawScores.reduce((sum, value) => sum + value, 0) / rawScores.length) : null;
   const active = score !== null && missing.length === 0;
+  const status = signalStatus(score, active, missing);
   return {
     asset: asset.apiCoin,
     kind,
     score,
+    status,
     active,
     passed,
     missing,
-    explanation: active ? `${asset.shortName} has an active ${kind.toLowerCase()} setup.` : missing[0] || "insufficient history",
+    explanation: active ? `${asset.shortName} has an active ${kind.toLowerCase()} setup.` : missing[0] || "Not evaluated: waiting for price/funding/OI/flow data",
   };
 }
 
@@ -794,9 +887,11 @@ function bestSignal(signals: SignalReadiness[]) {
 }
 
 function signalBadge(signal: SignalReadiness | null) {
-  if (!signal) return "No active signal";
+  if (!signal) return "Not evaluated";
+  if (signal.score === null) return signal.status === "warming_up" ? "Warming up" : "Not evaluated";
   if (signal.active) return signal.kind;
-  return "No active signal";
+  if (signal.status === "near") return `Near ${signal.kind}`;
+  return "Inactive";
 }
 
 function buildFlowEvents(asset: AssetConfig, state: AssetState, metrics: MetricBundle): FlowEvent[] {
@@ -876,6 +971,58 @@ function buildFlowEvents(asset: AssetConfig, state: AssetState, metrics: MetricB
   }
 
   return events.sort((a, b) => b.time - a.time).slice(0, 25);
+}
+
+function normalizeStoredFlowEvents(payload: any): FlowEvent[] {
+  const rows = Array.isArray(payload?.events) ? payload.events : [];
+  return rows
+    .map((row: any) => {
+      const time = n(row.ts);
+      if (!time || !ASSET_ORDER.includes(row.asset)) return null;
+      return {
+        id: String(row.id),
+        time,
+        asset: row.asset as ApiCoin,
+        event: String(row.eventType || "").replaceAll("_", " "),
+        side: row.side || "-",
+        size: row.notionalUsd === null || row.notionalUsd === undefined ? "-" : formatUsd(n(row.notionalUsd)),
+        context: String(row.context || row.signalHint || "stored backend event"),
+      } satisfies FlowEvent;
+    })
+    .filter((event: FlowEvent | null): event is FlowEvent => event !== null);
+}
+
+function parseUsdLabel(label: string) {
+  const match = label.replace(/[$,]/g, "").match(/^(-?\d+(?:\.\d+)?)([KMB])?$/i);
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) return null;
+  const suffix = match[2]?.toUpperCase();
+  const multiplier = suffix === "B" ? 1_000_000_000 : suffix === "M" ? 1_000_000 : suffix === "K" ? 1_000 : 1;
+  return value * multiplier;
+}
+
+function flowEventPayload(event: FlowEvent) {
+  const eventType =
+    event.event === "Large trade" ? "large_trade" :
+    event.event === "Flow burst" ? "flow_burst" :
+    event.event === "OI spike" ? "oi_spike" :
+    event.event === "Funding stress" ? "funding_stress" :
+    event.event.includes("TWAP") ? "twap_like_heuristic" :
+    "liquidity_thin";
+  return {
+    id: event.id,
+    ts: event.time,
+    asset: event.asset,
+    eventType,
+    side: event.side,
+    notionalUsd: parseUsdLabel(event.size),
+    price: null,
+    context: event.context,
+    signalHint: event.event,
+    rawPayload: event,
+    createdAt: new Date(event.time).toISOString(),
+  };
 }
 
 function marketState(signals: SignalReadiness[], metricsByAsset: Record<ApiCoin, MetricBundle>, dataReady: boolean, connection: ConnectionState) {
@@ -1308,7 +1455,7 @@ function AssetCard({
         <div><span>OI 4h</span><strong>{formatPct(metrics.oi4h, 2, oiWarmupLabel(state.oiHistory, 240))}</strong></div>
         <div><span>Hourly funding</span><strong>{formatFunding(state.market.fundingPct)}</strong></div>
         <div><span>Taker 5m</span><strong>{metrics.netFlow5m === null ? "Loading" : formatUsd(metrics.netFlow5m)}</strong></div>
-        <div><span>Depth +/-10 bps</span><strong>{formatUsd(metrics.depth50Bps, "Loading")}</strong></div>
+        <div><span>Depth +/-10 bps</span><strong>{formatUsd(metrics.depth10Bps, "Loading")}</strong></div>
       </div>
       <small className="asset-source">Source Hyperliquid info/trades/book - {ageLabel(state.freshness.meta || state.freshness.ws)}</small>
       <button className="text-action" onClick={onOpen}>View details</button>
@@ -1319,8 +1466,10 @@ function AssetCard({
 function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert: (signal: SignalReadiness) => void }) {
   const rows = [...signals].sort((a, b) => {
     if (a.active !== b.active) return a.active ? -1 : 1;
+    if (a.score === null && b.score !== null) return 1;
+    if (a.score !== null && b.score === null) return -1;
     return (b.score ?? -1) - (a.score ?? -1);
-  }).slice(0, 8);
+  });
   if (!rows.length) {
     return (
       <div className="compact-empty">
@@ -1340,10 +1489,10 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
             <tr key={`${signal.asset}-${signal.kind}`}>
               <td><strong>{signal.asset}</strong></td>
               <td>{signal.kind}</td>
-              <td>{signal.score === null ? "insufficient history" : `${signal.score}%`}</td>
-              <td>{signal.score === null ? "Warming up" : signal.active ? "Active" : "Nearest"}</td>
-              <td>{signal.active ? "All conditions passed" : signal.missing.slice(0, 2).join(", ") || "No active signal"}</td>
-              <td><button className="table-action" onClick={() => onAlert(signal)}>Create alert</button></td>
+              <td>{signal.score === null ? "No score" : `${signal.score}%`}</td>
+              <td>{signal.status}</td>
+              <td>{signal.active ? "All conditions passed" : signal.missing.slice(0, 2).join(", ") || signal.explanation}</td>
+              <td><button className="table-action" disabled={signal.score === null} onClick={() => onAlert(signal)}>{signal.score === null ? "Needs data" : "Create alert"}</button></td>
             </tr>
           ))}
         </tbody>
@@ -1778,7 +1927,7 @@ function WatchlistTable({
                 <td className={directionClass(metrics.netFlow5m)}>{metrics.netFlow5m === null ? "Connecting" : formatUsd(metrics.netFlow5m)}</td>
                 <td className={directionClass(metrics.cvd15m)}>{metrics.cvd15m === null ? "Connecting" : formatUsd(metrics.cvd15m)}</td>
                 <td>{metrics.spreadBps === null ? "Loading" : `${metrics.spreadBps.toFixed(2)} bps`}</td>
-                <td>{formatUsd(metrics.depth50Bps)}</td>
+                <td>{formatUsd(metrics.depth10Bps)}</td>
                 <td>{signalBadge(signal)}</td>
                 <td><button className="table-action" onClick={() => onOpen(asset.apiCoin)}>View details</button></td>
               </tr>
@@ -1858,19 +2007,27 @@ function normalizeWalletResult(payload: any): WalletResult {
   const positions: WalletPosition[] = (Array.isArray(payload?.assetPositions) ? payload.assetPositions : [])
     .map((row: any) => {
       const position = row?.position || {};
+      const size = n(position.szi);
       return {
         coin: String(position.coin || row.coin || "-"),
-        size: n(position.szi),
+        size,
+        side: size === null ? "-" : size > 0 ? "Long" : "Short",
         entryPx: n(position.entryPx),
+        markPx: n(position.markPx),
         positionValue: n(position.positionValue),
         unrealizedPnl: n(position.unrealizedPnl),
         liquidationPx: n(position.liquidationPx),
+        leverage: n(position.leverage?.value ?? position.leverage),
+        marginUsed: n(position.marginUsed),
       };
     })
     .filter((position: WalletPosition) => position.coin !== "-" && position.size !== null && position.size !== 0);
+  const totalNotional = positions.reduce((sum, position) => sum + Math.abs(position.positionValue ?? 0), 0);
   return {
     accountValue: n(payload?.marginSummary?.accountValue ?? payload?.crossMarginSummary?.accountValue),
     marginUsed: n(payload?.marginSummary?.totalMarginUsed ?? payload?.crossMarginSummary?.totalMarginUsed),
+    totalNotional,
+    withdrawable: n(payload?.withdrawable),
     unrealizedPnl: positions.reduce((sum, position) => sum + (position.unrealizedPnl ?? 0), 0),
     positions,
   };
@@ -1882,22 +2039,28 @@ function WalletScanResult({ result }: { result: WalletResult }) {
       <div className="metric-grid wallet-metrics">
         <AssetMetricCard label="Account value" value={formatUsd(result.accountValue)} meta="clearinghouseState" />
         <AssetMetricCard label="Margin used" value={formatUsd(result.marginUsed)} meta="read-only public address" />
+        <AssetMetricCard label="Total notional" value={formatUsd(result.totalNotional)} meta="open position value" />
+        <AssetMetricCard label="Withdrawable" value={formatUsd(result.withdrawable)} meta="public account field" />
         <AssetMetricCard label="Unrealized PnL" value={formatUsd(result.unrealizedPnl)} meta="sum of open positions" />
       </div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Asset</th><th>Size</th><th>Entry</th><th>Position value</th><th>Unrealized PnL</th><th>Liq price</th></tr></thead>
+          <thead><tr><th>Asset</th><th>Side</th><th>Size</th><th>Entry</th><th>Mark</th><th>Position value</th><th>Unrealized PnL</th><th>Liq price</th><th>Leverage</th><th>Margin used</th></tr></thead>
           <tbody>
             {result.positions.length ? result.positions.map((position) => (
               <tr key={position.coin}>
                 <td><strong>{position.coin}</strong></td>
+                <td>{position.side}</td>
                 <td className={directionClass(position.size)}>{position.size === null ? "Unavailable" : position.size.toFixed(4)}</td>
                 <td>{formatUsd(position.entryPx)}</td>
+                <td>{formatUsd(position.markPx, "Not available")}</td>
                 <td>{formatUsd(position.positionValue)}</td>
                 <td className={directionClass(position.unrealizedPnl)}>{formatUsd(position.unrealizedPnl)}</td>
                 <td>{formatUsd(position.liquidationPx, "Not available")}</td>
+                <td>{position.leverage === null ? "Not available" : `${position.leverage.toFixed(1)}x`}</td>
+                <td>{formatUsd(position.marginUsed, "Not available")}</td>
               </tr>
-            )) : <tr><td colSpan={6}>No open perp positions found for this public address.</td></tr>}
+            )) : <tr><td colSpan={10}>No open perp positions found. Possible reasons: no open positions, wrong address, or an agent wallet instead of the master/sub-account address.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -1910,7 +2073,7 @@ function QAPanel({ assets, metricsByAsset }: { assets: Record<ApiCoin, AssetStat
     <Panel title="QA source panel" right="enabled with ?qa=1">
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Asset</th><th>Raw markPx</th><th>Displayed price</th><th>Raw/display funding</th><th>Raw openInterest</th><th>Displayed OI USD</th><th>Spread</th><th>Depth +/-10bps</th><th>Last meta update</th><th>State</th></tr></thead>
+          <thead><tr><th>Asset</th><th>Raw markPx</th><th>Displayed price</th><th>Raw/display funding</th><th>Raw openInterest</th><th>Displayed OI USD</th><th>Oracle</th><th>Premium</th><th>Spread</th><th>Depth +/-10bps</th><th>Depth +/-25bps</th><th>Meta</th><th>Trades</th><th>Book</th><th>State</th></tr></thead>
           <tbody>
             {ASSETS.map((asset) => {
               const state = assets[asset.apiCoin];
@@ -1923,9 +2086,14 @@ function QAPanel({ assets, metricsByAsset }: { assets: Record<ApiCoin, AssetStat
                   <td>{state.market.fundingPct === null ? "Unavailable" : formatFunding(state.market.fundingPct)}</td>
                   <td>{state.market.openInterestRaw === null ? "Unavailable" : state.market.openInterestRaw.toString()}</td>
                   <td>{formatUsd(state.market.oiUsd, "Unavailable")}</td>
+                  <td>{formatUsd(state.market.oraclePx, "Unavailable")}</td>
+                  <td>{state.market.premium === null ? "Unavailable" : state.market.premium.toString()}</td>
                   <td>{metrics.spreadBps === null ? "Unavailable" : `${metrics.spreadBps.toFixed(3)} bps`}</td>
-                  <td>{formatUsd(metrics.depth50Bps, "Unavailable")}</td>
+                  <td>{formatUsd(metrics.depth10Bps, "Unavailable")}</td>
+                  <td>{formatUsd(metrics.depth25Bps, "Unavailable")}</td>
                   <td>{ageLabel(state.freshness.meta)}</td>
+                  <td>{ageLabel(state.freshness.trades)}</td>
+                  <td>{ageLabel(state.freshness.book)}</td>
                   <td>{state.requestFailed ? "API error" : freshnessState(state.freshness.meta)}</td>
                 </tr>
               );
@@ -1951,6 +2119,7 @@ export default function Page() {
   const [alertFilter, setAlertFilter] = useState<AlertFilter>("All");
   const [alertTab, setAlertTab] = useState<AlertTab>("presets");
   const [flowFilter, setFlowFilter] = useState<FlowFilter>("All");
+  const [storedFlowEvents, setStoredFlowEvents] = useState<FlowEvent[]>([]);
   const [customDraft, setCustomDraft] = useState<CustomAlertDraft>(() => defaultCustomDraft(ASSET_BY_COIN.HYPE));
   const [wallet, setWallet] = useState("");
   const [walletError, setWalletError] = useState("");
@@ -1964,6 +2133,22 @@ export default function Page() {
 
   useEffect(() => {
     setQaEnabled(typeof window !== "undefined" && new URLSearchParams(window.location.search).get("qa") === "1");
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/alerts", { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : { alerts: [] })
+      .then((payload) => {
+        if (Array.isArray(payload.alerts)) setAlerts(payload.alerts);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/flow-events", { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : { events: [] })
+      .then((payload) => setStoredFlowEvents(normalizeStoredFlowEvents(payload)))
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -2121,6 +2306,7 @@ export default function Page() {
           const ctx = data?.ctx || data;
           if (ASSET_ORDER.includes(coin)) {
             const price = n(ctx.markPx ?? ctx.midPx ?? ctx.oraclePx);
+            const midPx = n(ctx.midPx);
             const fundingRaw = n(ctx.funding);
             const openInterest = n(ctx.openInterest);
             const oiUsd = openInterest !== null && price !== null ? openInterest * price : null;
@@ -2129,7 +2315,9 @@ export default function Page() {
               market: {
                 ...state.market,
                 price: price ?? state.market.price,
+                midPx: midPx ?? state.market.midPx,
                 fundingPct: fundingRaw === null ? state.market.fundingPct : fundingRaw * 100,
+                premium: n(ctx.premium) ?? state.market.premium,
                 openInterestRaw: openInterest ?? state.market.openInterestRaw,
                 oiUsd: oiUsd ?? state.market.oiUsd,
                 volume24hUsd: n(ctx.dayNtlVlm) ?? state.market.volume24hUsd,
@@ -2195,10 +2383,22 @@ export default function Page() {
     customDraft.triggerCount,
   );
   const customDuplicate = alerts.some((alert: AlertRule) => alert.fingerprint === customFingerprint);
-  const flowEvents = ASSETS.flatMap((asset) => buildFlowEvents(asset, assets[asset.apiCoin], metricsByAsset[asset.apiCoin]))
+  const liveFlowEvents = useMemo(() => ASSETS.flatMap((asset) => buildFlowEvents(asset, assets[asset.apiCoin], metricsByAsset[asset.apiCoin]))
     .sort((a, b) => b.time - a.time)
-    .slice(0, 40);
+    .slice(0, 40), [assets, metricsByAsset]);
+  const flowEvents = Array.from(new Map(storedFlowEvents.concat(liveFlowEvents).map((event) => [event.id, event])).values())
+    .sort((a, b) => b.time - a.time)
+    .slice(0, 60);
   const filteredFlowEvents = filterFlowEvents(flowEvents, flowFilter);
+
+  useEffect(() => {
+    if (!liveFlowEvents.length) return;
+    void fetch("/api/flow-events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(liveFlowEvents.map(flowEventPayload)),
+    }).catch(() => undefined);
+  }, [liveFlowEvents]);
 
   useEffect(() => {
     setCustomDraft(defaultCustomDraft(selectedAsset));
@@ -2209,16 +2409,23 @@ export default function Page() {
       if (current.some((alert: AlertRule) => alert.fingerprint === rule.fingerprint)) return current;
       return [rule].concat(current).slice(0, 60);
     });
+    void fetch("/api/alerts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(rule),
+    }).catch(() => undefined);
     setView("alerts");
     setAlertTab("saved");
   }
 
   function createAlert(signal: SignalReadiness) {
+    if (signal.score === null) return;
     const asset = ASSET_BY_COIN[signal.asset];
     const thresholds = presetThresholds(asset, signal.kind);
     const triggerCount = Object.keys(thresholds).length;
+    const now = Date.now();
     const rule: AlertRule = {
-      id: `alert-${signal.asset}-${signal.kind}-${Date.now()}`,
+      id: `alert-${signal.asset}-${signal.kind}-${now}`,
       asset: signal.asset,
       kind: signal.kind,
       alertType: "live",
@@ -2226,7 +2433,10 @@ export default function Page() {
       thresholds,
       triggerMode: "all",
       triggerCount,
-      createdAt: Date.now(),
+      cooldownSeconds: 20 * 60,
+      createdAt: now,
+      updatedAt: now,
+      lastTriggeredAt: null,
       enabled: true,
       destination: "Browser",
     };
@@ -2237,8 +2447,9 @@ export default function Page() {
   function createPresetAlert(asset: AssetConfig, kind: SignalKind) {
     const thresholds = presetThresholds(asset, kind);
     const triggerCount = Object.keys(thresholds).length;
+    const now = Date.now();
     saveAlert({
-      id: `preset-${asset.apiCoin}-${kind}-${Date.now()}`,
+      id: `preset-${asset.apiCoin}-${kind}-${now}`,
       asset: asset.apiCoin,
       kind,
       alertType: "preset",
@@ -2246,15 +2457,19 @@ export default function Page() {
       thresholds,
       triggerMode: "all",
       triggerCount,
-      createdAt: Date.now(),
+      cooldownSeconds: 20 * 60,
+      createdAt: now,
+      updatedAt: now,
+      lastTriggeredAt: null,
       enabled: true,
       destination: "Browser",
     });
   }
 
   function createCustomAlert() {
+    const now = Date.now();
     saveAlert({
-      id: `custom-${selected}-${Date.now()}`,
+      id: `custom-${selected}-${now}`,
       asset: selected,
       kind: `Custom ${customDraft.direction}`,
       alertType: "custom",
@@ -2262,14 +2477,26 @@ export default function Page() {
       thresholds: customThresholds(customDraft),
       triggerMode: customDraft.triggerMode,
       triggerCount: customDraft.triggerCount,
-      createdAt: Date.now(),
+      cooldownSeconds: customDraft.cooldownMinutes * 60,
+      createdAt: now,
+      updatedAt: now,
+      lastTriggeredAt: null,
       enabled: true,
       destination: customDraft.destination,
     });
   }
 
   function toggleAlert(id: string) {
-    setAlerts((current) => current.map((alert: AlertRule) => alert.id === id ? { ...alert, enabled: !alert.enabled } : alert));
+    setAlerts((current) => current.map((alert: AlertRule) => {
+      if (alert.id !== id) return alert;
+      const next = { ...alert, enabled: !alert.enabled, updatedAt: Date.now() };
+      void fetch("/api/alerts", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, enabled: next.enabled }),
+      }).catch(() => undefined);
+      return next;
+    }));
   }
 
   async function scanWallet() {
@@ -2350,7 +2577,7 @@ export default function Page() {
               <article>
                 <span>Best setup now</span>
                 <strong>{!dataReady ? "Not available yet" : best?.active ? best.asset : "None"}</strong>
-                <small>{!dataReady ? "Waiting for BTC, ETH and HYPE live source data." : best ? `${best.kind} ${best.score === null ? "warming up" : `${best.score}%`}` : "No active signal"}</small>
+                <small>{!dataReady ? "Waiting for BTC, ETH and HYPE live source data." : best ? `${best.kind} ${best.score === null ? "warming up" : `${best.score}%`}` : "No evaluated setup"}</small>
               </article>
               <article>
                 <span>Flow status</span>
@@ -2381,7 +2608,7 @@ export default function Page() {
             </section>
 
             <section className="two-panels">
-              <Panel title="Closest setups" right={activeSignals.length ? `${activeSignals.length} active` : "No active signal"}>
+              <Panel title="Closest setups" right={activeSignals.length ? `${activeSignals.length} active` : "No active setup"}>
                 <SignalTable signals={signals} onAlert={createAlert} />
               </Panel>
               <Panel title="Recent Flow Events" right="last 60m">
@@ -2410,7 +2637,7 @@ export default function Page() {
               <div>
                 <span>{selectedAsset.bucket}</span>
                 <h1>{selectedAsset.displayName}</h1>
-                <p>{selectedBest?.explanation || "No active signal. Closest setup is shown below."}</p>
+                <p>{selectedBest?.explanation || "Not evaluated: waiting for price/funding/OI/flow data."}</p>
               </div>
               <div>
                 <strong>{formatUsd(selectedState.market.price)}</strong>
@@ -2424,7 +2651,7 @@ export default function Page() {
               <AssetMetricCard label="Open Interest USD" value={formatUsd(selectedState.market.oiUsd)} meta={`15m ${formatPct(selectedMetrics.oi15m, 2, oiWarmupLabel(selectedState.oiHistory, 15))} / 1h ${formatPct(selectedMetrics.oi1h, 2, oiWarmupLabel(selectedState.oiHistory, 60))} / 4h ${formatPct(selectedMetrics.oi4h, 2, oiWarmupLabel(selectedState.oiHistory, 240))}`} title="Open interest is the current notional value of open perp positions." timestamp={selectedState.freshness.meta} />
               <AssetMetricCard label="Hourly funding" value={formatFunding(selectedState.market.fundingPct)} meta="raw funding converted to percent" title="Funding shows which side pays to hold perp exposure." timestamp={selectedState.freshness.meta} />
               <AssetMetricCard label="Taker pressure" value={selectedMetrics.netFlow5m === null ? "Loading" : formatUsd(selectedMetrics.netFlow5m)} meta={`5m buy ${formatPct(selectedMetrics.buyRatio5m, 1, "Loading", false)} / 15m ${formatUsd(selectedMetrics.netFlow15m)}`} title="Taker pressure estimates aggressive buy versus sell notional." timestamp={selectedState.freshness.trades} />
-              <AssetMetricCard label="Spread + depth" value={selectedMetrics.spreadBps === null ? "Loading" : `${selectedMetrics.spreadBps.toFixed(2)} bps`} meta={`Depth +/-10 bps ${formatUsd(selectedMetrics.depth50Bps)}`} title="Liquidity uses spread and +/-10 bps near-book depth from the order book." timestamp={selectedState.freshness.book} />
+              <AssetMetricCard label="Spread + depth" value={selectedMetrics.spreadBps === null ? "Loading" : `${selectedMetrics.spreadBps.toFixed(2)} bps`} meta={`Depth +/-10 bps ${formatUsd(selectedMetrics.depth10Bps)} / +/-25 bps ${formatUsd(selectedMetrics.depth25Bps)}`} title="Liquidity uses spread and +/-10 bps near-book depth from the order book." timestamp={selectedState.freshness.book} />
             </section>
 
             <Panel title={`${selectedAsset.shortName} chart`} right={<Freshness timestamp={selectedState.freshness.candles} />}>
