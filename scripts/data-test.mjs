@@ -21,7 +21,7 @@ const required = [
   ["OI minute bucket dedupe", marketSnapshots.includes("minute_bucket") && marketSnapshots.includes("market_snapshots_asset_minute_unique_idx") && marketSnapshots.includes("date_trunc('minute'")],
   ["OI distinct minute timeline", marketSnapshots.includes("group by coalesce(minute_bucket, date_trunc('minute', ts))")],
   ["OI recent historical gap status", oiHistoryRoute.includes("healthy_recent_with_historical_gap")],
-  ["OI cron every minute", vercel.includes('"schedule": "* * * * *"')],
+  ["OI cron deploy-safe on Vercel Hobby", vercel.includes('"schedule": "0 0 * * *"')],
   ["Debug WS browser fields", ["hydratedAt", "browserCanUseWebSocket", "attemptedUrl", "rawMessagesCount", "subscriptionAcksCount", "lastRawMessagePreview"].every((field) => debugWs.includes(field))],
   ["Debug WS correct subscriptions", debugWs.includes('type: "allMids"') && debugWs.includes('type: "trades"') && debugWs.includes('type: "l2Book"') && debugWs.includes('type: "candle"') && debugWs.includes('type: "activeAssetCtx"')],
   ["WS smoke route exists", fs.existsSync("app/api/hl/ws-smoke/route.ts")],
