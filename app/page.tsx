@@ -188,6 +188,7 @@ const ASSETS: AssetConfig[] = [
 
 const ASSET_ORDER = ASSETS.map((asset) => asset.apiCoin);
 const ASSET_BY_COIN = Object.fromEntries(ASSETS.map((asset) => [asset.apiCoin, asset])) as Record<ApiCoin, AssetConfig>;
+const PRESET_KINDS: SignalKind[] = ["Fresh Long", "Fresh Short", "Crowded Long", "Crowded Short"];
 const HYPERLIQUID_WS_URL = "wss://api.hyperliquid.xyz/ws";
 const EMPTY_MARKET: MarketCtx = {
   price: null,
@@ -654,8 +655,7 @@ function buildSignal(asset: AssetConfig, metrics: MetricBundle, kind: SignalKind
 }
 
 function allSignals(asset: AssetConfig, metrics: MetricBundle) {
-  const kinds: SignalKind[] = ["Fresh Long", "Fresh Short", "Crowded Long", "Crowded Short"];
-  return kinds.map((kind) => buildSignal(asset, metrics, kind));
+  return PRESET_KINDS.map((kind) => buildSignal(asset, metrics, kind));
 }
 
 function bestSignal(signals: SignalReadiness[]) {
@@ -923,6 +923,78 @@ function ReadinessCard({ signal }: { signal: SignalReadiness }) {
   );
 }
 
+function presetRules(asset: AssetConfig, kind: SignalKind) {
+  const t = asset.thresholds;
+  if (kind === "Fresh Long") {
+    return [
+      `Net buy flow 5m >= ${formatUsd(t.flow5mUsd)}`,
+      "Taker buy ratio 5m > 60%",
+      `OI change 15m >= ${formatPct(t.oi15mPct, 2, "", false)}`,
+      `Price change 15m > ${formatPct(t.price15mPct, 2, "", false)}`,
+      "Liquidity healthy and funding not extreme",
+    ];
+  }
+  if (kind === "Fresh Short") {
+    return [
+      `Net sell flow 5m >= ${formatUsd(t.flow5mUsd)}`,
+      "Taker sell ratio 5m > 60%",
+      `OI change 15m >= ${formatPct(t.oi15mPct, 2, "", false)}`,
+      `Price change 15m < -${formatPct(t.price15mPct, 2, "", false)}`,
+      "Liquidity healthy and funding not extreme",
+    ];
+  }
+  if (kind === "Crowded Long") {
+    return [
+      `Hourly funding > ${formatPct(t.fundingPct, 3, "", false)}`,
+      `OI change 4h >= ${formatPct(t.oi4hPct, 2, "", false)}`,
+      "Price momentum is stalling",
+      "Long-side taker pressure visible",
+    ];
+  }
+  return [
+    `Hourly funding < -${formatPct(t.fundingPct, 3, "", false)}`,
+    `OI change 4h >= ${formatPct(t.oi4hPct, 2, "", false)}`,
+    "Downside momentum is stalling",
+    "Short-side taker pressure visible",
+  ];
+}
+
+function AlertPresetGrid({
+  asset,
+  metrics,
+  onAlert,
+}: {
+  asset: AssetConfig;
+  metrics: MetricBundle;
+  onAlert: (signal: SignalReadiness) => void;
+}) {
+  return (
+    <div className="preset-grid">
+      {PRESET_KINDS.map((kind) => {
+        const signal = buildSignal(asset, metrics, kind);
+        return (
+          <article className={signal.active ? "preset-card active" : "preset-card"} key={kind}>
+            <header>
+              <div>
+                <span>{asset.shortName} preset</span>
+                <strong>{kind}</strong>
+              </div>
+              <em>{signal.score === null ? "needs history" : `${signal.score}%`}</em>
+            </header>
+            <ul>
+              {presetRules(asset, kind).map((rule) => <li key={rule}>{rule}</li>)}
+            </ul>
+            <small>
+              Calibration: large trade {formatUsd(asset.thresholds.largeTradeUsd)} / flow 5m {formatUsd(asset.thresholds.flow5mUsd)}
+            </small>
+            <button className="table-action" onClick={() => onAlert(signal)}>Create this alert</button>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Page() {
   const wsRef = useRef<WebSocket | null>(null);
   const [assets, setAssets] = useState<Record<ApiCoin, AssetState>>(initialAssets);
@@ -1182,7 +1254,7 @@ export default function Page() {
         <header className="risk-topbar">
           <div className="asset-switcher">
             {ASSETS.map((asset) => (
-              <button className={selected === asset.apiCoin ? "active" : ""} key={asset.apiCoin} onClick={() => { setSelected(asset.apiCoin); setView("watchlist"); }}>
+              <button className={selected === asset.apiCoin ? "active" : ""} key={asset.apiCoin} onClick={() => { setSelected(asset.apiCoin); setView((current) => current === "overview" ? "watchlist" : current); }}>
                 {asset.shortName}
               </button>
             ))}
@@ -1297,7 +1369,10 @@ export default function Page() {
 
         {view === "alerts" && (
           <>
-            <PageHead title="Alerts" subtitle="Local rule list for the Risk Radar MVP. Delivery backends can connect to Telegram, Discord or webhook next." />
+            <PageHead title="Alerts" subtitle="Preset alerts are calibrated per asset. Change BTC / ETH / HYPE in the top bar to update the values." />
+            <Panel title={`${selectedAsset.shortName} alert presets`} right={`${selectedAsset.bucket} thresholds`}>
+              <AlertPresetGrid asset={selectedAsset} metrics={selectedMetrics} onAlert={createAlert} />
+            </Panel>
             <section className="two-panels">
               <Panel title="Recommended now" right={best?.active ? "active setup" : "closest setup"}>
                 <SignalTable signals={signals} onAlert={createAlert} />
