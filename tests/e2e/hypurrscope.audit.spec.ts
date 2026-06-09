@@ -100,12 +100,24 @@ test("closest setups include all four presets for BTC ETH HYPE", async ({ page }
   await expect(panel).toBeVisible();
   const rows = panel.locator("tbody tr");
   await expect(rows).toHaveCount(12);
+  await expect(panel.getByText("Current value / target value")).toBeVisible();
+  await expect(panel.getByText("Needs data")).toHaveCount(0);
 
   for (const asset of ASSETS) {
     for (const preset of PRESETS) {
       await expect(panel.locator("tbody tr").filter({ hasText: asset }).filter({ hasText: preset })).toHaveCount(1);
     }
   }
+  await expect(panel.getByText(/Price 15m:|Hourly funding:|Taker buy ratio:/)).toBeVisible();
+});
+
+test("debug data exposes freshness fields", async ({ page }) => {
+  await page.goto("/debug/data");
+  await expect(page.getByText("serverNow:")).toBeVisible();
+  await expect(page.getByText("dataUpdatedAt:")).toBeVisible();
+  await expect(page.getByText("dataAgeSeconds:")).toBeVisible();
+  await expect(page.getByText("freshness:")).toBeVisible();
+  await expect(page.getByText(/freshness:\s*ready/i)).toBeVisible({ timeout: 15_000 });
 });
 
 test("watchlist direct route shows exactly BTC ETH HYPE", async ({ page }) => {
@@ -175,9 +187,11 @@ test("recent flow does not remain connecting forever when websocket streams", as
 test("debug websocket page exposes subscriptions and timestamps", async ({ page }) => {
   await page.goto("/debug/ws");
   await expect(page.getByRole("heading", { name: "HypurrScope WebSocket debug" })).toBeVisible();
+  await expect(page.getByText(/hydrated at:/i)).toBeVisible();
   await expect(page.getByText(/websocket status:\s*streaming/i)).toBeVisible({ timeout: 30_000 });
   const proof = await page.locator("pre").last().textContent();
   const parsed = JSON.parse(proof || "{}");
+  expect(parsed.hydratedAt).toBeTruthy();
   expect(parsed.websocketStatus).toBe("streaming");
   for (const field of [
     "btcTradesLastTimestamp",
