@@ -5,9 +5,12 @@ const page = `${fs.readFileSync("app/page.tsx", "utf8")}\n${fs.readFileSync("app
 const checks = [
   ["Signal status type", page.includes('"active" | "near" | "inactive" | "not_evaluable_data_missing" | "not_evaluable_flow_missing"')],
   ["Split setup scores", page.includes("structureScore") && page.includes("flowScore") && page.includes("finalScore")],
+  ["Final score weighted 60/40", page.includes("Math.round(structureScore * 0.6 + flowScore * 0.4)")],
   ["Flow missing status", page.includes("not_evaluable_flow_missing") && page.includes("flowMissing")],
   ["Data missing status", page.includes("not_evaluable_data_missing")],
-  ["Real flow aliases", page.includes("takerBuyRatio5m") && page.includes("takerSellRatio5m") && page.includes("netBuyFlow5m") && page.includes("netSellFlow5m")],
+  ["Real flow aliases", page.includes("takerBuyRatio5m") && page.includes("takerSellRatio5m") && page.includes("netBuyFlow5m") && page.includes("netSellFlow5m") && page.includes("cvd5m") && page.includes("cvd15m") && page.includes("cvd1h")],
+  ["Signal proof selectors", page.includes('data-col="flow-score"') && page.includes('data-col="final-score"') && page.includes('data-testid={`closest-setup-')],
+  ["Flow proof selectors", page.includes('data-testid={`flow-metrics-') && page.includes('data-col="taker-buy-ratio-5m"') && page.includes('data-col="cvd-5m"')],
   ["Trade side mapping debug", page.includes("Trade side mapping debug") && page.includes("raw B = Bid/buy taker")],
   ["Flow metrics debug", page.includes("Flow metrics debug") && page.includes("buyNotional5m") && page.includes("sellNotional5m")],
   ["Fresh Long conditions", page.includes("Taker buy ratio") && page.includes("Net buy flow 5m")],

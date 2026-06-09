@@ -20,6 +20,29 @@ function assetCard(page: import("@playwright/test").Page, asset: string) {
   return page.locator(".asset-card").filter({ hasText: asset }).first();
 }
 
+async function waitForLiveFlowMetrics(page: import("@playwright/test").Page) {
+  await page.goto("/recent-flow");
+  await expect(page.getByRole("heading", { name: "Recent Flow" })).toBeVisible();
+  await expect(page.getByText(/Streaming|Collecting live flow/i)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Opening Hyperliquid WebSocket")).not.toBeVisible({ timeout: 30_000 });
+
+  for (const asset of ASSETS) {
+    const row = page.getByTestId(`flow-metrics-${asset}`);
+    await expect(row, `${asset} flow metrics row`).toBeVisible();
+    await expect(row.locator('[data-col="taker-buy-ratio-5m"]'), `${asset} takerBuyRatio5m`).toContainText(/%/, { timeout: 30_000 });
+    await expect(row.locator('[data-col="taker-sell-ratio-5m"]'), `${asset} takerSellRatio5m`).toContainText(/%/, { timeout: 30_000 });
+    await expect(row.locator('[data-col="buy-notional-5m"]'), `${asset} buyNotional5m`).toContainText(/\$/, { timeout: 30_000 });
+    await expect(row.locator('[data-col="sell-notional-5m"]'), `${asset} sellNotional5m`).toContainText(/\$/, { timeout: 30_000 });
+    await expect(row.locator('[data-col="net-buy-flow-5m"]'), `${asset} netBuyFlow5m`).toContainText(/\$/, { timeout: 30_000 });
+    await expect(row.locator('[data-col="net-sell-flow-5m"]'), `${asset} netSellFlow5m`).toContainText(/\$/, { timeout: 30_000 });
+    await expect(row.locator('[data-col="cvd-5m"]'), `${asset} CVD 5m`).toContainText(/\$/, { timeout: 30_000 });
+    await expect(row.locator('[data-col="cvd-15m"]'), `${asset} CVD 15m`).toContainText(/\$/, { timeout: 30_000 });
+  }
+
+  await expect(page.getByTestId("trade-side-row").first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("trade-side-row").first().locator('[data-col="interpreted-side"]')).toContainText(/Buy|Sell/);
+}
+
 test("production REST data endpoints return usable BTC ETH HYPE data", async ({ page }) => {
   const markets = await apiOk(page, "/api/hl/markets");
   for (const asset of ASSETS) {
@@ -128,6 +151,29 @@ test("closest setups include all four presets for BTC ETH HYPE", async ({ page }
   await expect(panel.getByText(/Price 15m:|Hourly funding:|Taker buy ratio:/)).toBeVisible();
 });
 
+test("live flow metrics produce numeric flowScore and finalScore for closest setups", async ({ page }) => {
+  await waitForLiveFlowMetrics(page);
+  await page.getByRole("button", { name: "Overview" }).click();
+
+  const panel = page.locator(".radar-panel").filter({ hasText: "Closest setups" });
+  await expect(panel).toBeVisible();
+  await expect(panel.locator("tbody tr")).toHaveCount(12);
+  await expect(panel).not.toContainText(/flow unavailable/i);
+  await expect(panel).not.toContainText(/not_evaluable_flow_missing/i);
+
+  for (const asset of ASSETS) {
+    for (const preset of PRESETS) {
+      const row = page.getByTestId(`closest-setup-${asset}-${preset.replace(/\s+/g, "-").toLowerCase()}`);
+      await expect(row, `${asset} ${preset} row`).toBeVisible();
+      await expect(row.locator('[data-col="structure-score"]'), `${asset} ${preset} structureScore`).toContainText(/^\d+%$/);
+      await expect(row.locator('[data-col="flow-score"]'), `${asset} ${preset} flowScore`).toContainText(/^\d+%$/);
+      await expect(row.locator('[data-col="final-score"]'), `${asset} ${preset} finalScore`).toContainText(/^\d+%$/);
+      await expect(row.locator('[data-col="status"]'), `${asset} ${preset} status`).toContainText(/active|near|inactive/);
+      await expect(row.locator('[data-col="current-target"]'), `${asset} ${preset} current target`).toContainText(/target|PASS|waiting|flow/i);
+    }
+  }
+});
+
 test("debug data exposes freshness fields", async ({ page }) => {
   await page.goto("/debug/data");
   await expect(page.getByText("serverNow:")).toBeVisible();
@@ -203,10 +249,7 @@ test("wallet scanner rejects invalid addresses and never asks for private creden
 });
 
 test("recent flow does not remain connecting forever when websocket streams", async ({ page }) => {
-  await page.goto("/recent-flow");
-  await expect(page.getByRole("heading", { name: "Recent Flow" })).toBeVisible();
-  await expect(page.getByText(/Streaming|Collecting live flow|Reconnecting|Trade stream error|Trade stream stale/i)).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText("Opening Hyperliquid WebSocket")).not.toBeVisible({ timeout: 30_000 });
+  await waitForLiveFlowMetrics(page);
   await expect(page.getByText("Flow metrics debug")).toBeVisible();
   await expect(page.getByText("Trade side mapping debug")).toBeVisible();
   await expect(page.getByText("takerBuyRatio5m")).toBeVisible();
