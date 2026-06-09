@@ -11,6 +11,7 @@ export const maxDuration = 15;
 
 const ASSETS: ApiCoin[] = ["BTC", "ETH", "HYPE"];
 const WS_URL = "wss://api.hyperliquid.xyz/ws";
+const SMOKE_VERSION = "ws-smoke-v3-subscription-send-proof-2026-06-09";
 const SUBSCRIPTIONS: Subscription[] = [
   { type: "allMids" },
   ...ASSETS.flatMap((coin) => [
@@ -134,6 +135,7 @@ export async function GET(request: Request) {
         else error = "WebSocket messages arrived, but BTC/ETH/HYPE trades or l2Book timestamps were not all observed";
       }
       resolve(noStore({
+        smokeVersion: SMOKE_VERSION,
         ok,
         attemptedUrl: WS_URL,
         connected,
@@ -141,6 +143,7 @@ export async function GET(request: Request) {
         endedAt,
         durationMs: Date.now() - startedAt,
         requestedSeconds: seconds,
+        subscriptionsPlanned: SUBSCRIPTIONS.map(keyFor),
         subscriptionsSent,
         subscriptionAcksCount,
         rawMessagesCount,
