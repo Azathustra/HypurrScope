@@ -27,6 +27,23 @@ function minutesBetween(start: string, end: string) {
   return Math.max(0, Math.floor((Date.parse(end) - Date.parse(start)) / 60_000));
 }
 
+async function currentOiFromMarkets(request: Request, asset: SnapshotAsset) {
+  try {
+    const origin = new URL(request.url).origin;
+    const response = await fetch(`${origin}/api/hl/markets`, { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok || !payload?.ok || !Array.isArray(payload.assets)) return null;
+    const row = payload.assets.find((item: any) => item.apiCoin === asset);
+    if (!row) return null;
+    return {
+      currentOiUsd: numeric(row.openInterestUsdComputed),
+      updatedAt: row.updatedAt || payload.updatedAt || new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(request: Request) {
   const updatedAt = new Date().toISOString();
   const url = new URL(request.url);
@@ -46,13 +63,14 @@ export async function GET(request: Request) {
   }
 
   try {
-    const [latest, earliest, count] = await Promise.all([
+    const [latest, earliest, count, liveCurrent] = await Promise.all([
       latestSnapshot(asset),
       earliestSnapshot(asset),
       snapshotCount(asset),
+      currentOiFromMarkets(request, asset),
     ]);
 
-    if (!latest) {
+    if (!latest && !liveCurrent?.currentOiUsd) {
       return Response.json(
         {
           ok: true,
@@ -75,18 +93,19 @@ export async function GET(request: Request) {
       );
     }
 
-    const latestTs = new Date(latest.ts).toISOString();
+    const latestTs = latest ? new Date(latest.ts).toISOString() : updatedAt;
+    const referenceTs = liveCurrent?.updatedAt ? new Date(liveCurrent.updatedAt).toISOString() : latestTs;
     const [row15m, row1h, row4h] = await Promise.all([
-      snapshotAtOrBefore(asset, latestTs, 15),
-      snapshotAtOrBefore(asset, latestTs, 60),
-      snapshotAtOrBefore(asset, latestTs, 240),
+      snapshotAtOrBefore(asset, referenceTs, 15),
+      snapshotAtOrBefore(asset, referenceTs, 60),
+      snapshotAtOrBefore(asset, referenceTs, 240),
     ]);
 
-    const currentOiUsd = numeric(latest.open_interest_usd_computed);
+    const currentOiUsd = liveCurrent?.currentOiUsd ?? numeric(latest?.open_interest_usd_computed);
     const oiUsd15mAgo = numeric(row15m?.open_interest_usd_computed);
     const oiUsd1hAgo = numeric(row1h?.open_interest_usd_computed);
     const oiUsd4hAgo = numeric(row4h?.open_interest_usd_computed);
-    const availableHistoryMinutes = earliest ? minutesBetween(new Date(earliest.ts).toISOString(), latestTs) : 0;
+    const availableHistoryMinutes = earliest ? minutesBetween(new Date(earliest.ts).toISOString(), referenceTs) : 0;
     const status =
       currentOiUsd === null ? "insufficient_history" :
       availableHistoryMinutes >= REQUIRED_HISTORY_MINUTES.oi4h && oiUsd4hAgo !== null ? "ready" :
@@ -107,6 +126,7 @@ export async function GET(request: Request) {
         requiredHistoryMinutes: REQUIRED_HISTORY_MINUTES,
         snapshotCount: count,
         status,
+        message: count === 0 ? "No backend OI snapshots yet" : undefined,
         updatedAt,
       },
       { headers: { "cache-control": "no-store" } },
