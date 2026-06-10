@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import RiskTicketClient from "./trade/risk-ticket-client";
+import "./trade/trade.css";
 
 type ApiCoin = "BTC" | "ETH" | "HYPE";
-type View = "overview" | "watchlist" | "asset" | "flow" | "alerts" | "wallet";
+type View = "overview" | "watchlist" | "asset" | "flow" | "alerts" | "wallet" | "trade";
 type UiMode = "beginner" | "pro";
 type ConnectionState = "loading" | "live" | "stale" | "failed";
 type AssetDataStatus = "ready" | "loading" | "stale" | "error";
@@ -3039,6 +3041,7 @@ function BeginnerOverview({
   assetStates,
   metricsByAsset,
   onAlert,
+  onTrade,
 }: {
   marketState: string;
   marketLine: string;
@@ -3046,6 +3049,7 @@ function BeginnerOverview({
   assetStates: Record<ApiCoin, AssetState>;
   metricsByAsset: Record<ApiCoin, MetricBundle>;
   onAlert: (signal: SignalReadiness) => void;
+  onTrade: () => void;
 }) {
   const ranked = rankSignals(signals);
   const collecting = ranked.length > 0 && ranked.every((signal) => signal.status === "not_evaluable_flow_missing");
@@ -3115,7 +3119,7 @@ function BeginnerOverview({
               Say how much you accept to lose. The Risk Ticket sizes the position and places entry,
               stop loss and take profit on Hyperliquid in one signature.
             </p>
-            <a className="primary-action" href="/trade">Open the Risk Ticket</a>
+            <button className="primary-action" onClick={onTrade}>Open the Risk Ticket</button>
           </div>
         </Panel>
       </section>
@@ -3155,7 +3159,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   }, []);
   function switchMode(mode: UiMode) {
     setUiMode(mode);
-    if (mode === "beginner" && view !== "overview" && view !== "alerts") setView("overview");
+    if (mode === "beginner" && view !== "overview" && view !== "alerts" && view !== "trade") setView("overview");
     try {
       window.localStorage.setItem("hs-ui-mode", mode);
     } catch {
@@ -3936,8 +3940,9 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
             .map(([key, label]) => (
             <button className={view === key || (key === "watchlist" && view === "asset") ? "active" : ""} key={key} onClick={() => setView(key as View)}>{label}</button>
           ))}
-          <a
-            href="/trade"
+          <button
+            onClick={() => setView("trade")}
+            className={view === "trade" ? "active" : ""}
             style={{
               display: "grid",
               gap: 4,
@@ -3946,7 +3951,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
               padding: "10px 12px",
               border: "1px solid var(--mint)",
               borderRadius: 8,
-              background: "rgba(124, 247, 199, 0.06)",
+              background: view === "trade" ? "rgba(124, 247, 199, 0.16)" : "rgba(124, 247, 199, 0.06)",
               color: "var(--mint)",
               textAlign: "left",
               textDecoration: "none",
@@ -3956,7 +3961,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
             }}
           >
             Trade — Risk Ticket
-          </a>
+          </button>
         </nav>
         <div className="risk-rail-foot">
           <span className={`connection ${connection}`}>{connectionLabel}</span>
@@ -3989,6 +3994,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
             assetStates={assets}
             metricsByAsset={metricsByAsset}
             onAlert={createAlert}
+            onTrade={() => setView("trade")}
           />
         )}
 
@@ -4153,6 +4159,13 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
               )}
               {alertTab === "saved" && <MyAlertsTable alerts={alerts} filter={alertFilter} onFilter={setAlertFilter} onToggle={toggleAlert} />}
             </Panel>
+          </>
+        )}
+
+        {view === "trade" && (
+          <>
+            <PageHead title="Trade — Risk Ticket" subtitle="Say how much you accept to lose: entry, stop loss and take profit go out in one signature." />
+            <RiskTicketClient embedded />
           </>
         )}
 
