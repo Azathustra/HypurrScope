@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type ApiCoin = "BTC" | "ETH" | "HYPE";
-type View = "overview" | "watchlist" | "asset" | "flow" | "alerts" | "wallet";
+type View = "overview" | "watchlist" | "asset" | "flow" | "alerts" | "telegram" | "history" | "wallet";
 type ConnectionState = "loading" | "live" | "stale" | "failed";
 type AssetDataStatus = "ready" | "loading" | "stale" | "error";
 type SignalKind = "Fresh Long" | "Fresh Short" | "Crowded Long" | "Crowded Short";
@@ -14,6 +14,10 @@ type FlowFilter = "All" | ApiCoin | "Large trades" | "Taker bursts";
 type AlertDestination = "Browser" | "Telegram" | "Webhook";
 type TriggerMode = "all" | "any";
 type AlertTab = "presets" | "builder" | "saved";
+type TelegramAlertType = SignalKind | "Large Trade" | "Flow Burst" | "Funding Extreme" | "Liquidity Thin";
+type TelegramTrigger = "active setup" | "near setup" | "score above threshold" | "price level";
+type TelegramFrequency = "once" | "every time" | "cooldown 30m" | "cooldown 1h" | "cooldown 4h";
+type SimpleStance = "Trade" | "Wait" | "Warning";
 type FlowStatus = "connecting" | "collecting" | "streaming" | "stale" | "reconnecting" | "error";
 type WebSocketStatus = "connecting" | "connected" | "streaming" | "stale" | "reconnecting" | "error";
 type WsChannel = "allMids" | "trades" | "l2Book" | "candle" | "activeAssetCtx";
@@ -350,6 +354,41 @@ type CustomAlertDraft = {
   cooldownMinutes: number;
 };
 
+type TelegramDraft = {
+  asset: ApiCoin;
+  alertType: TelegramAlertType;
+  trigger: TelegramTrigger;
+  scoreThreshold: number;
+  priceLevel: number;
+  frequency: TelegramFrequency;
+  chatId: string;
+};
+
+type SignalHistoryRow = {
+  id: string;
+  timestamp: string;
+  asset: ApiCoin;
+  setupType: SignalKind;
+  status: SignalStatus;
+  finalScore: number | null;
+  structureScore: number | null;
+  flowScore: number | null;
+  priceAtSignal: number | null;
+  oi15m: number | null;
+  oi4h: number | null;
+  funding: number | null;
+  takerRatio: number | null;
+  netFlow: number | null;
+  cvd: number | null;
+  liquidityState: string;
+  result1h: number | null;
+  result4h: number | null;
+  result24h: number | null;
+  maxFavorableMove: number | null;
+  maxAdverseMove: number | null;
+  outcomeStatus: "pending" | "ready" | "unavailable";
+};
+
 type FlowDisplayState = {
   status: FlowStatus;
   minutes: number;
@@ -467,6 +506,7 @@ const CHART_INTERVALS: Array<{ key: ChartInterval; label: string; ms: number }> 
   { key: "1h", label: "1h", ms: 60 * 60_000 },
 ];
 const HYPERLIQUID_WS_URL = "wss://api.hyperliquid.xyz/ws";
+const HYPERLIQUID_REFERRAL_CODE = process.env.NEXT_PUBLIC_HYPERLIQUID_REFERRAL_CODE || "";
 const WS_SUBSCRIPTIONS: WsSubscription[] = [
   { type: "allMids" },
   ...ASSET_ORDER.flatMap((coin): WsSubscription[] => [
@@ -1586,6 +1626,17 @@ function summarySignalText(signal: SignalReadiness | null) {
   return `${signal.asset} ${signal.kind} - ${signal.status} - ${signal.finalScore}%`;
 }
 
+function hyperliquidUrl(asset: ApiCoin) {
+  const url = new URL(`https://app.hyperliquid.xyz/trade/${asset}`);
+  if (HYPERLIQUID_REFERRAL_CODE) url.searchParams.set("ref", HYPERLIQUID_REFERRAL_CODE);
+  return url.toString();
+}
+
+function openHyperliquid(asset: ApiCoin) {
+  if (typeof window === "undefined") return;
+  window.open(hyperliquidUrl(asset), "_blank", "noopener,noreferrer");
+}
+
 function signalBadge(signal: SignalReadiness | null) {
   if (!signal) return "Not evaluated";
   if (signal.finalScore === null && signal.status === "not_evaluable_flow_missing") return "Flow collecting";
@@ -1593,6 +1644,72 @@ function signalBadge(signal: SignalReadiness | null) {
   if (signal.active) return signal.kind;
   if (signal.status === "near") return `Near ${signal.kind}`;
   return "Inactive";
+}
+
+function closeAgo(candles: Candle[], lookbackMs: number) {
+  if (candles.length < 2) return null;
+  const last = candles[candles.length - 1];
+  const target = last.time - lookbackMs;
+  return [...candles].reverse().find((candle) => candle.time <= target)?.close ?? null;
+}
+
+function triggerLevel(asset: AssetConfig, signal: SignalReadiness | null, state: AssetState) {
+  if (!signal || signal.finalScore === null) return "Alert when setup score > 80";
+  const base15m = closeAgo(state.candles, 15 * 60_000);
+  if (base15m && signal.kind === "Fresh Long") return `above ${formatUsd(base15m * (1 + asset.thresholds.price15mPct / 100))}`;
+  if (base15m && signal.kind === "Fresh Short") return `below ${formatUsd(base15m * (1 - asset.thresholds.price15mPct / 100))}`;
+  if (signal.status === "active") return "Already active";
+  return "Alert when setup score > 80";
+}
+
+function simpleStance(signal: SignalReadiness | null, metrics: MetricBundle): SimpleStance {
+  if (metrics.liquidityHealthy === false || metrics.fundingAbsExtreme === true) return "Warning";
+  if (signal?.active) return "Trade";
+  return "Wait";
+}
+
+function setupPlainText(signal: SignalReadiness | null) {
+  if (!signal || signal.finalScore === null) return "No clean setup yet.";
+  if (signal.kind === "Fresh Long") return signal.status === "active" ? "Fresh long is active." : "Fresh long is getting close.";
+  if (signal.kind === "Fresh Short") return signal.status === "active" ? "Fresh short is active." : "Fresh short is getting close.";
+  if (signal.kind === "Crowded Long") return signal.status === "active" ? "Longs look crowded. Watch for squeeze risk." : "Longs are getting crowded.";
+  return signal.status === "active" ? "Shorts look crowded. Watch for squeeze risk." : "Shorts are getting crowded.";
+}
+
+function simpleReason(signal: SignalReadiness | null) {
+  if (!signal || signal.finalScore === null) return "No complete signal yet; the engine is still waiting for confirmation.";
+  const passed = signal.passed.map(conditionLabel);
+  if (passed.includes("Hourly funding") && passed.includes("OI 4h")) return "Leverage is elevated and funding confirms positioning pressure.";
+  if (passed.includes("Price 15m") && passed.some((row) => row.includes("Taker"))) return "Price momentum and taker flow are moving in the same direction.";
+  if (passed.includes("Liquidity")) return "Liquidity is acceptable and at least one signal condition is passing.";
+  return signal.why.replace("Why this ranks here: ", "");
+}
+
+function simpleRisk(signal: SignalReadiness | null, metrics: MetricBundle) {
+  if (metrics.liquidityHealthy === false) return "Liquidity is thin, avoid large market orders.";
+  if (metrics.fundingAbsExtreme === true) return "Funding is extreme, moves can reverse quickly.";
+  if (signal?.flowMissing.length) return "Flow is still collecting, wait for confirmation before acting.";
+  if (signal?.missing.length) return signal.blocker.replace("Main blocker: ", "");
+  return "Use alerts for confirmation; this is not financial advice.";
+}
+
+function displayStatus(signal: SignalReadiness | null) {
+  if (!signal || signal.finalScore === null) return "Inactive";
+  if (signal.status === "active") return "Active";
+  if (signal.status === "near") return "Near";
+  return "Inactive";
+}
+
+function defaultTelegramDraft(asset: ApiCoin, price: number | null): TelegramDraft {
+  return {
+    asset,
+    alertType: "Fresh Long",
+    trigger: "near setup",
+    scoreThreshold: 80,
+    priceLevel: price || 0,
+    frequency: "cooldown 1h",
+    chatId: "",
+  };
 }
 
 function buildFlowEvents(asset: AssetConfig, state: AssetState, metrics: MetricBundle): FlowEvent[] {
@@ -1694,6 +1811,36 @@ function flowEventPayload(event: FlowEvent) {
     status: event.status,
     rawPayload: event,
     createdAt: new Date(event.time).toISOString(),
+  };
+}
+
+function signalHistoryPayload(signal: SignalReadiness, metrics: MetricBundle, state: AssetState) {
+  const isShortIdea = signal.kind === "Fresh Short" || signal.kind === "Crowded Long";
+  const takerRatio =
+    signal.kind === "Fresh Long" || signal.kind === "Crowded Long"
+      ? metrics.takerBuyRatio5m
+      : metrics.takerSellRatio5m;
+  const netFlow =
+    signal.kind === "Fresh Long" || signal.kind === "Crowded Long"
+      ? metrics.netBuyFlow5m
+      : metrics.netSellFlow5m;
+  return {
+    timestamp: new Date().toISOString(),
+    asset: signal.asset,
+    setupType: signal.kind,
+    status: signal.status,
+    finalScore: signal.finalScore,
+    structureScore: signal.structureScore,
+    flowScore: signal.flowScore,
+    priceAtSignal: state.market.price,
+    oi15m: metrics.oi15m,
+    oi4h: metrics.oi4h,
+    funding: metrics.fundingPct,
+    takerRatio,
+    netFlow,
+    cvd: metrics.cvd5m,
+    liquidityState: metrics.liquidityHealthy === null ? "unknown" : metrics.liquidityHealthy ? "healthy" : "thin",
+    direction: isShortIdea ? "short" : "long",
   };
 }
 
@@ -2180,16 +2327,71 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
               <td data-col="status">{signal.status}</td>
               <td data-col="why">{signal.why}</td>
               <td data-col="main-blocker">{signal.blocker}</td>
-              <td data-col="flow-inputs">{signal.flowInputs.join(" | ")}</td>
-              <td data-col="passed-conditions">{signal.passed.length ? signal.passed.join(" | ") : "No condition passed yet"}</td>
-              <td data-col="failed-conditions">{signal.missing.length ? signal.missing.join(" | ") : "No missing condition"}</td>
-              <td data-col="current-target">{signal.details.join(" | ")}</td>
-              <td data-col="action"><button className="table-action" disabled={signal.finalScore === null} onClick={() => onAlert(signal)}>{signal.finalScore === null ? "Not evaluable" : "Create alert"}</button></td>
+              <td data-col="flow-inputs"><details><summary>Details</summary>{signal.flowInputs.join(" | ")}</details></td>
+              <td data-col="passed-conditions"><details><summary>Raw conditions</summary>{signal.passed.length ? signal.passed.join(" | ") : "No condition passed yet"}</details></td>
+              <td data-col="failed-conditions"><details><summary>Blockers</summary>{signal.missing.length ? signal.missing.join(" | ") : "No missing condition"}</details></td>
+              <td data-col="current-target"><details><summary>Current / target</summary>{signal.details.join(" | ")}</details></td>
+              <td data-col="action">
+                <button className="table-action" disabled={signal.finalScore === null} onClick={() => onAlert(signal)}>{signal.finalScore === null ? "Not evaluable" : "Create alert"}</button>
+                <a className="table-action muted-action" href={hyperliquidUrl(signal.asset)} target="_blank" rel="noreferrer">Open on Hyperliquid</a>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function SimpleWatchCards({
+  assetStates,
+  metricsByAsset,
+  onAlert,
+  onOpenAsset,
+  onOpenHyperliquid,
+}: {
+  assetStates: Record<ApiCoin, AssetState>;
+  metricsByAsset: Record<ApiCoin, MetricBundle>;
+  onAlert: (signal: SignalReadiness) => void;
+  onOpenAsset: (asset: ApiCoin) => void;
+  onOpenHyperliquid: (asset: ApiCoin) => void;
+}) {
+  return (
+    <section className="simple-watch-grid" aria-label="What to watch now">
+      {ASSETS.map((asset) => {
+        const state = assetStates[asset.apiCoin];
+        const metrics = metricsByAsset[asset.apiCoin];
+        const signal = bestSignal(allSignals(asset, metrics));
+        const stance = simpleStance(signal, metrics);
+        return (
+          <article className={`simple-watch-card stance-${stance.toLowerCase()}`} key={asset.apiCoin}>
+            <header>
+              <div>
+                <span>{asset.shortName}</span>
+                <strong>{stance}</strong>
+              </div>
+              <em>{displayStatus(signal)}</em>
+            </header>
+            <div className="simple-watch-main">
+              <p>{setupPlainText(signal)}</p>
+              <dl>
+                <div><dt>Best setup</dt><dd>{signal?.kind || "None"} {signal?.status === "near" ? "near" : signal?.status === "active" ? "active" : ""}</dd></div>
+                <div><dt>Trigger</dt><dd>{triggerLevel(asset, signal, state)}</dd></div>
+              </dl>
+              <small><strong>Reason:</strong> {simpleReason(signal)}</small>
+              <small><strong>Risk:</strong> {simpleRisk(signal, metrics)}</small>
+            </div>
+            <footer>
+              <button className="primary-action" disabled={!signal || signal.finalScore === null} onClick={() => signal && onAlert(signal)}>
+                Create alert
+              </button>
+              <button className="table-action muted-action" onClick={() => onOpenHyperliquid(asset.apiCoin)}>Open on Hyperliquid</button>
+              <button className="inline-link" onClick={() => onOpenAsset(asset.apiCoin)}>Details</button>
+            </footer>
+          </article>
+        );
+      })}
+    </section>
   );
 }
 
@@ -2643,7 +2845,7 @@ function CustomAlertBuilder({
         <span>Destination</span>
         <select value={draft.destination} onChange={(event) => onChange({ ...draft, destination: event.target.value as AlertDestination })}>
           <option value="Browser">Browser</option>
-          <option value="Telegram" disabled>Telegram (soon)</option>
+          <option value="Telegram">Telegram</option>
           <option value="Webhook" disabled>Webhook (soon)</option>
         </select>
       </label>
@@ -2701,6 +2903,122 @@ function MyAlertsTable({
         </table>
       </div>
     </>
+  );
+}
+
+function TelegramAlertWorkspace({
+  draft,
+  selectedSignal,
+  selectedState,
+  selectedMetrics,
+  feedback,
+  onChange,
+  onCreate,
+  onTest,
+}: {
+  draft: TelegramDraft;
+  selectedSignal: SignalReadiness | null;
+  selectedState: AssetState;
+  selectedMetrics: MetricBundle;
+  feedback: string;
+  onChange: (draft: TelegramDraft) => void;
+  onCreate: () => void;
+  onTest: () => void;
+}) {
+  const alertTypes: TelegramAlertType[] = ["Fresh Long", "Fresh Short", "Crowded Long", "Crowded Short", "Large Trade", "Flow Burst", "Funding Extreme", "Liquidity Thin"];
+  const triggers: TelegramTrigger[] = ["active setup", "near setup", "score above threshold", "price level"];
+  const frequencies: TelegramFrequency[] = ["once", "every time", "cooldown 30m", "cooldown 1h", "cooldown 4h"];
+  const messagePreview = `${draft.asset} ${draft.alertType} ${displayStatus(selectedSignal).toLowerCase()} - ${selectedSignal?.finalScore ?? draft.scoreThreshold}%`;
+  return (
+    <div className="telegram-workspace">
+      <section className="telegram-form">
+        <label className="builder-field">
+          <span>Asset</span>
+          <select value={draft.asset} onChange={(event) => onChange(defaultTelegramDraft(event.target.value as ApiCoin, selectedState.market.price))}>
+            {ASSET_ORDER.map((asset) => <option value={asset} key={asset}>{asset}</option>)}
+          </select>
+        </label>
+        <label className="builder-field">
+          <span>Alert type</span>
+          <select value={draft.alertType} onChange={(event) => onChange({ ...draft, alertType: event.target.value as TelegramAlertType })}>
+            {alertTypes.map((type) => <option value={type} key={type}>{type}</option>)}
+          </select>
+        </label>
+        <label className="builder-field">
+          <span>Trigger</span>
+          <select value={draft.trigger} onChange={(event) => onChange({ ...draft, trigger: event.target.value as TelegramTrigger })}>
+            {triggers.map((trigger) => <option value={trigger} key={trigger}>{trigger}</option>)}
+          </select>
+        </label>
+        <NumberField label="Score threshold" value={draft.scoreThreshold} suffix="%" onChange={(value) => onChange({ ...draft, scoreThreshold: clamp(Math.round(value), 1, 100) })} />
+        <NumberField label="Price level" value={draft.priceLevel} prefix="$" onChange={(value) => onChange({ ...draft, priceLevel: value })} />
+        <label className="builder-field">
+          <span>Frequency</span>
+          <select value={draft.frequency} onChange={(event) => onChange({ ...draft, frequency: event.target.value as TelegramFrequency })}>
+            {frequencies.map((frequency) => <option value={frequency} key={frequency}>{frequency}</option>)}
+          </select>
+        </label>
+        <label className="builder-field">
+          <span>Telegram chat id</span>
+          <input value={draft.chatId} onChange={(event) => onChange({ ...draft, chatId: event.target.value })} placeholder="123456789" />
+        </label>
+        <div className="builder-submit">
+          <span>{feedback || "Create an alert, then send a test message."}</span>
+          <button className="table-action" onClick={onTest}>Send test alert</button>
+          <button className="primary-action" onClick={onCreate}>Create Telegram alert</button>
+        </div>
+      </section>
+      <section className="telegram-preview">
+        <span>Telegram preview</span>
+        <strong>{messagePreview}</strong>
+        <p>Price: {formatUsd(selectedState.market.price, "unavailable")}</p>
+        <p>Trigger: {draft.trigger === "price level" ? `${draft.priceLevel ? formatUsd(draft.priceLevel) : "price level"}` : draft.trigger}</p>
+        <p>OI 15m: {formatPct(selectedMetrics.oi15m, 2, "collecting")} / target {formatPct(ASSET_BY_COIN[draft.asset].thresholds.oi15mPct, 2, "", false)}</p>
+        <p>Buy flow: {formatUsd(selectedMetrics.netBuyFlow5m, "collecting")} / target {formatUsd(ASSET_BY_COIN[draft.asset].thresholds.flow5mUsd)}</p>
+        <p>Risk: {simpleRisk(selectedSignal, selectedMetrics)}</p>
+        <a className="table-action" href={hyperliquidUrl(draft.asset)} target="_blank" rel="noreferrer">Open on Hyperliquid</a>
+        <small>No profit promises. Alerts are informational and not financial advice.</small>
+      </section>
+    </div>
+  );
+}
+
+function SignalHistoryTable({ rows, onOpenHyperliquid }: { rows: SignalHistoryRow[]; onOpenHyperliquid: (asset: ApiCoin) => void }) {
+  if (!rows.length) {
+    return (
+      <div className="compact-empty">
+        No tracked signals yet.
+        <small>When BTC, ETH or HYPE setups become near or active, HypurrScope stores them here and tracks later price moves.</small>
+        <small>Historical tracking only. No profit promises and no financial advice.</small>
+      </div>
+    );
+  }
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Time</th><th>Asset</th><th>Setup</th><th>Score</th><th>Entry/reference price</th><th>1h result</th><th>4h result</th><th>24h result</th><th>Max favorable move</th><th>Max adverse move</th><th>Open</th></tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>{new Date(row.timestamp).toLocaleString()}</td>
+              <td><strong>{row.asset}</strong></td>
+              <td>{row.setupType} <small>{row.status}</small></td>
+              <td>{row.finalScore === null ? "pending" : `${row.finalScore}%`}</td>
+              <td>{formatUsd(row.priceAtSignal, "unavailable")}</td>
+              <td>{row.result1h === null ? "pending" : formatPct(row.result1h, 2)}</td>
+              <td>{row.result4h === null ? "pending" : formatPct(row.result4h, 2)}</td>
+              <td>{row.result24h === null ? "pending" : formatPct(row.result24h, 2)}</td>
+              <td>{row.maxFavorableMove === null ? "pending" : formatPct(row.maxFavorableMove, 2)}</td>
+              <td>{row.maxAdverseMove === null ? "pending" : formatPct(row.maxAdverseMove, 2)}</td>
+              <td><button className="table-action muted-action" onClick={() => onOpenHyperliquid(row.asset)}>Open on Hyperliquid</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <small className="panel-note">Historical tracking only. These rows do not guarantee future results and are not financial advice.</small>
+    </div>
   );
 }
 
@@ -2996,6 +3314,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   const wsStaleRef = useRef<number | null>(null);
   const wsAttemptRef = useRef(0);
   const wsLastMessageRef = useRef<number | null>(null);
+  const historyPostedRef = useRef<Set<string>>(new Set());
   const flowOpenedAtRef = useRef(Date.now());
   const hasInitialRestData = initialRestDataReady(initialAssetState);
   const [assets, setAssets] = useState<Record<ApiCoin, AssetState>>(() => mergeInitialAssets(initialAssetState));
@@ -3011,6 +3330,9 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   const [flowFilter, setFlowFilter] = useState<FlowFilter>("All");
   const [wsDebug, setWsDebug] = useState<WsDebugState>(() => createWsDebugState("connecting"));
   const [customDraft, setCustomDraft] = useState<CustomAlertDraft>(() => defaultCustomDraft(ASSET_BY_COIN.HYPE));
+  const [telegramDraft, setTelegramDraft] = useState<TelegramDraft>(() => defaultTelegramDraft("HYPE", null));
+  const [telegramFeedback, setTelegramFeedback] = useState("");
+  const [signalHistory, setSignalHistory] = useState<SignalHistoryRow[]>([]);
   const [wallet, setWallet] = useState("");
   const [walletError, setWalletError] = useState("");
   const [walletLoading, setWalletLoading] = useState(false);
@@ -3031,6 +3353,8 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
     const path = window.location.pathname;
     if (path === "/watchlist") setView("watchlist");
     if (path === "/alerts") setView("alerts");
+    if (path === "/alerts/telegram") setView("telegram");
+    if (path === "/signal-history") setView("history");
     if (path === "/wallet-scanner") setView("wallet");
     if (path === "/recent-flow") setView("flow");
   }, []);
@@ -3211,6 +3535,15 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
       .then((response) => response.ok ? response.json() : { alerts: [] })
       .then((payload) => {
         if (Array.isArray(payload.alerts)) setAlerts(payload.alerts);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/signal-history/list", { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : { rows: [] })
+      .then((payload) => {
+        if (Array.isArray(payload.rows)) setSignalHistory(payload.rows);
       })
       .catch(() => undefined);
   }, []);
@@ -3606,6 +3939,10 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   const selectedMetrics = metricsByAsset[selected];
   const selectedSignals = allSignals(selectedAsset, selectedMetrics);
   const selectedBest = bestSignal(selectedSignals);
+  const telegramAsset = ASSET_BY_COIN[telegramDraft.asset];
+  const telegramState = assets[telegramDraft.asset];
+  const telegramMetrics = metricsByAsset[telegramDraft.asset];
+  const telegramBest = bestSignal(allSignals(telegramAsset, telegramMetrics));
   const customFingerprint = alertFingerprint(
     selected,
     `Custom ${customDraft.direction}`,
@@ -3623,6 +3960,29 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
     .slice(0, 60);
   const filteredFlowEvents = filterFlowEvents(flowEvents, flowFilter);
   const marketWarning = marketAssetWarning(metricsByAsset);
+
+  useEffect(() => {
+    const minuteBucket = Math.floor(Date.now() / 60_000);
+    const candidates = rankedSignals.filter((signal) => (signal.status === "active" || signal.status === "near") && signal.finalScore !== null);
+    const fresh = candidates.filter((signal) => {
+      const key = `${minuteBucket}-${signal.asset}-${signal.kind}-${signal.status}`;
+      if (historyPostedRef.current.has(key)) return false;
+      historyPostedRef.current.add(key);
+      return true;
+    });
+    if (!fresh.length) return;
+    const rows = fresh.map((signal) => signalHistoryPayload(signal, metricsByAsset[signal.asset], assets[signal.asset]));
+    fetch("/api/signal-history/record", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rows }),
+    })
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload) => {
+        if (Array.isArray(payload?.rows)) setSignalHistory(payload.rows);
+      })
+      .catch(() => undefined);
+  }, [assets, metricsByAsset, rankedSignals]);
 
   useEffect(() => {
     setCustomDraft(defaultCustomDraft(selectedAsset));
@@ -3710,6 +4070,57 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
     });
   }
 
+  async function createTelegramAlert() {
+    setTelegramFeedback("Creating Telegram alert...");
+    try {
+      const response = await fetch("/api/alerts/telegram/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...telegramDraft,
+          price: telegramState.market.price,
+          finalScore: telegramBest?.finalScore ?? null,
+          triggerLevel: triggerLevel(telegramAsset, telegramBest, telegramState),
+          reason: simpleReason(telegramBest),
+          risk: simpleRisk(telegramBest, telegramMetrics),
+          openUrl: hyperliquidUrl(telegramDraft.asset),
+        }),
+      });
+      const payload = await response.json();
+      setTelegramFeedback(payload.ok ? "Telegram alert created." : `Telegram alert not created: ${payload.error || "unknown error"}`);
+    } catch (error) {
+      setTelegramFeedback(`Telegram alert not created: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async function sendTelegramTest() {
+    setTelegramFeedback("Sending Telegram test...");
+    try {
+      const response = await fetch("/api/alerts/telegram/test", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...telegramDraft,
+          price: telegramState.market.price,
+          finalScore: telegramBest?.finalScore ?? telegramDraft.scoreThreshold,
+          triggerLevel: triggerLevel(telegramAsset, telegramBest, telegramState),
+          oi15m: telegramMetrics.oi15m,
+          oi15mTarget: telegramAsset.thresholds.oi15mPct,
+          buyFlow: telegramMetrics.netBuyFlow5m,
+          buyFlowTarget: telegramAsset.thresholds.flow5mUsd,
+          risk: simpleRisk(telegramBest, telegramMetrics),
+          openUrl: hyperliquidUrl(telegramDraft.asset),
+        }),
+      });
+      const payload = await response.json();
+      if (payload.ok && payload.delivered) setTelegramFeedback("Telegram test sent.");
+      else if (payload.ok) setTelegramFeedback(payload.warning || "Telegram test preview generated. Configure TELEGRAM_BOT_TOKEN to send.");
+      else setTelegramFeedback(`Telegram test failed: ${payload.error || "unknown error"}`);
+    } catch (error) {
+      setTelegramFeedback(`Telegram test failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   function toggleAlert(id: string) {
     setAlerts((current) => current.map((alert: AlertRule) => {
       if (alert.id !== id) return alert;
@@ -3769,6 +4180,8 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
             ["watchlist", "Watchlist"],
             ["flow", "Recent Flow"],
             ["alerts", "Alerts"],
+            ["telegram", "Telegram Alerts"],
+            ["history", "Signal History"],
             ["wallet", "Wallet Scanner"],
           ].map(([key, label]) => (
             <button className={view === key || (key === "watchlist" && view === "asset") ? "active" : ""} key={key} onClick={() => setView(key as View)}>{label}</button>
@@ -3796,6 +4209,18 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
         {view === "overview" && (
           <>
             <PageHead title="HypurrScope Risk Radar" subtitle="BTC / ETH / HYPE live perps intelligence on Hyperliquid." />
+            <section className="watch-now-head">
+              <span>What to watch now</span>
+              <h2>Simple alerts first. Detailed data below.</h2>
+              <p>HypurrScope turns price, OI, funding, liquidity and live flow into simple BTC / ETH / HYPE setups.</p>
+            </section>
+            <SimpleWatchCards
+              assetStates={assets}
+              metricsByAsset={metricsByAsset}
+              onAlert={createAlert}
+              onOpenAsset={(asset) => { setSelected(asset); setView("asset"); }}
+              onOpenHyperliquid={openHyperliquid}
+            />
             <section className="risk-summary">
               <article>
                 <span>Market State</span>
@@ -3872,6 +4297,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
               <div>
                 <strong>{formatUsd(selectedState.market.price)}</strong>
                 <em className={selectedBest?.active ? "signal-active" : ""}>{signalBadge(selectedBest)}</em>
+                <button className="table-action muted-action" onClick={() => openHyperliquid(selectedAsset.apiCoin)}>Open on Hyperliquid</button>
               </div>
             </section>
 
@@ -3940,6 +4366,10 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
         {view === "alerts" && (
           <>
             <PageHead title="Alerts" subtitle="Presets and custom rules are controlled by the selected BTC / ETH / HYPE asset." />
+            <div className="route-cta-row">
+              <button className="table-action" onClick={() => setView("telegram")}>Create Telegram alert</button>
+              <button className="table-action muted-action" onClick={() => setView("history")}>View signal history</button>
+            </div>
             <Panel title="Alert workspace" right={selectedAsset.shortName}>
               <AlertTabs active={alertTab} onChange={setAlertTab} />
               {alertTab === "presets" && <AlertPresetGrid asset={selectedAsset} alerts={alerts} onCreate={createPresetAlert} />}
@@ -3953,6 +4383,33 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
                 />
               )}
               {alertTab === "saved" && <MyAlertsTable alerts={alerts} filter={alertFilter} onFilter={setAlertFilter} onToggle={toggleAlert} />}
+            </Panel>
+          </>
+        )}
+
+        {view === "telegram" && (
+          <>
+            <PageHead title="Telegram Alerts" subtitle="Create simple BTC / ETH / HYPE alerts with clean explanations and Hyperliquid links." />
+            <Panel title="Telegram alert product" right="browser setup">
+              <TelegramAlertWorkspace
+                draft={telegramDraft}
+                selectedSignal={telegramBest}
+                selectedState={telegramState}
+                selectedMetrics={telegramMetrics}
+                feedback={telegramFeedback}
+                onChange={setTelegramDraft}
+                onCreate={createTelegramAlert}
+                onTest={sendTelegramTest}
+              />
+            </Panel>
+          </>
+        )}
+
+        {view === "history" && (
+          <>
+            <PageHead title="Signal History" subtitle="Historical tracking for near and active BTC / ETH / HYPE setups. No profit promises." />
+            <Panel title="Tracked setup outcomes" right="historical tracking">
+              <SignalHistoryTable rows={signalHistory} onOpenHyperliquid={openHyperliquid} />
             </Panel>
           </>
         )}

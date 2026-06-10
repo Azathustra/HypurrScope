@@ -3418,6 +3418,184 @@ td {
   line-height: 1.35;
 }
 
+.watch-now-head {
+  margin: 20px 24px 0;
+}
+
+.watch-now-head span,
+.telegram-preview span {
+  color: var(--mint);
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.watch-now-head h2 {
+  margin: 6px 0 4px;
+  font-size: 1.2rem;
+}
+
+.watch-now-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.simple-watch-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 24px 0;
+}
+
+.simple-watch-card,
+.telegram-preview {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(16, 19, 18, 0.96);
+}
+
+.simple-watch-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  padding: 16px;
+}
+
+.simple-watch-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.simple-watch-card header span,
+.simple-watch-card dt {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 820;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.simple-watch-card header strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 1.55rem;
+}
+
+.simple-watch-card header em {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.simple-watch-card.stance-trade header em,
+.simple-watch-card.stance-trade header strong {
+  color: var(--green);
+}
+
+.simple-watch-card.stance-warning header em,
+.simple-watch-card.stance-warning header strong {
+  color: var(--amber);
+}
+
+.simple-watch-main {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.simple-watch-main p {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 850;
+}
+
+.simple-watch-main dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.simple-watch-main dl div {
+  min-height: 74px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.simple-watch-main dd {
+  margin: 6px 0 0;
+  font-size: 0.92rem;
+  font-weight: 820;
+}
+
+.simple-watch-main small,
+.telegram-preview small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.simple-watch-main small strong {
+  color: var(--text);
+}
+
+.simple-watch-card footer,
+.route-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 14px;
+}
+
+.route-cta-row {
+  margin: 14px 24px 0;
+  padding-top: 0;
+}
+
+.telegram-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.7fr);
+  gap: 14px;
+}
+
+.telegram-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.telegram-form .builder-submit {
+  grid-column: 1 / -1;
+}
+
+.telegram-preview {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  padding: 14px;
+}
+
+.telegram-preview strong {
+  font-size: 1.05rem;
+}
+
+.telegram-preview p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
 .asset-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 12px 24px 0;
@@ -3543,6 +3721,19 @@ td {
   font-size: 0.7rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.table-wrap details {
+  max-width: 260px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.table-wrap summary {
+  color: var(--mint);
+  font-weight: 850;
+  cursor: pointer;
 }
 
 .watchlist-table table {
@@ -4162,14 +4353,17 @@ button:disabled {
   }
 
   .risk-summary,
+  .simple-watch-grid,
   .asset-grid,
   .two-panels,
   .metric-grid,
+  .telegram-workspace,
   .wallet-metrics {
     grid-template-columns: 1fr;
   }
 
   .custom-builder,
+  .telegram-form,
   .preset-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -4192,18 +4386,25 @@ button:disabled {
   }
 
   .asset-card-grid,
+  .simple-watch-grid,
+  .simple-watch-main dl,
+  .telegram-workspace,
   .readiness-grid,
   .preset-grid,
   .custom-builder,
+  .telegram-form,
   .wallet-row {
     grid-template-columns: 1fr;
   }
 
   .risk-summary,
+  .watch-now-head,
+  .simple-watch-grid,
   .asset-grid,
   .two-panels,
   .alert-stack,
   .metric-grid,
+  .route-cta-row,
   .radar-panel,
   .asset-header,
   .page-head {
