@@ -87,11 +87,16 @@ test("overview loads cards without market loading placeholders when APIs are ok"
   await overview(page);
   await page.waitForTimeout(5_000);
   await expect(page.getByText("What to watch now")).toBeVisible();
-  await expect(page.getByText("Simple alerts first. Detailed data below.")).toBeVisible();
+  await expect(page.getByText("Simple BTC / ETH / HYPE alerts first.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Beginner" })).toHaveClass(/active/);
+  await expect(page.getByText("How to read this")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create Telegram Alert" }).first()).toBeVisible();
   for (const asset of ASSETS) {
     await expect(page.locator(".simple-watch-card").filter({ hasText: asset })).toBeVisible();
   }
   await expect(page.getByRole("button", { name: "Open on Hyperliquid" }).first()).toBeVisible();
+  await expect(page.getByText("Best active setup")).toHaveCount(0);
+  await page.getByRole("button", { name: "Show pro dashboard" }).click();
   await expect(page.getByText("Best active setup")).toBeVisible();
   await expect(page.getByTestId("best-active-setup")).toBeVisible();
   await expect(page.getByTestId("closest-setup-summary")).toContainText(/Closest setup:/);
@@ -128,8 +133,8 @@ test("public homepage HTML does not expose card loading placeholders", async ({ 
   expect(html).not.toContain("Opening Hyperliquid WebSocket");
   expect(html).not.toContain("WebSocket trades not streaming");
   expect(html).not.toContain("Connecting to trade stream");
-  expect(html).toContain("Initializing live flow");
-  expect(html).toContain("Preparing WebSocket stream");
+  expect(html).toContain("Simple BTC / ETH / HYPE alerts first.");
+  expect(html).toContain("Show pro dashboard");
 });
 
 test("snapshot endpoint inserts rows and OI history exposes snapshot counts", async ({ page }) => {
@@ -148,6 +153,7 @@ test("snapshot endpoint inserts rows and OI history exposes snapshot counts", as
 
 test("closest setups include all four presets for BTC ETH HYPE", async ({ page }) => {
   await overview(page);
+  await page.getByRole("button", { name: "Show pro dashboard" }).click();
   const panel = page.locator(".radar-panel").filter({ hasText: "Closest setups" });
   await expect(panel).toBeVisible();
   const rows = panel.locator("tbody tr");
@@ -174,6 +180,7 @@ test("closest setups include all four presets for BTC ETH HYPE", async ({ page }
 test("live flow metrics produce numeric flowScore and finalScore for closest setups", async ({ page }) => {
   await waitForLiveFlowMetrics(page);
   await page.getByRole("button", { name: "Overview" }).click();
+  await page.getByRole("button", { name: "Show pro dashboard" }).click();
 
   const panel = page.locator(".radar-panel").filter({ hasText: "Closest setups" });
   await expect(panel).toBeVisible();

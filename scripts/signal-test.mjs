@@ -13,7 +13,7 @@ const checks = [
   ["Best active and closest setup summary", page.includes("Best active setup") && page.includes("Closest setup:") && page.includes("summarySignalText")],
   ["Flow inputs visible in setup rows", page.includes("flowInputs") && page.includes('data-col="flow-inputs"') && page.includes("takerBuyRatio5m") && page.includes("netBuyFlow5m") && page.includes("CVD 5m")],
   ["Human-readable setup explanations", page.includes("setupWhy") && page.includes("setupBlocker") && page.includes("Why this ranks here") && page.includes("Main blocker") && page.includes('data-col="why"') && page.includes('data-col="main-blocker"')],
-  ["Simple signal layer", page.includes("SimpleWatchCards") && page.includes("simpleReason") && page.includes("simpleRisk") && page.includes("Alert when setup score > 80")],
+  ["Simple signal layer", page.includes("SimpleWatchCards") && page.includes("beginnerStatus") && page.includes("beginnerWatchLevel") && page.includes("Alert when signal strength reaches 80%")],
   ["Signal history recording", page.includes("signalHistoryPayload") && page.includes("setSignalHistory") && page.includes("status === \"active\" || signal.status === \"near\"")],
   ["Flow proof selectors", page.includes('data-testid={`flow-metrics-') && page.includes('data-col="taker-buy-ratio-5m"') && page.includes('data-col="net-flow-5m"') && page.includes('data-col="cvd-5m"')],
   ["Trade side mapping debug", page.includes("Trade side mapping debug") && page.includes("raw B = Bid/buy taker")],
