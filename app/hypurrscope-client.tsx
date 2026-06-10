@@ -3748,6 +3748,27 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
           ].map(([key, label]) => (
             <button className={view === key || (key === "watchlist" && view === "asset") ? "active" : ""} key={key} onClick={() => setView(key as View)}>{label}</button>
           ))}
+          <a
+            href="/trade"
+            style={{
+              display: "grid",
+              gap: 4,
+              width: "100%",
+              minHeight: 54,
+              padding: "10px 12px",
+              border: "1px solid var(--mint)",
+              borderRadius: 8,
+              background: "rgba(124, 247, 199, 0.06)",
+              color: "var(--mint)",
+              textAlign: "left",
+              textDecoration: "none",
+              fontSize: "0.84rem",
+              alignContent: "center",
+              fontWeight: 600,
+            }}
+          >
+            Trade — Risk Ticket
+          </a>
         </nav>
         <div className="risk-rail-foot">
           <span className={`connection ${connection}`}>{connectionLabel}</span>
