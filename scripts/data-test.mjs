@@ -20,7 +20,7 @@ const required = [
   ["Flow events backend route exists", fs.existsSync("app/api/flow-events/route.ts")],
   ["Signal history backend route exists", fs.existsSync("app/api/signal-history/record/route.ts") && fs.existsSync("app/api/signal-history/list/route.ts") && fs.existsSync("app/api/cron/update-signal-outcomes/route.ts")],
   ["Signal history episode persistence", signalHistory.includes("create table if not exists signal_episodes") && signalHistory.includes("recordSignalEpisode") && signalHistory.includes("updateSignalOutcomes") && signalHistory.includes("legacy_key")],
-  ["Signal history dedupe thresholds", signalHistory.includes("score >= 75") && signalHistory.includes("cooldownMinutes") && signalHistory.includes("expired before activation")],
+  ["Signal history dedupe thresholds", signalHistory.includes("finalScore >= 75") && signalHistory.includes("statusGroup === \"active\" ? 30 : 60") && signalHistory.includes("memoryRows")],
   ["Telegram alert endpoints exist", fs.existsSync("app/api/alerts/telegram/create/route.ts") && fs.existsSync("app/api/alerts/telegram/test/route.ts")],
   ["OI cadence top-level fields", ["cadenceStatus", "lastSnapshotAgeSeconds", "averageSnapshotIntervalSecondsLast60m", "averageSnapshotIntervalSecondsLast4h", "expectedSnapshotCountLast60m", "actualSnapshotCountLast60m", "missingSnapshotIntervalsLast60m", "missingSnapshotIntervalsLast4h"].every((field) => oiHistoryRoute.includes(field))],
   ["OI minute bucket dedupe", marketSnapshots.includes("minute_bucket") && marketSnapshots.includes("market_snapshots_asset_minute_unique_idx") && marketSnapshots.includes("date_trunc('minute'")],
