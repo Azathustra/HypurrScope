@@ -9,22 +9,17 @@ function fmtUsd(value: unknown) {
   return `$${n.toFixed(2)}`;
 }
 
-function fmtPct(value: unknown) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "collecting";
-  return `${n > 0 ? "+" : ""}${n.toFixed(2)}%`;
-}
-
 function message(body: any) {
   const score = Number.isFinite(Number(body.finalScore)) ? Number(body.finalScore) : Number(body.scoreThreshold || 80);
+  const title = body.beginnerTitle || `${body.asset} ${body.alertType} ${body.trigger} - ${score}%`;
   return [
-    `🚨 ${body.asset} ${body.alertType} ${body.trigger} - ${score}%`,
+    `Alert: ${title}`,
     `Price: ${fmtUsd(body.price)}`,
-    `Trigger: ${body.triggerLevel || body.trigger}`,
-    `OI 15m: ${fmtPct(body.oi15m)} / target ${fmtPct(body.oi15mTarget)}`,
-    `Buy flow: ${fmtUsd(body.buyFlow)} / target ${fmtUsd(body.buyFlowTarget)}`,
+    `Watch level: ${body.watchLevel || body.triggerLevel || body.trigger}`,
+    `Reason: ${body.reason || "waiting for confirmation"}`,
     `Risk: ${body.risk || "wait for confirmation"}`,
-    `Open: ${body.openUrl || "https://app.hyperliquid.xyz"}`,
+    `Open on Hyperliquid: ${body.openUrl || "https://app.hyperliquid.xyz"}`,
+    `Details: ${body.detailsUrl || "https://hypurrscope.xyz"}`,
     "",
     "Informational alert only. Not financial advice.",
   ].join("\n");
