@@ -11,6 +11,7 @@ type ChartMode = "price" | "oi" | "cvd" | "funding";
 type ChartInterval = "1m" | "5m" | "15m" | "1h";
 type AlertFilter = "All" | ApiCoin | "Enabled" | "Disabled";
 type FlowFilter = "All" | ApiCoin | "Large trades" | "Taker bursts";
+type SignalHistoryTab = "resolved" | "pending" | "all";
 type AlertDestination = "Browser" | "Telegram" | "Webhook";
 type TriggerMode = "all" | "any";
 type AlertTab = "presets" | "builder" | "saved";
@@ -380,27 +381,48 @@ type BeginnerCardModel = {
 
 type SignalHistoryRow = {
   id: string;
-  timestamp: string;
   asset: ApiCoin;
   setupType: SignalKind;
-  status: SignalStatus;
+  category: "trade_setup" | "risk_warning";
+  direction: "long" | "short" | "long_squeeze_risk" | "short_squeeze_risk";
+  statusGroup: "near" | "active";
+  firstSeenAt: string;
+  lastSeenAt: string;
+  activeAt: string | null;
+  closedAt: string | null;
+  timestamp: string;
+  status: "pending" | "resolved" | "expired";
+  initialScore: number | null;
+  peakScore: number | null;
+  latestScore: number | null;
   finalScore: number | null;
   structureScore: number | null;
   flowScore: number | null;
+  referencePrice: number | null;
   priceAtSignal: number | null;
-  oi15m: number | null;
-  oi4h: number | null;
-  funding: number | null;
-  takerRatio: number | null;
-  netFlow: number | null;
-  cvd: number | null;
-  liquidityState: string;
+  triggerPrice: number | null;
+  reason: string;
+  mainBlocker: string;
+  rawSnapshotJson: unknown;
   result1h: number | null;
   result4h: number | null;
   result24h: number | null;
   maxFavorableMove: number | null;
   maxAdverseMove: number | null;
-  outcomeStatus: "pending" | "ready" | "unavailable";
+  outcomeStatus: "pending" | "partial" | "ready" | "unavailable";
+  outcomeError: string | null;
+};
+
+type SignalHistoryStats = {
+  episodesTracked: number;
+  pending: number;
+  resolved: number;
+  expired: number;
+  activeSignalsLogged: number;
+  nearSignalsLogged: number;
+  averagePeakScore: number | null;
+  resolvedEpisodes: number;
+  historicalFavorableMoveRate: number | null;
 };
 
 type FlowDisplayState = {
@@ -1886,7 +1908,11 @@ function flowEventPayload(event: FlowEvent) {
 }
 
 function signalHistoryPayload(signal: SignalReadiness, metrics: MetricBundle, state: AssetState) {
-  const isShortIdea = signal.kind === "Fresh Short" || signal.kind === "Crowded Long";
+  const direction =
+    signal.kind === "Fresh Long" ? "long" :
+    signal.kind === "Fresh Short" ? "short" :
+    signal.kind === "Crowded Long" ? "long_squeeze_risk" :
+    "short_squeeze_risk";
   const takerRatio =
     signal.kind === "Fresh Long" || signal.kind === "Crowded Long"
       ? metrics.takerBuyRatio5m
@@ -1895,6 +1921,11 @@ function signalHistoryPayload(signal: SignalReadiness, metrics: MetricBundle, st
     signal.kind === "Fresh Long" || signal.kind === "Crowded Long"
       ? metrics.netBuyFlow5m
       : metrics.netSellFlow5m;
+  const triggerPrice =
+    state.market.price === null ? null :
+    signal.kind === "Fresh Long" ? state.market.price * (1 + ASSET_BY_COIN[signal.asset].thresholds.price15mPct / 100) :
+    signal.kind === "Fresh Short" ? state.market.price * (1 - ASSET_BY_COIN[signal.asset].thresholds.price15mPct / 100) :
+    null;
   return {
     timestamp: new Date().toISOString(),
     asset: signal.asset,
@@ -1911,7 +1942,24 @@ function signalHistoryPayload(signal: SignalReadiness, metrics: MetricBundle, st
     netFlow,
     cvd: metrics.cvd5m,
     liquidityState: metrics.liquidityHealthy === null ? "unknown" : metrics.liquidityHealthy ? "healthy" : "thin",
-    direction: isShortIdea ? "short" : "long",
+    category: signal.kind === "Crowded Long" || signal.kind === "Crowded Short" ? "risk_warning" : "trade_setup",
+    direction,
+    triggerPrice,
+    reason: signal.why,
+    mainBlocker: signal.blocker,
+    rawSnapshotJson: {
+      signal,
+      metrics: {
+        price15m: metrics.price15m,
+        oi15m: metrics.oi15m,
+        oi4h: metrics.oi4h,
+        fundingPct: metrics.fundingPct,
+        takerRatio,
+        netFlow,
+        cvd5m: metrics.cvd5m,
+        liquidityHealthy: metrics.liquidityHealthy,
+      },
+    },
   };
 }
 
@@ -3166,42 +3214,140 @@ function TelegramAlertWorkspace({
   );
 }
 
-function SignalHistoryTable({ rows, onOpenHyperliquid }: { rows: SignalHistoryRow[]; onOpenHyperliquid: (asset: ApiCoin) => void }) {
+function ageText(fromIso: string, toIso?: string | null) {
+  const from = Date.parse(fromIso);
+  const to = toIso ? Date.parse(toIso) : Date.now();
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return "unknown";
+  const minutes = Math.max(0, Math.floor((to - from) / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h ${minutes % 60}m`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+function signalLabel(row: SignalHistoryRow) {
+  if (row.setupType === "Fresh Long") return "Watch Long";
+  if (row.setupType === "Fresh Short") return "Watch Short";
+  if (row.setupType === "Crowded Long") return "Long crowding warning";
+  return "Short crowding warning";
+}
+
+function outcomeText(value: number | null, row: SignalHistoryRow) {
+  if (value !== null) return formatPct(value, 2);
+  if (row.outcomeStatus === "unavailable") return "price data unavailable";
+  return "pending";
+}
+
+function SignalHistoryTable({
+  rows,
+  stats,
+  onOpenHyperliquid,
+  onCreateAlert,
+}: {
+  rows: SignalHistoryRow[];
+  stats: SignalHistoryStats;
+  onOpenHyperliquid: (asset: ApiCoin) => void;
+  onCreateAlert: (asset: ApiCoin, setup: SignalKind) => void;
+}) {
+  const [tab, setTab] = useState<SignalHistoryTab>("resolved");
+  const filteredRows = rows.filter((row) => tab === "all" ? true : row.status === tab);
+  const resolvedRows = rows.filter((row) => row.status === "resolved");
   if (!rows.length) {
     return (
-      <div className="compact-empty">
-        No tracked signals yet.
-        <small>When BTC, ETH or HYPE setups become near or active, HypurrScope stores them here and tracks later price moves.</small>
-        <small>Historical tracking only. No profit promises and no financial advice.</small>
-      </div>
+      <>
+        <SignalHistorySummary stats={stats} />
+        <div className="compact-empty">
+          No resolved signals yet. New signals need 1h / 4h / 24h before outcomes are available.
+          <small>Signal History now stores grouped episodes, not raw minute-by-minute rows.</small>
+          <small>Historical tracking only. No profit promises and no financial advice.</small>
+        </div>
+      </>
     );
   }
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Time</th><th>Asset</th><th>Setup</th><th>Score</th><th>Entry/reference price</th><th>1h result</th><th>4h result</th><th>24h result</th><th>Max favorable move</th><th>Max adverse move</th><th>Open</th></tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              <td>{new Date(row.timestamp).toLocaleString()}</td>
-              <td><strong>{row.asset}</strong></td>
-              <td>{row.setupType} <small>{row.status}</small></td>
-              <td>{row.finalScore === null ? "pending" : `${row.finalScore}%`}</td>
-              <td>{formatUsd(row.priceAtSignal, "unavailable")}</td>
-              <td>{row.result1h === null ? "pending" : formatPct(row.result1h, 2)}</td>
-              <td>{row.result4h === null ? "pending" : formatPct(row.result4h, 2)}</td>
-              <td>{row.result24h === null ? "pending" : formatPct(row.result24h, 2)}</td>
-              <td>{row.maxFavorableMove === null ? "pending" : formatPct(row.maxFavorableMove, 2)}</td>
-              <td>{row.maxAdverseMove === null ? "pending" : formatPct(row.maxAdverseMove, 2)}</td>
-              <td><button className="table-action muted-action" onClick={() => onOpenHyperliquid(row.asset)}>Open on Hyperliquid</button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <small className="panel-note">Historical tracking only. These rows do not guarantee future results and are not financial advice.</small>
-    </div>
+    <>
+      <SignalHistorySummary stats={stats} />
+      <div className="alert-tabs" role="tablist" aria-label="Signal history sections">
+        {(["resolved", "pending", "all"] as SignalHistoryTab[]).map((item) => (
+          <button className={tab === item ? "active" : ""} key={item} onClick={() => setTab(item)}>
+            {item === "resolved" ? "Resolved" : item === "pending" ? "Pending" : "All"}
+          </button>
+        ))}
+      </div>
+      {tab === "resolved" && !resolvedRows.length ? (
+        <div className="compact-empty">
+          No resolved signals yet. New signals need 1h / 4h / 24h before outcomes are available.
+          <small>Pending episodes are grouped separately so this page does not become noisy.</small>
+        </div>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              {tab === "resolved" ? (
+                <tr><th>Time</th><th>Asset</th><th>Signal</th><th>Peak score</th><th>Reference price</th><th>1h result</th><th>4h result</th><th>24h result</th><th>Max favorable move</th><th>Max adverse move</th><th>View details</th></tr>
+              ) : (
+                <tr><th>Time</th><th>Asset</th><th>Signal</th><th>Status</th><th>Peak score</th><th>Reference price</th><th>Age</th><th>Outcome status</th><th>Main reason</th><th>Main blocker</th><th>Action</th></tr>
+              )}
+            </thead>
+            <tbody>
+              {filteredRows.map((row) => (
+                tab === "resolved" ? (
+                  <tr key={row.id}>
+                    <td>{new Date(row.firstSeenAt).toLocaleString()}</td>
+                    <td><strong>{row.asset}</strong></td>
+                    <td>{signalLabel(row)}</td>
+                    <td>{row.peakScore === null ? "unavailable" : `${Math.round(row.peakScore)}%`}</td>
+                    <td>{formatUsd(row.referencePrice, "unavailable")}</td>
+                    <td>{outcomeText(row.result1h, row)}</td>
+                    <td>{outcomeText(row.result4h, row)}</td>
+                    <td>{outcomeText(row.result24h, row)}</td>
+                    <td>{outcomeText(row.maxFavorableMove, row)}</td>
+                    <td>{outcomeText(row.maxAdverseMove, row)}</td>
+                    <td><details><summary className="inline-link">View details</summary><small>{row.reason}</small><small>{row.mainBlocker}</small></details></td>
+                  </tr>
+                ) : (
+                  <tr key={row.id}>
+                    <td>{new Date(row.firstSeenAt).toLocaleString()}</td>
+                    <td><strong>{row.asset}</strong></td>
+                    <td>{signalLabel(row)}</td>
+                    <td>{row.statusGroup === "active" ? "active episode" : row.status === "expired" ? "expired" : "near episode"}</td>
+                    <td>{row.peakScore === null ? "unavailable" : `${Math.round(row.peakScore)}%`}</td>
+                    <td>{formatUsd(row.referencePrice, "unavailable")}</td>
+                    <td>{ageText(row.firstSeenAt, row.closedAt)}</td>
+                    <td>{row.outcomeStatus === "unavailable" ? (row.outcomeError || "price data unavailable") : row.outcomeStatus}</td>
+                    <td>{row.reason.replace("Why this ranks here: ", "")}</td>
+                    <td>{row.mainBlocker.replace("Main blocker: ", "")}</td>
+                    <td>
+                      {row.statusGroup === "active" && row.status === "pending" ? <button className="table-action muted-action" onClick={() => onOpenHyperliquid(row.asset)}>Open on Hyperliquid</button> : null}
+                      {row.status === "pending" ? <button className="table-action" onClick={() => onCreateAlert(row.asset, row.setupType)}>Create alert</button> : null}
+                      {row.status !== "pending" ? <details><summary className="inline-link">View details</summary><small>{row.reason}</small><small>{row.mainBlocker}</small></details> : null}
+                    </td>
+                  </tr>
+                )
+              ))}
+            </tbody>
+          </table>
+          <small className="panel-note">Historical tracking only. These episodes do not guarantee future results and are not financial advice.</small>
+        </div>
+      )}
+    </>
+  );
+}
+
+function SignalHistorySummary({ stats }: { stats: SignalHistoryStats }) {
+  return (
+    <section className="history-summary">
+      <article><span>Episodes tracked</span><strong>{stats.episodesTracked}</strong></article>
+      <article><span>Pending</span><strong>{stats.pending}</strong></article>
+      <article><span>Resolved</span><strong>{stats.resolved}</strong></article>
+      <article><span>Active logged</span><strong>{stats.activeSignalsLogged}</strong></article>
+      <article><span>Near logged</span><strong>{stats.nearSignalsLogged}</strong></article>
+      <article><span>Average peak score</span><strong>{stats.averagePeakScore === null ? "-" : `${Math.round(stats.averagePeakScore)}%`}</strong></article>
+      {stats.historicalFavorableMoveRate !== null ? (
+        <article><span>Historical favorable move rate</span><strong>{formatPct(stats.historicalFavorableMoveRate * 100, 1)}</strong></article>
+      ) : null}
+      <article className="history-note"><span>Data note</span><small>Outcomes are historical tracking only. No profit promises.</small></article>
+    </section>
   );
 }
 
@@ -3519,6 +3665,17 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   const [telegramFeedback, setTelegramFeedback] = useState("");
   const [telegramModalAsset, setTelegramModalAsset] = useState<ApiCoin | null>(null);
   const [signalHistory, setSignalHistory] = useState<SignalHistoryRow[]>([]);
+  const [signalHistoryStats, setSignalHistoryStats] = useState<SignalHistoryStats>({
+    episodesTracked: 0,
+    pending: 0,
+    resolved: 0,
+    expired: 0,
+    activeSignalsLogged: 0,
+    nearSignalsLogged: 0,
+    averagePeakScore: null,
+    resolvedEpisodes: 0,
+    historicalFavorableMoveRate: null,
+  });
   const [wallet, setWallet] = useState("");
   const [walletError, setWalletError] = useState("");
   const [walletLoading, setWalletLoading] = useState(false);
@@ -3730,6 +3887,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
       .then((response) => response.ok ? response.json() : { rows: [] })
       .then((payload) => {
         if (Array.isArray(payload.rows)) setSignalHistory(payload.rows);
+        if (payload?.stats) setSignalHistoryStats(payload.stats);
       })
       .catch(() => undefined);
   }, []);
@@ -4151,7 +4309,11 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
 
   useEffect(() => {
     const minuteBucket = Math.floor(Date.now() / 60_000);
-    const candidates = rankedSignals.filter((signal) => (signal.status === "active" || signal.status === "near") && signal.finalScore !== null);
+    const candidates = rankedSignals.filter((signal) => {
+      if (signal.finalScore === null || signal.flowScore === null) return false;
+      if (signal.status === "active") return true;
+      return signal.status === "near" && signal.finalScore >= 75;
+    });
     const fresh = candidates.filter((signal) => {
       const key = `${minuteBucket}-${signal.asset}-${signal.kind}-${signal.status}`;
       if (historyPostedRef.current.has(key)) return false;
@@ -4168,6 +4330,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
       .then((response) => response.ok ? response.json() : null)
       .then((payload) => {
         if (Array.isArray(payload?.rows)) setSignalHistory(payload.rows);
+        if (payload?.stats) setSignalHistoryStats(payload.stats);
       })
       .catch(() => undefined);
   }, [assets, metricsByAsset, rankedSignals]);
@@ -4635,7 +4798,12 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
           <>
             <PageHead title="Signal History" subtitle="Historical tracking for near and active BTC / ETH / HYPE setups. No profit promises." />
             <Panel title="Tracked setup outcomes" right="historical tracking">
-              <SignalHistoryTable rows={signalHistory} onOpenHyperliquid={openHyperliquid} />
+              <SignalHistoryTable
+                rows={signalHistory}
+                stats={signalHistoryStats}
+                onOpenHyperliquid={openHyperliquid}
+                onCreateAlert={(asset, setup) => createPresetAlert(ASSET_BY_COIN[asset], setup)}
+              />
             </Panel>
           </>
         )}

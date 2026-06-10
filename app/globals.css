@@ -3716,6 +3716,47 @@ td {
   font-size: 0.8rem;
 }
 
+.history-summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.history-summary article {
+  min-height: 82px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.history-summary span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.history-summary strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 1.25rem;
+}
+
+.history-summary .history-note {
+  grid-column: span 2;
+}
+
+.history-summary small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .route-cta-row {
   margin: 14px 24px 0;
   padding-top: 0;
@@ -4512,6 +4553,7 @@ button:disabled {
 
   .risk-summary,
   .simple-watch-grid,
+  .history-summary,
   .asset-grid,
   .two-panels,
   .metric-grid,
@@ -4524,6 +4566,10 @@ button:disabled {
   .telegram-form,
   .preset-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .history-summary .history-note {
+    grid-column: span 2;
   }
 }
 
@@ -4556,6 +4602,7 @@ button:disabled {
     .simple-watch-main dl,
     .telegram-workspace,
     .telegram-modal-grid,
+    .history-summary,
     .readiness-grid,
   .preset-grid,
   .custom-builder,
@@ -4576,8 +4623,12 @@ button:disabled {
   .route-cta-row,
   .radar-panel,
   .asset-header,
-  .page-head {
+    .page-head {
     margin-right: 14px;
     margin-left: 14px;
+  }
+
+  .history-summary .history-note {
+    grid-column: auto;
   }
 }
