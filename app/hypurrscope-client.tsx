@@ -3136,6 +3136,18 @@ function BeginnerOverview({
   );
 }
 
+function connectionTitle(label: string): string {
+  switch (label) {
+    case "Streaming": return "Live trade stream is flowing: flow scores update in real time.";
+    case "Connected": return "Connected to Hyperliquid: waiting for the live trade stream.";
+    case "Warming up": return "Connecting: live data is being established.";
+    case "Reconnecting": return "Connection lost: trying to reconnect to the trade stream.";
+    case "Stale": return "No fresh data received recently: flow scores may be outdated.";
+    case "Error": return "Live connection error: flow scores are unreliable until it recovers.";
+    default: return "Live data connection status.";
+  }
+}
+
 export default function HypurrScopeClient({ initialAssets: initialAssetState }: { initialAssets?: InitialAssetStateMap }) {
   const wsRef = useRef<WebSocket | null>(null);
   const wsReconnectRef = useRef<number | null>(null);
@@ -3948,7 +3960,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
           </button>
         </nav>
         <div className="risk-rail-foot">
-          <span className={`connection ${connection}`}>{connectionLabel}</span>
+          <span className={`connection ${connection}`} title={connectionTitle(connectionLabel)}>{connectionLabel}</span>
           <small>Last update {ageLabel(lastUpdate)}</small>
         </div>
       </aside>
@@ -3968,7 +3980,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
               ))}
             </div>
           )}
-          <span className={`connection ${connection}`}>{connectionLabel}</span>
+          <span className={`connection ${connection}`} title={connectionTitle(connectionLabel)}>{connectionLabel}</span>
           <button className="primary-action" onClick={() => best && createAlert(best)}>Create alert</button>
         </header>
 

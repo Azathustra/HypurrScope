@@ -4823,3 +4823,28 @@ h1, h2, h3,
 @media (max-width: 900px) {
   .beginner-hero { margin: 14px 14px 0; }
 }
+
+/* ---------- Témoin de connexion : indicateur, pas bouton ---------- */
+.connection {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  gap: 7px;
+  cursor: default;
+  font-family: var(--font-data);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.connection::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
