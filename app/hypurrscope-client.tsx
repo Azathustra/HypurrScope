@@ -3943,22 +3943,6 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
           <button
             onClick={() => setView("trade")}
             className={view === "trade" ? "active" : ""}
-            style={{
-              display: "grid",
-              gap: 4,
-              width: "100%",
-              minHeight: 54,
-              padding: "10px 12px",
-              border: "1px solid var(--mint)",
-              borderRadius: 8,
-              background: view === "trade" ? "rgba(124, 247, 199, 0.16)" : "rgba(124, 247, 199, 0.06)",
-              color: "var(--mint)",
-              textAlign: "left",
-              textDecoration: "none",
-              fontSize: "0.84rem",
-              alignContent: "center",
-              fontWeight: 600,
-            }}
           >
             Trade — Risk Ticket
           </button>
