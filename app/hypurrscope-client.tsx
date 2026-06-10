@@ -411,6 +411,7 @@ type SignalHistoryRow = {
   maxAdverseMove: number | null;
   outcomeStatus: "pending" | "partial" | "ready" | "unavailable";
   outcomeError: string | null;
+  outcomeRawJson: unknown;
 };
 
 type SignalHistoryStats = {
@@ -3250,8 +3251,9 @@ function SignalHistoryTable({
   onCreateAlert: (asset: ApiCoin, setup: SignalKind) => void;
 }) {
   const [tab, setTab] = useState<SignalHistoryTab>("resolved");
-  const filteredRows = rows.filter((row) => tab === "all" ? true : row.status === tab);
   const resolvedRows = rows.filter((row) => row.status === "resolved");
+  const pendingRows = rows.filter((row) => row.status === "pending");
+  const filteredRows = tab === "resolved" ? resolvedRows : tab === "pending" ? pendingRows : rows;
   if (!rows.length) {
     return (
       <>

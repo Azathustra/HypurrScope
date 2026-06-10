@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { randomUUID } from "crypto";
 
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 const isLocalDb = connectionString ? /localhost|127\.0\.0\.1/i.test(connectionString) : false;
@@ -293,7 +294,6 @@ export async function recordSignalEpisode(input: SignalHistoryInput) {
   const rawSnapshotJson = JSON.stringify(input.rawSnapshotJson ?? input);
   if (existing.rows[0]) {
     const row = existing.rows[0];
-    const nextPeak = Math.max(Number(row.peak_score ?? input.finalScore ?? 0), Number(input.finalScore ?? 0));
     const updated = await db().query(
       `
         update signal_episodes
@@ -327,7 +327,6 @@ export async function recordSignalEpisode(input: SignalHistoryInput) {
         row.id,
       ],
     );
-    updated.rows[0].peak_score = nextPeak;
     return updated.rows.map(rowToSignal);
   }
 
@@ -348,7 +347,7 @@ export async function recordSignalEpisode(input: SignalHistoryInput) {
       returning *
     `,
     [
-      crypto.randomUUID(),
+      randomUUID(),
       input.asset,
       input.setupType,
       input.category || categoryFor(input.setupType),
@@ -434,7 +433,7 @@ export async function migrateLegacySignalRows() {
         returning id
       `,
       [
-        crypto.randomUUID(),
+        randomUUID(),
         `legacy|${key}`,
         first.asset,
         setupType,
@@ -644,7 +643,7 @@ export async function updateSignalOutcomes(limit = 80) {
     [Math.min(Math.max(limit, 1), 120)],
   );
   const rows = result.rows.map(rowToSignal);
-  const updated = [];
+  const updated: Array<{ row: SignalHistoryRow; changed: boolean }> = [];
   for (const row of rows) {
     updated.push(await updateEpisodeOutcome(row));
   }
