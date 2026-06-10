@@ -3959,13 +3959,15 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
             <button className={uiMode === "beginner" ? "active" : ""} onClick={() => switchMode("beginner")}>Beginner</button>
             <button className={uiMode === "pro" ? "active" : ""} onClick={() => switchMode("pro")}>Pro</button>
           </div>
-          <div className="asset-switcher">
-            {ASSETS.map((asset) => (
-              <button className={selected === asset.apiCoin ? "active" : ""} key={asset.apiCoin} onClick={() => setSelected(asset.apiCoin)}>
-                {asset.shortName}
-              </button>
-            ))}
-          </div>
+          {(view === "asset" || view === "alerts") && (
+            <div className="asset-switcher">
+              {ASSETS.map((asset) => (
+                <button className={selected === asset.apiCoin ? "active" : ""} key={asset.apiCoin} onClick={() => setSelected(asset.apiCoin)}>
+                  {asset.shortName}
+                </button>
+              ))}
+            </div>
+          )}
           <span className={`connection ${connection}`}>{connectionLabel}</span>
           <button className="primary-action" onClick={() => best && createAlert(best)}>Create alert</button>
         </header>
