@@ -3271,7 +3271,17 @@ td {
   margin-right: auto;
 }
 
+.mode-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(16, 19, 18, 0.9);
+}
+
 .asset-switcher button,
+.mode-toggle button,
 .chart-toolbar button {
   min-height: 34px;
   padding: 0 12px;
@@ -3284,6 +3294,7 @@ td {
 }
 
 .asset-switcher button.active,
+.mode-toggle button.active,
 .chart-toolbar button.active {
   border-color: rgba(124, 247, 199, 0.55);
   background: rgba(124, 247, 199, 0.09);
@@ -3495,14 +3506,23 @@ td {
   font-weight: 850;
 }
 
-.simple-watch-card.stance-trade header em,
-.simple-watch-card.stance-trade header strong {
+.simple-watch-card.status-active-long header em,
+.simple-watch-card.status-active-long header strong,
+.simple-watch-card.status-active-short header em,
+.simple-watch-card.status-active-short header strong,
+.simple-watch-card.status-watch-long header strong,
+.simple-watch-card.status-watch-short header strong {
   color: var(--green);
 }
 
-.simple-watch-card.stance-warning header em,
-.simple-watch-card.stance-warning header strong {
+.simple-watch-card.status-risk-warning header em,
+.simple-watch-card.status-risk-warning header strong {
   color: var(--amber);
+}
+
+.simple-watch-card.status-wait header em,
+.simple-watch-card.status-wait header strong {
+  color: var(--muted);
 }
 
 .simple-watch-main {
@@ -3556,6 +3576,144 @@ td {
   gap: 8px;
   margin-top: auto;
   padding-top: 14px;
+}
+
+.beginner-detail {
+  width: 100%;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.beginner-detail summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--mint);
+  font-weight: 850;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.beginner-detail small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.beginner-guide,
+.advanced-gate {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 12px 24px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(16, 19, 18, 0.92);
+}
+
+.beginner-guide {
+  display: grid;
+}
+
+.beginner-guide strong,
+.advanced-gate strong {
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.beginner-guide div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.beginner-guide span,
+.advanced-gate span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.beginner-guide span {
+  padding: 7px 9px;
+  border: 1px solid rgba(124, 247, 199, 0.18);
+  border-radius: 8px;
+  background: rgba(124, 247, 199, 0.05);
+}
+
+.advanced-gate div {
+  display: grid;
+  gap: 4px;
+}
+
+.telegram-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.telegram-modal {
+  display: grid;
+  gap: 14px;
+  width: min(720px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid rgba(124, 247, 199, 0.28);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
+}
+
+.telegram-modal header,
+.telegram-modal footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.telegram-modal header span {
+  color: var(--mint);
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.telegram-modal h2 {
+  margin: 4px 0 0;
+}
+
+.telegram-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.telegram-simple-preview {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.telegram-simple-preview p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.telegram-modal footer span {
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .route-cta-row {
@@ -4381,15 +4539,24 @@ button:disabled {
     width: 100%;
   }
 
+  .mode-toggle {
+    width: 100%;
+  }
+
   .asset-switcher button {
     flex: 1;
   }
 
+  .mode-toggle button {
+    flex: 1;
+  }
+
   .asset-card-grid,
-  .simple-watch-grid,
-  .simple-watch-main dl,
-  .telegram-workspace,
-  .readiness-grid,
+    .simple-watch-grid,
+    .simple-watch-main dl,
+    .telegram-workspace,
+    .telegram-modal-grid,
+    .readiness-grid,
   .preset-grid,
   .custom-builder,
   .telegram-form,
@@ -4398,9 +4565,11 @@ button:disabled {
   }
 
   .risk-summary,
-  .watch-now-head,
-  .simple-watch-grid,
-  .asset-grid,
+    .watch-now-head,
+    .simple-watch-grid,
+    .beginner-guide,
+    .advanced-gate,
+    .asset-grid,
   .two-panels,
   .alert-stack,
   .metric-grid,
