@@ -12,6 +12,10 @@ const checks = [
   ["No Recommended now on alerts", !page.includes("Recommended now")],
   ["Preset alert copy", page.includes("Create preset alert")],
   ["Neutral pre-hydration flow copy", page.includes("Initializing live flow") && page.includes("Preparing WebSocket stream") && !page.includes("Opening Hyperliquid WebSocket") && !page.includes("Connecting to trade stream") && !page.includes("WebSocket trades not streaming")],
+  ["Simple watch cards", page.includes("What to watch now") && page.includes("Simple alerts first. Detailed data below.") && page.includes("simpleStance") && page.includes("triggerLevel")],
+  ["Referral CTAs", page.includes("Open on Hyperliquid") && page.includes("hyperliquidUrl")],
+  ["Telegram alert page", page.includes("Telegram Alerts") && page.includes("/api/alerts/telegram/create") && page.includes("/api/alerts/telegram/test")],
+  ["Signal history page", page.includes("Signal History") && page.includes("/api/signal-history/list") && page.includes("/api/signal-history/record")],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);

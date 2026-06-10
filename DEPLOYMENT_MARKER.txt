@@ -1,4 +1,4 @@
 HypurrScope production hardening deployment marker
 Created for forcing a fresh GitHub commit and Vercel deployment.
-Timestamp: 2026-06-09T23:05:00+02:00
-Patch: Production hardening copy. Adds setup explanations and neutral pre-hydration live-flow wording.
+Timestamp: 2026-06-09T23:45:00+02:00
+Patch: Product simplification. Adds What to watch now cards, Telegram alerts, signal history and Hyperliquid CTAs.

@@ -86,6 +86,12 @@ test("overview loads cards without market loading placeholders when APIs are ok"
   const markets = await apiOk(page, "/api/hl/markets");
   await overview(page);
   await page.waitForTimeout(5_000);
+  await expect(page.getByText("What to watch now")).toBeVisible();
+  await expect(page.getByText("Simple alerts first. Detailed data below.")).toBeVisible();
+  for (const asset of ASSETS) {
+    await expect(page.locator(".simple-watch-card").filter({ hasText: asset })).toBeVisible();
+  }
+  await expect(page.getByRole("button", { name: "Open on Hyperliquid" }).first()).toBeVisible();
   await expect(page.getByText("Best active setup")).toBeVisible();
   await expect(page.getByTestId("best-active-setup")).toBeVisible();
   await expect(page.getByTestId("closest-setup-summary")).toContainText(/Closest setup:/);
@@ -228,6 +234,22 @@ test("alerts direct route has tabs, asset presets and duplicate blocking", async
   const createButtons = page.getByRole("button", { name: "Create preset alert" });
   await createButtons.first().click();
   await expect(page.getByRole("button", { name: "Already created" }).first()).toBeDisabled();
+});
+
+test("telegram alerts route opens and creates a test preview", async ({ page }) => {
+  await page.goto("/alerts/telegram");
+  await expect(page.getByRole("heading", { name: "Telegram Alerts" })).toBeVisible();
+  await expect(page.getByText("Telegram preview")).toBeVisible();
+  await page.getByPlaceholder("123456789").fill("123456789");
+  await page.getByRole("button", { name: "Send test alert" }).click();
+  await expect(page.getByText(/Telegram test|preview|Configure TELEGRAM_BOT_TOKEN/i)).toBeVisible();
+});
+
+test("signal history route opens without fake performance data", async ({ page }) => {
+  await page.goto("/signal-history");
+  await expect(page.getByRole("heading", { name: "Signal History" })).toBeVisible();
+  await expect(page.getByText(/Historical tracking|No tracked signals yet|pending/i)).toBeVisible();
+  await expect(page.getByText(/No profit promises|not financial advice|guarantee future results/i)).toBeVisible();
 });
 
 test("custom alert builder includes all required controls", async ({ page }) => {
