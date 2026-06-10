@@ -1,4 +1,4 @@
-import { insertSignalHistory, listSignalHistory, type SignalHistoryInput } from "../../../lib/signal-history";
+import { listSignalEpisodes, recordSignalEpisode, signalEpisodeStats, type SignalHistoryInput } from "../../../lib/signal-history";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -17,14 +17,17 @@ export async function POST(request: Request) {
     const rows = Array.isArray(body?.rows) ? body.rows : [body];
     const usable = rows.filter(valid).slice(0, 12) as SignalHistoryInput[];
     if (!usable.length) {
-      return Response.json({ ok: false, error: "No active or near BTC/ETH/HYPE signal rows to record" }, { status: 400 });
+      return Response.json({ ok: false, error: "No active or strong near BTC/ETH/HYPE signal episodes to record" }, { status: 400 });
     }
-    const inserted = [];
+    const recorded = [];
+    const skipped = [];
     for (const row of usable) {
-      inserted.push(...await insertSignalHistory(row));
+      const result = await recordSignalEpisode(row);
+      if (result.length) recorded.push(...result);
+      else skipped.push({ asset: row.asset, setupType: row.setupType, finalScore: row.finalScore, status: row.status, reason: "below logging threshold or missing flow/final score" });
     }
-    const history = await listSignalHistory(100);
-    return Response.json({ ok: true, insertedCount: inserted.length, rows: history }, { headers: { "cache-control": "no-store" } });
+    const [history, stats] = await Promise.all([listSignalEpisodes(120), signalEpisodeStats()]);
+    return Response.json({ ok: true, recordedCount: recorded.length, skippedCount: skipped.length, skipped, rows: history, stats }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     return Response.json(
       { ok: false, error: error instanceof Error ? error.message : String(error), rows: [] },
