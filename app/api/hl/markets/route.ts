@@ -137,7 +137,9 @@ export async function GET() {
         updatedAt,
         source: "metaAndAssetCtxs",
       },
-      { headers: { "cache-control": "no-store" } },
+      // Shared CDN cache: with dozens of simultaneous visitors, one upstream
+      // call to Hyperliquid serves everyone for 2s instead of one call each.
+      { headers: { "cache-control": "public, s-maxage=2, stale-while-revalidate=8" } },
     );
   } catch (error) {
     return Response.json(
