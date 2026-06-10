@@ -643,3 +643,24 @@
 @media (prefers-reduced-motion: reduce) {
   .rt-pill, .rt-place, .rt-connect { transition: none; }
 }
+
+/* ---------- Mode intégré : le ticket dans l'interface principale ---------- */
+.rt-embedded {
+  max-width: 580px;
+  margin: 18px 28px 24px;
+  padding: 0;
+}
+
+.rt-embedded .rt-top {
+  min-height: 0;
+}
+
+.rt-embedded .rt-hero {
+  margin-top: 0;
+}
+
+@media (max-width: 900px) {
+  .rt-embedded {
+    margin: 14px 14px 24px;
+  }
+}

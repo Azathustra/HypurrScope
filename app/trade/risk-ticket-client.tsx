@@ -34,7 +34,7 @@ type Phase = "idle" | "approving" | "signing" | "done";
 const R_CHOICES = [0, 1.5, 2, 3] as const;
 const RISK_PRESETS = [0.5, 1, 2] as const; // % of account equity
 
-export default function RiskTicketClient() {
+export default function RiskTicketClient({ embedded = false }: { embedded?: boolean }) {
   // --- wallet & account ---
   const [wallet, setWallet] = useState<BrowserWallet | null>(null);
   const [account, setAccount] = useState<AccountSnapshot | null>(null);
@@ -186,12 +186,17 @@ export default function RiskTicketClient() {
     };
   }, [plan]);
 
+  const Shell = (embedded ? "section" : "main") as keyof JSX.IntrinsicElements;
   return (
-    <main className="rt-shell">
+    <Shell className={embedded ? "rt-shell rt-embedded" : "rt-shell"}>
       <header className="rt-top">
-        <a className="rt-back" href="/">
-          ← HypurrScope radar
-        </a>
+        {embedded ? (
+          <span />
+        ) : (
+          <a className="rt-back" href="/">
+            ← HypurrScope radar
+          </a>
+        )}
         <div className="rt-top-right">
           {IS_TESTNET && <span className="rt-badge rt-badge-testnet">Testnet</span>}
           {wallet ? (
@@ -495,6 +500,6 @@ export default function RiskTicketClient() {
           )}
         </p>
       </footer>
-    </main>
+    </Shell>
   );
 }
