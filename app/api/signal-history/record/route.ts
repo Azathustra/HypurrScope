@@ -1,4 +1,4 @@
-import { listSignalEpisodes, recordSignalEpisode, signalEpisodeStats, type SignalHistoryInput } from "../../../lib/signal-history";
+import { listSignalEpisodes, recordSignalEpisode, signalEpisodeStats, type SignalHistoryInput, type SignalHistoryRow } from "../../../lib/signal-history";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -19,8 +19,8 @@ export async function POST(request: Request) {
     if (!usable.length) {
       return Response.json({ ok: false, error: "No active or strong near BTC/ETH/HYPE signal episodes to record" }, { status: 400 });
     }
-    const recorded = [];
-    const skipped = [];
+    const recorded: SignalHistoryRow[] = [];
+    const skipped: Array<{ asset: unknown; setupType: unknown; finalScore: unknown; status: unknown; reason: string }> = [];
     for (const row of usable) {
       const result = await recordSignalEpisode(row);
       if (result.length) recorded.push(...result);
