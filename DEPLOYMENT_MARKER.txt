@@ -1,4 +1,0 @@
-HypurrScope production hardening deployment marker
-Created for forcing a fresh GitHub commit and Vercel deployment.
-Timestamp: 2026-06-10T08:05:00+02:00
-Patch: Signal History safe-mode rescue. Keeps grouped episodes, anti-spam, Resolved/Pending/All tabs, and a deploy-safe outcome endpoint while avoiding the previous strict build failure path.
