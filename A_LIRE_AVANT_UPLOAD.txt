@@ -10,6 +10,7 @@ Important:
 
 Correctif inclus:
 - Risk Ticket avec vraie machine d'etat.
+- Correctif TypeScript des boutons Quick targets: draft.side n'est plus lu comme null par Vercel.
 - Au chargement initial, le panneau de droite demande l'etape suivante au lieu d'afficher plein de "data unavailable".
 - Execution Preview affiche "Preview locked" tant que le ticket est incomplet.
 - "Try sample HYPE trade" remplit un exemple complet HYPE.

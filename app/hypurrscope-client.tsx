@@ -2848,19 +2848,20 @@ function TargetPresetButtons({
   onDraftChange: (draft: RiskTicketDraft) => void;
 }) {
   if (!draft.side) return null;
+  const side = draft.side;
   const entry = effectiveEntryFromDraft(state, draft);
   return (
     <div className="quick-row target-presets" aria-label="Quick targets">
       <span>Quick targets</span>
       {targetPresetPercents(asset.apiCoin).map((pct) => {
-        const target = entry === null ? "" : roundedTargetInput(draft.side === "Long" ? entry * (1 + pct) : entry * (1 - pct), assetMeta);
+        const target = entry === null ? "" : roundedTargetInput(side === "Long" ? entry * (1 + pct) : entry * (1 - pct), assetMeta);
         return (
           <button
-            key={`${asset.apiCoin}-${draft.side}-${pct}`}
+            key={`${asset.apiCoin}-${side}-${pct}`}
             disabled={!target}
             onClick={() => onDraftChange({ ...draft, targetPrice: target })}
           >
-            {formatPresetPct(pct, draft.side)}
+            {formatPresetPct(pct, side)}
           </button>
         );
       })}
