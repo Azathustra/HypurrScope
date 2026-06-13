@@ -1,51 +1,32 @@
-VERSION: Risk Ticket product core + REST/WebSocket stable + UX onboarding
+DOSSIER A UPLOADER SUR GITHUB
 
-Important avant upload GitHub:
+Prends tout le contenu de ce dossier et mets-le a la racine du repo GitHub HypurrScope.
 
+Important:
 1. Cette version ne contient PAS app/trade.
-2. Si app/trade existe encore sur GitHub, il faut le supprimer avant ou apres upload.
-3. L'erreur Vercel "Cannot resolve @nktkas/hyperliquid" venait de app/trade/lib/hl.ts, un vieux fichier de l'autre IA.
-4. Pour eviter le melange:
-   - ouvrir GitHub
-   - supprimer le dossier app/trade s'il existe
-   - uploader le contenu de ce dossier a la racine du repo
+2. Si app/trade existe encore sur GitHub, supprime ce dossier sur GitHub.
+3. L'ancienne erreur Vercel "@nktkas/hyperliquid" venait d'un vieux fichier app/trade/lib/hl.ts.
+4. Ne garde pas de vieux fichiers melanges avec ce dossier.
 
-Ce qui est inclus:
-- REST/WebSocket stable
-- /api/hl/markets
-- /api/hl/candles
-- /api/hl/book
-- /api/hl/oi-history
-- /api/hl/ws-smoke
-- Trade Builder / Risk Ticket en premiere experience
-- Hero plus clair: target profit + max total risk
-- Flow guide en 3 etapes
-- Trade Summary avec Potential profit en premier
-- Market Safety Checks simplifies
-- Advanced Data collapse par defaut
-- Ancien scanner/radar cache dans Legacy scanner
-- Beginner Mode
-- Pro Metrics / Market Safety Checks
-- Execution Preview preview/copy/open Hyperliquid
-- Builder Code Panel feature-flagged
-- Recent Tickets local
-- Moteur de calcul pur dans app/lib/risk
-- Config builder code dans app/lib/hyperliquid
-- Tests de calcul dans scripts/risk-ticket-tests.mjs
+Correctif inclus:
+- Risk Ticket avec vraie machine d'etat.
+- Au chargement initial, le panneau de droite demande l'etape suivante au lieu d'afficher plein de "data unavailable".
+- Execution Preview affiche "Preview locked" tant que le ticket est incomplet.
+- "Try sample HYPE trade" remplit un exemple complet HYPE.
+- Quick targets apres selection Long/Short.
+- Metadata Hyperliquid perp { type: "meta" } pour szDecimals.
+- Si la precision asset manque, seule l'execution est bloquee; la preview reste calculable.
+- Market Safety Checks separe Market readiness et Ticket-specific checks.
+- Les couts n'affichent plus un faux $0.0000 quand le ticket n'est pas calculable.
 
-Execution reelle:
-- desactivee par defaut
-- activee seulement par NEXT_PUBLIC_ENABLE_REAL_EXECUTION=true
-- builder code prepare via env vars, mais pas execute automatiquement
+Tests locaux passes avec le runtime Codex:
+- risk-ticket-tests: 7/7 passed
+- risk-state-tests: 7/7 passed
+- Smoke test passed
+- Data test passed
+- Signal test passed
+- UI test passed
 
-Tests:
-- test:risk lance les tests de calcul du Risk Ticket
-- resultat local Codex:
-  - risk-ticket-tests: 7/7 passed
-  - Smoke test passed
-  - Data test passed
-  - Signal test passed
-  - UI test passed
-
-Limite locale Codex:
-- npm / node_modules ne sont pas disponibles ici, donc le vrai npm run build doit etre confirme par Vercel apres upload.
+Limite locale:
+- npm run build n'a pas pu etre lance ici car npm n'est pas disponible dans cet environnement et node_modules n'existe pas localement.
+- Vercel lancera npm install puis npm run build au deploiement.

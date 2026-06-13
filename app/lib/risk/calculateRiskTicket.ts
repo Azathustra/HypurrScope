@@ -57,7 +57,7 @@ function marketEntryPrice(input: RiskTicketInput, context: MarketExecutionContex
     warnings.push({
       code: "ORDER_BOOK_UNAVAILABLE",
       status: "warning",
-      message: "Order book unavailable - mark price is used for simulation only.",
+      message: "Order book connecting - mark price is used for simulation only.",
     });
     return context.markPrice;
   }
@@ -139,7 +139,7 @@ export function calculateRiskTicket(
     warnings.push({
       code: "PRICING_NOT_LIVE",
       status: context.pricingStatus === "stale" ? "warning" : "danger",
-      message: context.pricingStatus === "stale" ? "Pricing data is stale - execution disabled." : "Pricing data unavailable - simulation only.",
+      message: context.pricingStatus === "stale" ? "Market data updating - execution disabled." : "Market data connecting - simulation only.",
     });
   }
   if (input.marginMode === "cross") {
@@ -187,7 +187,7 @@ export function calculateRiskTicket(
       + stopLoss * costs.builderFeeExitBps / 10_000;
 
     positionSizeAssetRaw = input.maxTotalRiskUsd / costPerAssetAtStop;
-    let rounded = roundDown(positionSizeAssetRaw, szDecimals);
+    let rounded = precisionAvailable ? roundDown(positionSizeAssetRaw, szDecimals) : positionSizeAssetRaw;
     costRows = costsForSize(rounded, effectiveEntryPrice, stopLoss, targetPrice, costs);
     estimatedLossBeforeCostsUsd = rounded * riskDistance;
     estimatedTotalLossAtStopUsd =
@@ -200,7 +200,7 @@ export function calculateRiskTicket(
       + costRows.estimatedBuilderFeeExitUsd;
 
     while (estimatedTotalLossAtStopUsd > input.maxTotalRiskUsd && rounded > 0) {
-      rounded = roundDown(rounded - 1 / (10 ** szDecimals), szDecimals);
+      rounded = precisionAvailable ? roundDown(rounded - 1 / (10 ** szDecimals), szDecimals) : rounded * 0.999999;
       costRows = costsForSize(rounded, effectiveEntryPrice, stopLoss, targetPrice, costs);
       estimatedLossBeforeCostsUsd = rounded * riskDistance;
       estimatedTotalLossAtStopUsd =

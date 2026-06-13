@@ -3408,6 +3408,10 @@ td {
   color: var(--accent);
 }
 
+.target-presets {
+  margin-top: 10px;
+}
+
 .potential-move {
   border: 1px dashed rgba(111, 240, 198, 0.35);
   border-radius: 8px;
@@ -3635,6 +3639,14 @@ td {
   gap: 8px;
 }
 
+.safety-group-label {
+  color: var(--soft);
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .safety-check,
 .execution-lines div {
   align-items: center;
@@ -3693,6 +3705,11 @@ td {
 
 .safety-check.unavailable {
   opacity: 0.72;
+}
+
+.safety-check.pending {
+  border-color: rgba(255, 255, 255, 0.12);
+  opacity: 0.86;
 }
 
 .execution-panel {

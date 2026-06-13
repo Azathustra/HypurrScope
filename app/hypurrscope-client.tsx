@@ -5,7 +5,11 @@ import { calculateRiskTicket as calculateRiskTicketCore } from "./lib/risk/calcu
 import { riskPresetFor } from "./lib/risk/presets";
 import { getBuilderConfig } from "./lib/hyperliquid/builderCode";
 import { getHyperliquidConfig } from "./lib/hyperliquid/config";
-import { derivePrimaryAction } from "./lib/hyperliquid/execution";
+import { assetMetaFor, type PerpAssetMeta } from "./lib/hyperliquid/assetMeta";
+import { fetchPerpMeta } from "./lib/hyperliquid/fetchPerpMeta";
+import { roundPriceForPerp } from "./lib/hyperliquid/rounding";
+import { deriveTicketState, isTicketComputable, ticketStateNextAction, type TicketState } from "./lib/risk/deriveTicketState";
+import { derivePrimaryCta } from "./lib/ui/derivePrimaryCta";
 import type { DataStatus, EntryType as CoreEntryType, RiskTicketInput, Side as CoreSide } from "./lib/risk/types";
 
 type ApiCoin = "BTC" | "ETH" | "HYPE";
@@ -446,7 +450,7 @@ type RiskTicketCalc = {
 type MarketSafetyCheck = {
   label: string;
   value: string;
-  status: "OK" | "Review" | "Unsafe" | "Unavailable";
+  status: "OK" | "Review" | "Unsafe" | "Unavailable" | "Pending";
   impact: string;
 };
 
@@ -893,6 +897,30 @@ function defaultTakeProfit(side: TicketSide | null, entry: number | null) {
   return side === "Long" ? entry * 1.04 : entry * 0.96;
 }
 
+function effectiveEntryFromDraft(state: AssetState, draft: RiskTicketDraft) {
+  if (draft.entryType === "Limit") return parsePositiveNumber(draft.entryPrice);
+  if (draft.side === "Long" && Number.isFinite(state.book?.bestAsk as number)) return state.book?.bestAsk ?? null;
+  if (draft.side === "Short" && Number.isFinite(state.book?.bestBid as number)) return state.book?.bestBid ?? null;
+  return state.market.price;
+}
+
+function targetPresetPercents(asset: ApiCoin) {
+  if (asset === "BTC") return [0.005, 0.01, 0.02];
+  if (asset === "ETH") return [0.0075, 0.015, 0.03];
+  return [0.01, 0.025, 0.05];
+}
+
+function formatPresetPct(pct: number, side: TicketSide) {
+  const sign = side === "Long" ? "+" : "-";
+  const pctValue = pct * 100;
+  return `${sign}${pctValue % 1 === 0 ? pctValue.toFixed(0) : pctValue.toFixed(2).replace(/0$/, "")}%`;
+}
+
+function roundedTargetInput(price: number, assetMeta: PerpAssetMeta | null) {
+  if (assetMeta && assetMeta.szDecimals !== null) return roundPriceForPerp(price, assetMeta.szDecimals);
+  return formatPriceInput(price);
+}
+
 function fundingAgainstPosition(side: TicketSide | null, fundingPct: number | null) {
   if (fundingPct === null || !side) return false;
   return side === "Long" ? fundingPct > 0.01 : fundingPct < -0.01;
@@ -937,7 +965,7 @@ function dataHealth(state: AssetState, wsDebug: WsDebugState, now: number) {
     wsConnected,
     ageSeconds,
     bookAgeSeconds,
-    label: live ? "Pricing data live" : pricingStatus === "stale" ? "Pricing data stale" : "Pricing data unavailable",
+    label: live ? "Market data live" : pricingStatus === "stale" ? "Market data updating" : "Market data connecting",
   };
 }
 
@@ -948,6 +976,7 @@ function calculateRiskTicket(
   draft: RiskTicketDraft,
   wsDebug: WsDebugState,
   now: number,
+  assetMeta: PerpAssetMeta | null,
 ): RiskTicketCalc {
   const preset = riskPresetFor(asset.apiCoin);
   const health = dataHealth(state, wsDebug, now);
@@ -983,7 +1012,7 @@ function calculateRiskTicket(
     oraclePrice: state.market.oraclePx,
     pricingStatus,
     orderBookStatus,
-    precision: { szDecimals: null, priceDecimals: null },
+    precision: assetMeta ? { szDecimals: assetMeta.szDecimals, priceDecimals: null } : { szDecimals: null, priceDecimals: null },
   }, {
     entrySlippageBps: estimatedSlippageBps,
     stopSlippageBps: estimatedSlippageBps,
@@ -1017,6 +1046,12 @@ function calculateRiskTicket(
     executionEnabled ? "Execution ready" :
     health.live ? "Preview available" :
     "Simulation only";
+  const hasPosition = output.positionSizeUsd !== null && output.positionSizeAssetRaw !== null;
+  const estimatedFees = hasPosition ? (output.estimatedEntryFeesUsd ?? 0) + (output.estimatedExitFeesAtStopUsd ?? 0) : null;
+  const builderFeeUsd = hasPosition ? (output.estimatedBuilderFeeEntryUsd ?? 0) + (output.estimatedBuilderFeeExitUsd ?? 0) : null;
+  const totalEstimatedCostUsd = hasPosition
+    ? (output.estimatedEntryFeesUsd ?? 0) + (output.estimatedExitFeesAtStopUsd ?? 0) + (output.estimatedEntrySlippageUsd ?? 0) + (output.estimatedStopSlippageUsd ?? 0) + (output.estimatedBuilderFeeEntryUsd ?? 0) + (output.estimatedBuilderFeeExitUsd ?? 0)
+    : null;
 
   return {
     asset,
@@ -1039,7 +1074,7 @@ function calculateRiskTicket(
     rewardRiskGross: output.rewardRiskGross,
     rewardRiskNet: output.rewardRiskNet,
     riskRewardRatio: output.rewardRiskNet,
-    estimatedFees: (output.estimatedEntryFeesUsd ?? 0) + (output.estimatedExitFeesAtStopUsd ?? 0),
+    estimatedFees,
     estimatedEntryFeesUsd: output.estimatedEntryFeesUsd,
     estimatedExitFeesAtStopUsd: output.estimatedExitFeesAtStopUsd,
     estimatedExitFeesAtTargetUsd: output.estimatedExitFeesAtTargetUsd,
@@ -1047,8 +1082,8 @@ function calculateRiskTicket(
     estimatedEntrySlippageUsd: output.estimatedEntrySlippageUsd,
     estimatedStopSlippageUsd: output.estimatedStopSlippageUsd,
     estimatedTargetSlippageUsd: output.estimatedTargetSlippageUsd,
-    builderFeeUsd: (output.estimatedBuilderFeeEntryUsd ?? 0) + (output.estimatedBuilderFeeExitUsd ?? 0),
-    totalEstimatedCostUsd: (output.estimatedEntryFeesUsd ?? 0) + (output.estimatedExitFeesAtStopUsd ?? 0) + (output.estimatedEntrySlippageUsd ?? 0) + (output.estimatedStopSlippageUsd ?? 0) + (output.estimatedBuilderFeeEntryUsd ?? 0) + (output.estimatedBuilderFeeExitUsd ?? 0),
+    builderFeeUsd,
+    totalEstimatedCostUsd,
     liquidationPrice: output.estimatedLiquidationPrice,
     liquidationDistancePct: output.liquidationDistancePct,
     liquidationSafety: liquidationSafety(draft.side, output.stopLoss, output.estimatedLiquidationPrice, output.effectiveEntryPrice),
@@ -2389,36 +2424,6 @@ function rewardRiskText(value: number | null) {
   return value === null ? "Unavailable" : `${value.toFixed(2)}x`;
 }
 
-function riskTicketCta(
-  asset: AssetConfig,
-  draft: RiskTicketDraft,
-  calc: RiskTicketCalc,
-  recentTickets: RecentTicket[],
-) {
-  const latest = recentTickets[0];
-  const currentAlreadyPreviewed = Boolean(
-    latest &&
-    latest.asset === asset.apiCoin &&
-    latest.side === draft.side &&
-    latest.maxTotalRiskUsd === calc.maxTotalRiskUsd &&
-    latest.potentialProfitUsd === calc.estimatedNetProfitUsd,
-  );
-  if (!draft.side) return { label: "Choose Long or Short", disabled: true, action: "none" as const };
-  if (calc.targetPrice === null) return { label: "Set target price", disabled: true, action: "none" as const };
-  if (calc.maxTotalRiskUsd === null) return { label: "Set max risk", disabled: true, action: "none" as const };
-  if (calc.invalidationReason) return { label: "Fix trade plan", disabled: true, action: "none" as const };
-  const executionConfig = getHyperliquidConfig();
-  const builderConfig = getBuilderConfig(false, 0);
-  if (builderConfig.enabled && builderConfig.valid && builderConfig.status !== "approved") {
-    return { label: "Approve builder fee", disabled: false, action: "preview" as const };
-  }
-  if (calc.executionEnabled && executionConfig.enableRealExecution) {
-    return { label: "Execute on Hyperliquid", disabled: false, action: "preview" as const };
-  }
-  if (currentAlreadyPreviewed) return { label: "Copy trade plan", disabled: false, action: "copy" as const };
-  return { label: "Preview trade", disabled: false, action: "preview" as const };
-}
-
 function DataHealthBar({ state, wsDebug, now }: { state: AssetState; wsDebug: WsDebugState; now: number }) {
   const health = dataHealth(state, wsDebug, now);
   return (
@@ -2434,60 +2439,131 @@ function DataHealthBar({ state, wsDebug, now }: { state: AssetState; wsDebug: Ws
   );
 }
 
-function TradeSummaryCard({ asset, calc }: { asset: AssetConfig; calc: RiskTicketCalc }) {
+function ticketEmptyState(ticketState: TicketState, asset: AssetConfig) {
+  if (ticketState === "missing_direction") {
+    return {
+      title: "Choose Long or Short",
+      body: "Pick a direction to start building the trade.",
+    };
+  }
+  if (ticketState === "missing_entry") {
+    return {
+      title: "Set entry price",
+      body: "Choose an entry price or use market entry with live price.",
+    };
+  }
+  if (ticketState === "missing_target" || ticketState === "invalid_target") {
+    return {
+      title: "Set your target price",
+      body: `Choose where you think ${asset.shortName} can go. HypurrScope will calculate stop, position size and potential profit.`,
+    };
+  }
+  if (ticketState === "missing_risk") {
+    return {
+      title: "Set max total risk",
+      body: "Choose the total amount you want to risk on this trade, including estimated costs.",
+    };
+  }
+  if (ticketState === "invalid_stop") {
+    return {
+      title: "Fix stop price",
+      body: "The stop must sit on the correct side of your entry price.",
+    };
+  }
+  return null;
+}
+
+function TradeSummaryCard({ asset, calc, ticketState }: { asset: AssetConfig; calc: RiskTicketCalc; ticketState: TicketState }) {
+  const empty = ticketEmptyState(ticketState, asset);
   return (
     <aside className="risk-mode-panel beginner-panel trade-summary-card">
       <span>Trade Summary</span>
-      <h3>Simple mode: see the trade in plain English.</h3>
-      <div className="beginner-outcomes">
+      {empty && !isTicketComputable(ticketState) ? (
         <article>
-          <small>Potential profit</small>
-          <strong>{formatUsd(calc.estimatedNetProfitUsd, "data unavailable")}</strong>
-          <p>Estimated after fees and slippage if the target is reached.</p>
+          <h3>{empty.title}</h3>
+          <p>{empty.body}</p>
         </article>
-        <article>
-          <small>Max total risk</small>
-          <strong>{formatUsd(calc.maxTotalRiskUsd, "data unavailable")}</strong>
-          <p>The total risk budget for this trade, including estimated costs.</p>
-        </article>
-        <article>
-          <small>Reward/Risk</small>
-          <strong>{rewardRiskText(calc.rewardRiskNet)}</strong>
-          <p>Net reward/risk after estimated costs.</p>
-        </article>
-        <article>
-          <small>Position size</small>
-          <strong>{formatUsd(calc.positionSizeUsd, "data unavailable")}</strong>
-          <p>{calc.positionSizeAsset === null ? "Asset size unavailable." : `${calc.positionSizeAsset.toFixed(4)} ${asset.shortName}`}</p>
-        </article>
-        <article>
-          <small>Stop</small>
-          <strong>{formatUsd(calc.stopLoss, "data unavailable")}</strong>
-          <p>The price where the trade plan stops making sense.</p>
-        </article>
-        <article>
-          <small>Estimated liquidation</small>
-          <strong>{formatUsd(calc.liquidationPrice, "data unavailable")}</strong>
-          <p>If this is too close to your stop, the trade is unsafe.</p>
-        </article>
-        <article>
-          <small>Costs</small>
-          <strong>{formatUsd(calc.totalEstimatedCostUsd, "data unavailable")}</strong>
-          <p>Estimated fees, slippage and builder fee if enabled.</p>
-        </article>
-        <article>
-          <small>Safety</small>
-          <strong className={`safety-${calc.liquidationSafety.toLowerCase()}`}>{calc.liquidationSafety}</strong>
-          <p>Preview before signing and verify the order on Hyperliquid.</p>
-        </article>
-      </div>
+      ) : (
+        <>
+          <h3>Simple mode: see the trade in plain English.</h3>
+          <div className="beginner-outcomes">
+            <article>
+              <small>Potential profit</small>
+              <strong>{formatUsd(calc.estimatedNetProfitUsd, "Calculated after target is set")}</strong>
+              <p>Estimated after fees and slippage if the target is reached.</p>
+            </article>
+            <article>
+              <small>Max total risk</small>
+              <strong>{formatUsd(calc.maxTotalRiskUsd, "Set max risk")}</strong>
+              <p>The total risk budget for this trade, including estimated costs.</p>
+            </article>
+            <article>
+              <small>Reward/Risk</small>
+              <strong>{rewardRiskText(calc.rewardRiskNet)}</strong>
+              <p>Net reward/risk after estimated costs.</p>
+            </article>
+            <article>
+              <small>Position size</small>
+              <strong>{formatUsd(calc.positionSizeUsd, "Calculated after trade is built")}</strong>
+              <p>{calc.positionSizeAsset === null ? "Calculated after trade is built." : `${calc.positionSizeAsset.toFixed(4)} ${asset.shortName}`}</p>
+            </article>
+            <article>
+              <small>Stop</small>
+              <strong>{formatUsd(calc.stopLoss, "Calculated after target is set")}</strong>
+              <p>The price where the trade plan stops making sense.</p>
+            </article>
+            <article>
+              <small>Estimated liquidation</small>
+              <strong>{formatUsd(calc.liquidationPrice, "Calculated after trade is built")}</strong>
+              <p>If this is too close to your stop, the trade is unsafe.</p>
+            </article>
+            <article>
+              <small>Costs</small>
+              <strong>{formatUsd(calc.totalEstimatedCostUsd, "Calculated after target is set")}</strong>
+              <p>Estimated fees, slippage and builder fee if enabled.</p>
+            </article>
+            <article>
+              <small>Safety</small>
+              <strong className={`safety-${calc.liquidationSafety.toLowerCase()}`}>{calc.liquidationSafety}</strong>
+              <p>Preview before signing and verify the order on Hyperliquid.</p>
+            </article>
+          </div>
+        </>
+      )}
     </aside>
   );
 }
 
-function marketSafetyChecks(state: AssetState, metrics: MetricBundle, calc: RiskTicketCalc, wsDebug: WsDebugState, now: number): MarketSafetyCheck[] {
+function pendingTicketCheck(label: string): MarketSafetyCheck {
+  return {
+    label,
+    value: "Calculated after trade is built",
+    status: "Pending",
+    impact: "Complete the trade builder before judging this item.",
+  };
+}
+
+function liquidityTicketCheck(metrics: MetricBundle, calc: RiskTicketCalc): MarketSafetyCheck {
+  if (calc.positionSizeUsd === null || metrics.depth10Bps === null || metrics.depth10Bps <= 0) {
+    return pendingTicketCheck("Liquidity vs position size");
+  }
+  const liquidityUsagePct = (calc.positionSizeUsd / metrics.depth10Bps) * 100;
+  const status: MarketSafetyCheck["status"] = liquidityUsagePct > 5 ? "Unsafe" : liquidityUsagePct > 1 ? "Review" : "OK";
+  return {
+    label: "Liquidity vs position size",
+    value: `${liquidityUsagePct.toFixed(2)}% of +/-10 bps depth`,
+    status,
+    impact:
+      status === "Unsafe" ? "This trade is large compared with near-book liquidity." :
+      status === "Review" ? "Position size uses a noticeable share of near-book liquidity." :
+      "Position size is small compared with visible near-book liquidity.",
+  };
+}
+
+function marketSafetyChecks(state: AssetState, metrics: MetricBundle, calc: RiskTicketCalc, wsDebug: WsDebugState, now: number, ticketState: TicketState): MarketSafetyCheck[] {
   const health = dataHealth(state, wsDebug, now);
-  return [
+  const computable = isTicketComputable(ticketState);
+  const marketReadiness: MarketSafetyCheck[] = [
     {
       label: "Pricing data",
       value: health.live ? "Live" : health.marketStatus === "stale" ? "Updating" : "Unavailable",
@@ -2495,10 +2571,10 @@ function marketSafetyChecks(state: AssetState, metrics: MetricBundle, calc: Risk
       impact: health.live ? "Hyperliquid price data is ready for this plan." : "Live data connecting. You can still prepare the plan.",
     },
     {
-      label: "Liquidity",
-      value: metrics.depth10Bps === null ? "Unavailable" : formatUsd(metrics.depth10Bps),
-      status: metrics.liquidityHealthy === null ? "Unavailable" : metrics.liquidityHealthy ? "OK" : "Review",
-      impact: metrics.liquidityHealthy === false ? `${calc.asset.shortName} order book is thinner than target. Market orders may slip.` : "Order book depth looks usable for planning.",
+      label: "Order book",
+      value: health.orderBookStatus === "live" ? "Ready" : "Connecting",
+      status: health.orderBookStatus === "live" ? "OK" : "Unavailable",
+      impact: health.orderBookStatus === "live" ? "Bid and ask are available for execution planning." : "Preview can use mark price while order book connects.",
     },
     {
       label: "Spread",
@@ -2506,36 +2582,55 @@ function marketSafetyChecks(state: AssetState, metrics: MetricBundle, calc: Risk
       status: metrics.spreadBps === null ? "Unavailable" : metrics.spreadBps > 4 ? "Review" : "OK",
       impact: metrics.spreadBps !== null && metrics.spreadBps > 4 ? "Spread is wider than target. Consider a limit order." : "Top-of-book spread is tight.",
     },
+  ];
+  const ticketSpecific: MarketSafetyCheck[] = computable ? [
+    liquidityTicketCheck(metrics, calc),
+    {
+      label: "Slippage vs position size",
+      value: calc.estimatedSlippageBps === null ? "Calculated after trade is built" : `${calc.estimatedSlippageBps.toFixed(2)} bps`,
+      status: calc.estimatedSlippageBps === null ? "Pending" : calc.estimatedSlippageBps > 5 ? "Review" : "OK",
+      impact: calc.estimatedSlippageBps !== null && calc.estimatedSlippageBps > 5 ? "Estimated slippage is elevated for a market entry." : "Estimated slippage is included in the risk budget.",
+    },
     {
       label: "Liquidation distance",
       value: calc.liquidationSafety,
-      status: calc.liquidationSafety === "Unavailable" ? "Unavailable" : calc.liquidationSafety === "Dangerous" ? "Unsafe" : calc.liquidationSafety === "Medium" ? "Review" : "OK",
+      status: calc.liquidationSafety === "Unavailable" ? "Pending" : calc.liquidationSafety === "Dangerous" ? "Unsafe" : calc.liquidationSafety === "Medium" ? "Review" : "OK",
       impact: calc.liquidationSafety === "Dangerous" ? "Estimated liquidation is too close to the stop." : "Stop is far enough from estimated liquidation.",
     },
     {
       label: "Costs",
-      value: formatUsd(calc.totalEstimatedCostUsd, "Unavailable"),
-      status: calc.totalEstimatedCostUsd === null ? "Unavailable" : "OK",
+      value: formatUsd(calc.totalEstimatedCostUsd, "Calculated after trade is built"),
+      status: calc.totalEstimatedCostUsd === null ? "Pending" : "OK",
       impact: "Estimated costs are included in your max total risk.",
     },
+  ] : [
+    pendingTicketCheck("Liquidity vs position size"),
+    pendingTicketCheck("Slippage vs position size"),
+    pendingTicketCheck("Liquidation distance"),
+    pendingTicketCheck("Costs"),
   ];
+  return [...marketReadiness, ...ticketSpecific];
 }
 
-function MarketSafetyChecks({ state, metrics, calc, wsDebug, now }: { state: AssetState; metrics: MetricBundle; calc: RiskTicketCalc; wsDebug: WsDebugState; now: number }) {
+function MarketSafetyChecks({ state, metrics, calc, wsDebug, now, ticketState }: { state: AssetState; metrics: MetricBundle; calc: RiskTicketCalc; wsDebug: WsDebugState; now: number; ticketState: TicketState }) {
   return (
     <aside className="risk-mode-panel safety-panel">
       <span>Market Safety Checks</span>
       <h3>Is this trade clean enough?</h3>
       <div className="safety-checks">
-        {marketSafetyChecks(state, metrics, calc, wsDebug, now).map((check) => (
-          <article className={`safety-check ${check.status.toLowerCase()}`} key={check.label}>
-            <div>
-              <strong>{check.label}</strong>
-              <small>{check.impact}</small>
-              <small className="check-value">{check.value}</small>
-            </div>
-            <em>{check.status}</em>
-          </article>
+        {marketSafetyChecks(state, metrics, calc, wsDebug, now, ticketState).map((check, index) => (
+          <React.Fragment key={check.label}>
+            {index === 0 ? <small className="safety-group-label">Market readiness</small> : null}
+            {index === 3 ? <small className="safety-group-label">Ticket-specific checks</small> : null}
+            <article className={`safety-check ${check.status.toLowerCase()}`}>
+              <div>
+                <strong>{check.label}</strong>
+                <small>{check.impact}</small>
+                <small className="check-value">{check.value}</small>
+              </div>
+              <em>{check.status}</em>
+            </article>
+          </React.Fragment>
         ))}
       </div>
     </aside>
@@ -2580,7 +2675,7 @@ function ticketText(asset: AssetConfig, calc: RiskTicketCalc) {
   ].join("\n");
 }
 
-function ExecutionPreview({ asset, calc, onPreview }: { asset: AssetConfig; calc: RiskTicketCalc; onPreview: () => void }) {
+function ExecutionPreview({ asset, calc, ticketState, onPreview }: { asset: AssetConfig; calc: RiskTicketCalc; ticketState: TicketState; onPreview: () => void }) {
   const hyperliquidHref = `https://app.hyperliquid.xyz/trade/${asset.apiCoin}`;
   const executionConfig = getHyperliquidConfig();
   const builderConfig = getBuilderConfig(false, 0);
@@ -2588,50 +2683,62 @@ function ExecutionPreview({ asset, calc, onPreview }: { asset: AssetConfig; calc
     if (typeof navigator === "undefined" || !navigator.clipboard) return;
     void navigator.clipboard.writeText(ticketText(asset, calc));
   };
-  const primary = derivePrimaryAction({
+  const primary = derivePrimaryCta({
+    ticketState,
     sideSelected: Boolean(calc.side),
-    ticketValid: !calc.invalidationReason,
-    pricingDataStatus: calc.dataIsLive ? "live" : "stale",
-    orderBookAvailable: true,
-    walletConnected: false,
-    builderEnabled: builderConfig.enabled,
-    builderConfigValid: builderConfig.valid,
-    builderApproved: builderConfig.status === "approved",
+    targetPresent: calc.targetPrice !== null,
+    maxTotalRiskPresent: calc.maxTotalRiskUsd !== null,
+    ticketInvalid: Boolean(calc.invalidationReason),
     realExecutionEnabled: executionConfig.enableRealExecution,
-    executionInProgress: false,
+    builderEnabled: builderConfig.enabled,
+    builderApproved: builderConfig.status === "approved",
+    walletConnected: false,
   });
   const runPrimary = () => {
     if (primary.disabled) return;
-    if (primary.action === "copy_ticket") copyTicket();
+    if (primary.action === "copy") copyTicket();
     else onPreview();
   };
+  const locked = !isTicketComputable(ticketState);
 
   return (
     <aside className="risk-mode-panel execution-panel">
       <span>Execution Preview</span>
-      <h3>{calc.executionStatus}</h3>
-      <div className="execution-lines">
-        <div><span>Market</span><strong>{asset.shortName}</strong></div>
-        <div><span>Side</span><strong>{calc.side || "Choose side"}</strong></div>
-        <div><span>Entry</span><strong>{formatUsd(calc.entryPrice, "Unavailable")}</strong></div>
-        <div><span>Stop</span><strong>{formatUsd(calc.stopLoss, "Unavailable")}</strong></div>
-        <div><span>Target</span><strong>{formatUsd(calc.targetPrice, "Unavailable")}</strong></div>
-        <div><span>Position</span><strong>{formatUsd(calc.positionSizeUsd, "Unavailable")}</strong></div>
-        <div><span>Max total risk</span><strong>{formatUsd(calc.maxTotalRiskUsd, "Unavailable")}</strong></div>
-        <div><span>Loss at stop</span><strong>{formatUsd(calc.estimatedTotalLossAtStopUsd, "Unavailable")}</strong></div>
-        <div><span>Net profit</span><strong>{formatUsd(calc.estimatedNetProfitUsd, "Unavailable")}</strong></div>
-        <div><span>Gross / net R:R</span><strong>{calc.rewardRiskGross === null ? "Unavailable" : `${calc.rewardRiskGross.toFixed(2)} / ${calc.rewardRiskNet === null ? "-" : calc.rewardRiskNet.toFixed(2)}`}</strong></div>
-        <div><span>Leverage</span><strong>{calc.leverage === null ? "Unavailable" : `${calc.leverage.toFixed(1)}x`}</strong></div>
-        <div><span>Liquidation</span><strong>{formatUsd(calc.liquidationPrice, "Unavailable")}</strong></div>
-        <div><span>Fees + builder</span><strong>{formatUsd(calc.totalEstimatedCostUsd, "Unavailable")}</strong></div>
-      </div>
-      <p className="execution-note">{calc.stopTriggerNote}</p>
-      <div className="ticket-actions single-primary">
-        <button className="primary-action" disabled={primary.disabled} onClick={runPrimary}>{primary.label}</button>
-        {primary.secondary ? <a className="table-action" href={hyperliquidHref} target="_blank" rel="noreferrer">{primary.secondary}</a> : null}
-        {!primary.secondary ? <a className="subtle-link" href={hyperliquidHref} target="_blank" rel="noreferrer">Open on Hyperliquid</a> : null}
-        <small>{primary.reason}</small>
-      </div>
+      {locked ? (
+        <div className="locked-preview">
+          <h3>Preview locked</h3>
+          <p>Complete the trade builder to preview the order.</p>
+          <small>{ticketStateNextAction(ticketState)}</small>
+        </div>
+      ) : (
+        <>
+          <h3>{calc.executionStatus}</h3>
+          <div className="execution-lines">
+            <div><span>Market</span><strong>{asset.shortName}</strong></div>
+            <div><span>Side</span><strong>{calc.side || "Choose side"}</strong></div>
+            <div><span>Entry</span><strong>{formatUsd(calc.entryPrice, "Unavailable")}</strong></div>
+            <div><span>Stop</span><strong>{formatUsd(calc.stopLoss, "Unavailable")}</strong></div>
+            <div><span>Target</span><strong>{formatUsd(calc.targetPrice, "Unavailable")}</strong></div>
+            <div><span>Position</span><strong>{formatUsd(calc.positionSizeUsd, "Unavailable")}</strong></div>
+            <div><span>Max total risk</span><strong>{formatUsd(calc.maxTotalRiskUsd, "Unavailable")}</strong></div>
+            <div><span>Loss at stop</span><strong>{formatUsd(calc.estimatedTotalLossAtStopUsd, "Unavailable")}</strong></div>
+            <div><span>Net profit</span><strong>{formatUsd(calc.estimatedNetProfitUsd, "Unavailable")}</strong></div>
+            <div><span>Gross / net R:R</span><strong>{calc.rewardRiskGross === null ? "Unavailable" : `${calc.rewardRiskGross.toFixed(2)} / ${calc.rewardRiskNet === null ? "-" : calc.rewardRiskNet.toFixed(2)}`}</strong></div>
+            <div><span>Leverage</span><strong>{calc.leverage === null ? "Unavailable" : `${calc.leverage.toFixed(1)}x`}</strong></div>
+            <div><span>Liquidation</span><strong>{formatUsd(calc.liquidationPrice, "Unavailable")}</strong></div>
+            <div><span>Fees + builder</span><strong>{formatUsd(calc.totalEstimatedCostUsd, "Unavailable")}</strong></div>
+          </div>
+          {ticketState === "execution_disabled_precision" ? (
+            <p className="execution-note">Asset precision unavailable - execution disabled. Preview remains available.</p>
+          ) : null}
+          <p className="execution-note">{calc.stopTriggerNote}</p>
+          <div className="ticket-actions single-primary">
+            <button className="subtle-button" disabled={primary.disabled} onClick={runPrimary}>{primary.label}</button>
+            <a className="subtle-link" href={hyperliquidHref} target="_blank" rel="noreferrer">Open on Hyperliquid</a>
+            <small>{calc.executionStatus}</small>
+          </div>
+        </>
+      )}
     </aside>
   );
 }
@@ -2727,6 +2834,40 @@ function RecentTickets({ tickets }: { tickets: RecentTicket[] }) {
   );
 }
 
+function TargetPresetButtons({
+  asset,
+  state,
+  draft,
+  assetMeta,
+  onDraftChange,
+}: {
+  asset: AssetConfig;
+  state: AssetState;
+  draft: RiskTicketDraft;
+  assetMeta: PerpAssetMeta | null;
+  onDraftChange: (draft: RiskTicketDraft) => void;
+}) {
+  if (!draft.side) return null;
+  const entry = effectiveEntryFromDraft(state, draft);
+  return (
+    <div className="quick-row target-presets" aria-label="Quick targets">
+      <span>Quick targets</span>
+      {targetPresetPercents(asset.apiCoin).map((pct) => {
+        const target = entry === null ? "" : roundedTargetInput(draft.side === "Long" ? entry * (1 + pct) : entry * (1 - pct), assetMeta);
+        return (
+          <button
+            key={`${asset.apiCoin}-${draft.side}-${pct}`}
+            disabled={!target}
+            onClick={() => onDraftChange({ ...draft, targetPrice: target })}
+          >
+            {formatPresetPct(pct, draft.side)}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function RiskTicket({
   asset,
   state,
@@ -2737,9 +2878,13 @@ function RiskTicket({
   wsDebug,
   now,
   recentTickets,
+  ticketState,
+  assetMeta,
+  assetMetaError,
   onAssetChange,
   onDraftChange,
   onModeChange,
+  onSampleHypeTrade,
   onPreview,
 }: {
   asset: AssetConfig;
@@ -2751,16 +2896,32 @@ function RiskTicket({
   wsDebug: WsDebugState;
   now: number;
   recentTickets: RecentTicket[];
+  ticketState: TicketState;
+  assetMeta: PerpAssetMeta | null;
+  assetMetaError: string | null;
   onAssetChange: (asset: ApiCoin) => void;
   onDraftChange: (draft: RiskTicketDraft) => void;
   onModeChange: (mode: RiskMode) => void;
+  onSampleHypeTrade: () => void;
   onPreview: () => void;
 }) {
   const entryFallback = draft.entryType === "Market" ? state.market.price : state.market.price;
   const stopFallback = defaultStop(draft.side, calc.entryPrice);
   const takeFallback = defaultTakeProfit(draft.side, calc.entryPrice);
-  const canPreview = !calc.invalidationReason && Boolean(draft.side);
-  const primaryCta = riskTicketCta(asset, draft, calc, recentTickets);
+  const ticketComputable = isTicketComputable(ticketState);
+  const canPreview = ticketComputable && !calc.invalidationReason && Boolean(draft.side);
+  const builderConfig = getBuilderConfig(false, 0);
+  const primaryCta = derivePrimaryCta({
+    ticketState,
+    sideSelected: Boolean(draft.side),
+    targetPresent: parsePositiveNumber(draft.targetPrice) !== null,
+    maxTotalRiskPresent: parsePositiveNumber(draft.maxTotalRiskUsd) !== null,
+    ticketInvalid: Boolean(calc.invalidationReason) || ticketState === "invalid_target" || ticketState === "invalid_stop" || ticketState === "missing_entry",
+    realExecutionEnabled: getHyperliquidConfig().enableRealExecution,
+    walletConnected: false,
+    builderEnabled: builderConfig.enabled,
+    builderApproved: builderConfig.status === "approved",
+  });
   const hyperliquidHref = `https://app.hyperliquid.xyz/trade/${asset.apiCoin}`;
   const copyPlan = () => {
     if (typeof navigator === "undefined" || !navigator.clipboard) return;
@@ -2779,8 +2940,8 @@ function RiskTicket({
         <h1>Calculate your trade before you enter.</h1>
         <p>Choose your target profit and max total risk. HypurrScope calculates position size, stop loss, liquidation distance, fees and execution preview for Hyperliquid.</p>
         <div className="hero-actions">
-          <button className="primary-action" onClick={runPrimary} disabled={primaryCta.disabled}>Build my trade</button>
-          <button className="ghost-action" onClick={() => onAssetChange("HYPE")}>Try with live HYPE price</button>
+          <button className="ghost-action" onClick={runPrimary} disabled={primaryCta.disabled}>{primaryCta.label}</button>
+          <button className="ghost-action" onClick={onSampleHypeTrade}>Try sample HYPE trade</button>
         </div>
         <p className="risk-disclaimer">Perpetual futures are risky. This is a planning tool, not financial advice.</p>
       </div>
@@ -2852,6 +3013,7 @@ function RiskTicket({
                 <input value={draft.targetPrice} onChange={(event) => onDraftChange({ ...draft, targetPrice: event.target.value })} placeholder={formatPriceInput(takeFallback)} inputMode="decimal" />
               </label>
             </div>
+            <TargetPresetButtons asset={asset} state={state} draft={draft} assetMeta={assetMeta} onDraftChange={onDraftChange} />
             <div className="potential-move">{potentialMoveText(calc)}</div>
           </div>
 
@@ -2922,44 +3084,56 @@ function RiskTicket({
             </details>
           </div>
 
-          <div className="ticket-result-grid">
-            <article>
-              <span>Position size</span>
-              <strong>{formatUsd(calc.positionSizeUsd, "data unavailable")}</strong>
-              <small>{calc.positionSizeAsset === null ? "asset size unavailable" : `${calc.positionSizeAsset.toFixed(4)} ${asset.shortName}`}</small>
-            </article>
-            <article>
-              <span>Potential profit</span>
-              <strong>{formatUsd(calc.estimatedNetProfitUsd, "data unavailable")}</strong>
-              <small>After estimated costs if target is reached.</small>
-            </article>
-            <article>
-              <span>Reward/Risk</span>
-              <strong>{rewardRiskText(calc.rewardRiskNet)}</strong>
-              <small>Potential profit after costs {formatUsd(calc.estimatedNetProfitUsd, "data unavailable")}</small>
-            </article>
-            <article>
-              <span>Max total risk</span>
-              <strong>{formatUsd(calc.estimatedTotalLossAtStopUsd, "data unavailable")}</strong>
-              <small>Cost estimate {formatUsd(calc.totalEstimatedCostUsd, "unavailable")} included.</small>
-            </article>
-          </div>
+          {ticketComputable ? (
+            <div className="ticket-result-grid">
+              <article>
+                <span>Position size</span>
+                <strong>{formatUsd(calc.positionSizeUsd, "Calculated after trade is built")}</strong>
+                <small>{calc.positionSizeAsset === null ? "Calculated after trade is built." : `${calc.positionSizeAsset.toFixed(4)} ${asset.shortName}`}</small>
+              </article>
+              <article>
+                <span>Potential profit</span>
+                <strong>{formatUsd(calc.estimatedNetProfitUsd, "Calculated after target is set")}</strong>
+                <small>After estimated costs if target is reached.</small>
+              </article>
+              <article>
+                <span>Reward/Risk</span>
+                <strong>{rewardRiskText(calc.rewardRiskNet)}</strong>
+                <small>Potential profit after costs {formatUsd(calc.estimatedNetProfitUsd, "Calculated after target is set")}</small>
+              </article>
+              <article>
+                <span>Max total risk</span>
+                <strong>{formatUsd(calc.estimatedTotalLossAtStopUsd, "Calculated after target is set")}</strong>
+                <small>Cost estimate {formatUsd(calc.totalEstimatedCostUsd, "Calculated after trade is built")} included.</small>
+              </article>
+            </div>
+          ) : (
+            <div className="compact-empty ticket-next-action">
+              {ticketStateNextAction(ticketState)}
+              <small>Complete this step to calculate position size, stop, costs and preview.</small>
+            </div>
+          )}
 
-          <TradeValidationWarnings warnings={calc.warnings} />
+          {ticketComputable || ticketState === "invalid_target" || ticketState === "invalid_stop" ? (
+            <TradeValidationWarnings warnings={calc.warnings} />
+          ) : null}
+          {ticketComputable && (!assetMeta || assetMetaError) ? (
+            <p className="execution-note">Asset precision unavailable - execution disabled. Preview remains available.</p>
+          ) : null}
           <div className="ticket-actions single-primary ticket-main-action">
             <button className="primary-action" disabled={primaryCta.disabled} onClick={runPrimary}>{primaryCta.label}</button>
-            <a className="subtle-link" href={hyperliquidHref} target="_blank" rel="noreferrer">Open on Hyperliquid</a>
+            {ticketComputable ? <a className="subtle-link" href={hyperliquidHref} target="_blank" rel="noreferrer">Open on Hyperliquid</a> : null}
             <button className="subtle-button" onClick={copyPlan} disabled={!canPreview}>Copy details</button>
           </div>
         </section>
 
         <div className="risk-ticket-side">
-          <TradeSummaryCard asset={asset} calc={calc} />
-          <MarketSafetyChecks state={state} metrics={metrics} calc={calc} wsDebug={wsDebug} now={now} />
+          <TradeSummaryCard asset={asset} calc={calc} ticketState={ticketState} />
+          <MarketSafetyChecks state={state} metrics={metrics} calc={calc} wsDebug={wsDebug} now={now} ticketState={ticketState} />
         </div>
       </div>
 
-      <ExecutionPreview asset={asset} calc={calc} onPreview={onPreview} />
+      <ExecutionPreview asset={asset} calc={calc} ticketState={ticketState} onPreview={onPreview} />
       <RecentTickets tickets={recentTickets} />
       <details className="advanced-home risk-advanced-data" open={mode === "pro"}>
         <summary>Advanced data</summary>
@@ -3880,6 +4054,8 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   const [qaEnabled, setQaEnabled] = useState(false);
   const [nowTick, setNowTick] = useState(Date.now());
   const [riskMode, setRiskMode] = useState<RiskMode>("beginner");
+  const [perpMeta, setPerpMeta] = useState<Record<string, PerpAssetMeta>>({});
+  const [perpMetaError, setPerpMetaError] = useState<string | null>(null);
   const [riskDraft, setRiskDraft] = useState<RiskTicketDraft>({
     side: null,
     ticketMode: "target-first",
@@ -3901,6 +4077,21 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
 
   useEffect(() => {
     setQaEnabled(typeof window !== "undefined" && new URLSearchParams(window.location.search).get("qa") === "1");
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchPerpMeta()
+      .then((meta) => {
+        if (!cancelled) {
+          setPerpMeta(meta);
+          setPerpMetaError(null);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) setPerpMetaError(error instanceof Error ? error.message : String(error));
+      });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -4496,10 +4687,35 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   const selectedAsset = ASSET_BY_COIN[selected];
   const selectedState = assets[selected];
   const selectedMetrics = metricsByAsset[selected];
+  const selectedAssetMeta = assetMetaFor(perpMeta, selectedAsset.apiCoin);
   const riskTicketCalc = useMemo(
-    () => calculateRiskTicket(selectedAsset, selectedState, selectedMetrics, riskDraft, wsDebug, nowTick),
-    [selectedAsset, selectedState, selectedMetrics, riskDraft, wsDebug, nowTick],
+    () => calculateRiskTicket(selectedAsset, selectedState, selectedMetrics, riskDraft, wsDebug, nowTick, selectedAssetMeta),
+    [selectedAsset, selectedState, selectedMetrics, riskDraft, wsDebug, nowTick, selectedAssetMeta],
   );
+  const riskTicketState = useMemo(() => {
+    const health = dataHealth(selectedState, wsDebug, nowTick);
+    const side: CoreSide | null = riskDraft.side === "Long" ? "long" : riskDraft.side === "Short" ? "short" : null;
+    return deriveTicketState({
+      side,
+      asset: selectedAsset.apiCoin,
+      entryType: riskDraft.entryType === "Market" ? "market" : "limit",
+      entryPrice: parsePositiveNumber(riskDraft.entryPrice),
+      marketPrice: selectedState.market.price,
+      bestBid: selectedState.book?.bestBid ?? null,
+      bestAsk: selectedState.book?.bestAsk ?? null,
+      targetPrice: parsePositiveNumber(riskDraft.targetPrice),
+      stopLoss: parsePositiveNumber(riskDraft.stopLoss),
+      maxTotalRiskUsd: parsePositiveNumber(riskDraft.maxTotalRiskUsd),
+      rewardRisk: parsePositiveNumber(riskDraft.desiredRewardRisk),
+      leverage: parsePositiveNumber(riskDraft.leverage),
+      assetMeta: selectedAssetMeta,
+      pricingDataStatus: health.marketStatus,
+      orderBookStatus: health.orderBookStatus,
+      executionEnabled: riskTicketCalc.executionEnabled,
+      builderEnabled: getBuilderConfig(false, 0).enabled,
+      builderApproved: getBuilderConfig(false, 0).status === "approved",
+    });
+  }, [riskDraft, selectedAsset.apiCoin, selectedState, selectedAssetMeta, wsDebug, nowTick, riskTicketCalc.executionEnabled]);
   const selectedSignals = allSignals(selectedAsset, selectedMetrics);
   const selectedBest = bestSignal(selectedSignals);
   const customFingerprint = alertFingerprint(
@@ -4551,6 +4767,28 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
       status: "previewed",
     };
     setRecentTickets((current) => [ticket].concat(current).slice(0, 10));
+  }
+
+  function loadSampleHypeTrade() {
+    const hypeState = assets.HYPE;
+    const entry = hypeState.book?.bestAsk ?? hypeState.market.price;
+    const hypeMeta = assetMetaFor(perpMeta, "HYPE");
+    const targetPrice = entry === null ? "" : roundedTargetInput(entry * 1.025, hypeMeta);
+    setSelected("HYPE");
+    setRiskMode("beginner");
+    setRiskDraft({
+      side: "Long",
+      ticketMode: "target-first",
+      entryType: "Market",
+      maxTotalRiskUsd: "100",
+      desiredRewardRisk: "2",
+      entryPrice: "",
+      stopLoss: "",
+      targetPrice,
+      leverage: "2",
+      marginMode: "Isolated",
+      accountEquityUsd: "",
+    });
   }
 
   function createAlert(signal: SignalReadiness) {
@@ -4714,9 +4952,13 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
               wsDebug={wsDebug}
               now={nowTick}
               recentTickets={recentTickets}
+              ticketState={riskTicketState}
+              assetMeta={selectedAssetMeta}
+              assetMetaError={perpMetaError}
               onAssetChange={setSelected}
               onDraftChange={setRiskDraft}
               onModeChange={setRiskMode}
+              onSampleHypeTrade={loadSampleHypeTrade}
               onPreview={previewRiskTicket}
             />
             <details className="advanced-home">
