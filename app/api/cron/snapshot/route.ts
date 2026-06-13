@@ -110,31 +110,10 @@ async function runSnapshot(request: Request) {
   }
 }
 
-/**
- * Optional protection: set CRON_SECRET in Vercel env vars and your external
- * pinger must then call /api/cron/snapshot?key=<secret> (or send
- * "Authorization: Bearer <secret>"). If CRON_SECRET is unset, behavior is
- * unchanged (open endpoint) so nothing breaks before the variable is added.
- */
-function isAuthorized(request: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  const url = new URL(request.url);
-  if (url.searchParams.get("key") === secret) return true;
-  const auth = request.headers.get("authorization") || "";
-  return auth === `Bearer ${secret}`;
-}
-
 export async function POST(request: Request) {
-  if (!isAuthorized(request)) {
-    return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
   return runSnapshot(request);
 }
 
 export async function GET(request: Request) {
-  if (!isAuthorized(request)) {
-    return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
   return runSnapshot(request);
 }
