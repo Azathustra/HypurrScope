@@ -3491,6 +3491,82 @@ td {
   border-color: rgba(111, 240, 198, 0.34);
 }
 
+.safety-checks,
+.execution-lines {
+  display: grid;
+  gap: 8px;
+}
+
+.safety-check,
+.execution-lines div {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px;
+}
+
+.safety-check strong,
+.execution-lines strong {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.safety-check small,
+.execution-lines span,
+.execution-note {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.safety-check em {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 850;
+  padding: 5px 8px;
+}
+
+.safety-check.ok,
+.safety-check.neutral {
+  border-color: rgba(111, 240, 198, 0.24);
+}
+
+.safety-check.warning {
+  border-color: rgba(255, 201, 107, 0.38);
+}
+
+.safety-check.unavailable {
+  opacity: 0.72;
+}
+
+.execution-panel {
+  border-color: rgba(111, 240, 198, 0.34);
+}
+
+.builder-code-panel {
+  border-color: rgba(255, 201, 107, 0.24);
+}
+
+.execution-note {
+  margin: 12px 0 0;
+}
+
+.ticket-actions.single-primary {
+  align-items: stretch;
+}
+
+.ticket-actions.single-primary .primary-action {
+  min-width: 180px;
+}
+
 .recent-ticket-list {
   display: grid;
   gap: 8px;

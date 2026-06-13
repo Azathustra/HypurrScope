@@ -1,0 +1,30 @@
+VERSION: Risk Ticket product core + REST/WebSocket stable
+
+Important avant upload GitHub:
+
+1. Cette version ne contient PAS app/trade.
+2. Si app/trade existe encore sur GitHub, il faut le supprimer avant ou apres upload.
+3. L'erreur Vercel "Cannot resolve @nktkas/hyperliquid" venait de app/trade/lib/hl.ts, un vieux fichier de l'autre IA.
+4. Pour eviter le melange:
+   - ouvrir GitHub
+   - supprimer le dossier app/trade s'il existe
+   - uploader le contenu de ce dossier a la racine du repo
+
+Ce qui est inclus:
+- REST/WebSocket stable
+- /api/hl/markets
+- /api/hl/candles
+- /api/hl/book
+- /api/hl/oi-history
+- /api/hl/ws-smoke
+- Risk Ticket en premiere experience
+- Beginner Mode
+- Pro Metrics / Market Safety Checks
+- Execution Preview preview/copy/open Hyperliquid
+- Builder Code Panel feature-flagged
+- Recent Tickets local
+
+Execution reelle:
+- desactivee par defaut
+- activee seulement par NEXT_PUBLIC_ENABLE_REAL_EXECUTION=true
+- builder code prepare via env vars, mais pas execute automatiquement
