@@ -4,15 +4,17 @@ const page = `${fs.readFileSync("app/page.tsx", "utf8")}\n${fs.readFileSync("app
 const layout = fs.readFileSync("app/layout.tsx", "utf8");
 
 const checks = [
-  ["Overview title", page.includes("HypurrScope Risk Radar")],
+  ["Trade planner hero", page.includes("Calculate your trade before you enter.")],
+  ["Trade Builder nav", page.includes("Trade Builder")],
+  ["Trade Summary card", page.includes("Trade Summary")],
   ["BTC support", page.includes('"BTC"')],
   ["ETH support", page.includes('"ETH"')],
   ["HYPE support", page.includes('"HYPE"')],
-  ["Watchlist page", page.includes("Watchlist")],
+  ["Advanced data page", page.includes("Advanced Data")],
   ["Alerts tabs", page.includes("Presets") && page.includes("Create your own") && page.includes("My alerts")],
   ["Wallet scanner read-only", page.includes("Read-only") && page.includes("public address only")],
-  ["SEO title", layout.includes("BTC ETH HYPE Hyperliquid Risk Radar")],
-  ["SEO description", layout.includes("Track BTC, ETH and HYPE perps on Hyperliquid with live price, open interest, funding, liquidity, flow events, closest setups and alerts.")],
+  ["SEO title", layout.includes("HypurrScope | Hyperliquid Trade Planner")],
+  ["SEO description", layout.includes("Plan BTC, ETH and HYPE Hyperliquid trades from target profit and max total risk")],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);

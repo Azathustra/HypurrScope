@@ -1,4 +1,4 @@
-VERSION: Risk Ticket product core + REST/WebSocket stable
+VERSION: Risk Ticket product core + REST/WebSocket stable + UX onboarding
 
 Important avant upload GitHub:
 
@@ -17,7 +17,13 @@ Ce qui est inclus:
 - /api/hl/book
 - /api/hl/oi-history
 - /api/hl/ws-smoke
-- Risk Ticket en premiere experience
+- Trade Builder / Risk Ticket en premiere experience
+- Hero plus clair: target profit + max total risk
+- Flow guide en 3 etapes
+- Trade Summary avec Potential profit en premier
+- Market Safety Checks simplifies
+- Advanced Data collapse par defaut
+- Ancien scanner/radar cache dans Legacy scanner
 - Beginner Mode
 - Pro Metrics / Market Safety Checks
 - Execution Preview preview/copy/open Hyperliquid
@@ -34,4 +40,12 @@ Execution reelle:
 
 Tests:
 - test:risk lance les tests de calcul du Risk Ticket
-- resultat local Codex: risk-ticket-tests: 7/7 passed
+- resultat local Codex:
+  - risk-ticket-tests: 7/7 passed
+  - Smoke test passed
+  - Data test passed
+  - Signal test passed
+  - UI test passed
+
+Limite locale Codex:
+- npm / node_modules ne sont pas disponibles ici, donc le vrai npm run build doit etre confirme par Vercel apres upload.

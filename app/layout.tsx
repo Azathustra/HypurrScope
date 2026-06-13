@@ -5,9 +5,9 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export const metadata: Metadata = {
-  title: "HypurrScope | Risk-First Hyperliquid Execution Ticket",
+  title: "HypurrScope | Hyperliquid Trade Planner",
   description:
-    "Build BTC, ETH and HYPE Hyperliquid trade tickets from your maximum loss with position sizing, stop loss, take profit, liquidation safety, fees, slippage and execution preview.",
+    "Plan BTC, ETH and HYPE Hyperliquid trades from target profit and max total risk with position sizing, stop loss, liquidation distance, costs and execution preview.",
 };
 
 export default function RootLayout({
