@@ -23,8 +23,15 @@ Ce qui est inclus:
 - Execution Preview preview/copy/open Hyperliquid
 - Builder Code Panel feature-flagged
 - Recent Tickets local
+- Moteur de calcul pur dans app/lib/risk
+- Config builder code dans app/lib/hyperliquid
+- Tests de calcul dans scripts/risk-ticket-tests.mjs
 
 Execution reelle:
 - desactivee par defaut
 - activee seulement par NEXT_PUBLIC_ENABLE_REAL_EXECUTION=true
 - builder code prepare via env vars, mais pas execute automatiquement
+
+Tests:
+- test:risk lance les tests de calcul du Risk Ticket
+- resultat local Codex: risk-ticket-tests: 7/7 passed
