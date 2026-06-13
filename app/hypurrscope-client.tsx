@@ -1,12 +1,9 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import RiskTicketClient from "./trade/risk-ticket-client";
-import "./trade/trade.css";
 
 type ApiCoin = "BTC" | "ETH" | "HYPE";
-type View = "overview" | "watchlist" | "asset" | "flow" | "alerts" | "wallet" | "trade";
-type UiMode = "beginner" | "pro";
+type View = "overview" | "watchlist" | "asset" | "flow" | "alerts" | "wallet";
 type ConnectionState = "loading" | "live" | "stale" | "failed";
 type AssetDataStatus = "ready" | "loading" | "stale" | "error";
 type SignalKind = "Fresh Long" | "Fresh Short" | "Crowded Long" | "Crowded Short";
@@ -358,6 +355,59 @@ type FlowDisplayState = {
   tradeStreamsActive: boolean;
   hypeError: string | null;
   error: string | null;
+};
+
+type RiskMode = "beginner" | "pro";
+type TicketSide = "Long" | "Short";
+type EntryType = "Market" | "Limit";
+
+type RiskTicketDraft = {
+  side: TicketSide;
+  entryType: EntryType;
+  maxLossUsd: string;
+  entryPrice: string;
+  stopLoss: string;
+  takeProfit: string;
+  leverage: string;
+};
+
+type TicketWarning = {
+  level: "info" | "warning" | "critical";
+  text: string;
+};
+
+type RecentTicket = {
+  id: string;
+  createdAt: number;
+  asset: ApiCoin;
+  side: TicketSide;
+  maxLossUsd: number;
+  riskRewardRatio: number | null;
+  status: "previewed" | "simulated";
+};
+
+type RiskTicketCalc = {
+  asset: AssetConfig;
+  side: TicketSide;
+  entryPrice: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  maxLossUsd: number | null;
+  leverage: number | null;
+  riskPerUnit: number | null;
+  positionSizeAsset: number | null;
+  positionSizeUsd: number | null;
+  estimatedGainUsd: number | null;
+  riskRewardRatio: number | null;
+  estimatedFees: number | null;
+  estimatedSlippageBps: number | null;
+  liquidationPrice: number | null;
+  liquidationSafety: "Safe" | "Medium" | "Dangerous" | "Unavailable";
+  invalidationReason: string | null;
+  confidence: "Ready for preview" | "Simulation only" | "Needs correction";
+  warnings: TicketWarning[];
+  dataIsLive: boolean;
+  executionEnabled: boolean;
 };
 
 type WsSubscription = {
@@ -771,6 +821,165 @@ function formatDepth10(value: number | null, state: AssetState) {
   if (state.bookError) return state.bookError;
   if (state.book) return "depth unavailable: /api/hl/book depth10bpsUsd missing";
   return "Loading";
+}
+
+function parsePositiveNumber(value: string) {
+  const clean = value.replace(/,/g, ".").trim();
+  if (!clean) return null;
+  const parsed = Number(clean);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatPriceInput(value: number | null) {
+  if (!Number.isFinite(value as number)) return "";
+  const numberValue = value as number;
+  if (numberValue >= 1000) return numberValue.toFixed(1);
+  if (numberValue >= 100) return numberValue.toFixed(2);
+  if (numberValue >= 10) return numberValue.toFixed(3);
+  return numberValue.toFixed(4);
+}
+
+function defaultStop(side: TicketSide, entry: number | null) {
+  if (!entry) return null;
+  return side === "Long" ? entry * 0.98 : entry * 1.02;
+}
+
+function defaultTakeProfit(side: TicketSide, entry: number | null) {
+  if (!entry) return null;
+  return side === "Long" ? entry * 1.04 : entry * 0.96;
+}
+
+function fundingAgainstPosition(side: TicketSide, fundingPct: number | null) {
+  if (fundingPct === null) return false;
+  return side === "Long" ? fundingPct > 0.01 : fundingPct < -0.01;
+}
+
+function estimateLiquidation(side: TicketSide, entry: number | null, leverage: number | null) {
+  if (!entry || !leverage || leverage <= 0) return null;
+  const maintenanceBuffer = 0.005;
+  if (side === "Long") return Math.max(0, entry * (1 - 1 / leverage + maintenanceBuffer));
+  return entry * (1 + 1 / leverage - maintenanceBuffer);
+}
+
+function liquidationSafety(side: TicketSide, stopLoss: number | null, liquidationPrice: number | null, entry: number | null) {
+  if (!stopLoss || !liquidationPrice || !entry) return "Unavailable" as const;
+  const riskDistance = Math.abs(entry - stopLoss);
+  if (riskDistance <= 0) return "Unavailable" as const;
+  const distanceBetweenStopAndLiq = side === "Long" ? stopLoss - liquidationPrice : liquidationPrice - stopLoss;
+  const ratio = distanceBetweenStopAndLiq / riskDistance;
+  if (ratio <= 0.35) return "Dangerous" as const;
+  if (ratio <= 1) return "Medium" as const;
+  return "Safe" as const;
+}
+
+function dataHealth(state: AssetState, wsDebug: WsDebugState, now: number) {
+  const marketStatus = assetDataStatus(state, now);
+  const last = Math.max(
+    state.freshness.meta || 0,
+    state.freshness.ws || 0,
+    state.freshness.book || 0,
+    state.freshness.trades || 0,
+  );
+  const ageSeconds = last ? Math.max(0, Math.round((now - last) / 1000)) : null;
+  const wsConnected = wsDebug.status === "streaming" || wsDebug.status === "connected";
+  const live = marketStatus === "ready" && wsConnected;
+  return {
+    live,
+    marketStatus,
+    wsConnected,
+    ageSeconds,
+    label: live ? "Live data connected" : marketStatus === "stale" ? "Stale data" : marketStatus === "error" ? "Data error" : "Waiting for live feed",
+  };
+}
+
+function calculateRiskTicket(
+  asset: AssetConfig,
+  state: AssetState,
+  metrics: MetricBundle,
+  draft: RiskTicketDraft,
+  wsDebug: WsDebugState,
+  now: number,
+): RiskTicketCalc {
+  const marketPrice = state.market.price;
+  const entryPrice = draft.entryType === "Market"
+    ? marketPrice
+    : parsePositiveNumber(draft.entryPrice) ?? marketPrice;
+  const stopLoss = parsePositiveNumber(draft.stopLoss) ?? defaultStop(draft.side, entryPrice);
+  const takeProfit = parsePositiveNumber(draft.takeProfit) ?? defaultTakeProfit(draft.side, entryPrice);
+  const maxLossUsd = parsePositiveNumber(draft.maxLossUsd);
+  const leverage = parsePositiveNumber(draft.leverage);
+  const warnings: TicketWarning[] = [];
+  const health = dataHealth(state, wsDebug, now);
+
+  if (!health.live) warnings.push({ level: health.marketStatus === "stale" ? "critical" : "warning", text: health.label });
+  if (draft.entryType === "Market" && marketPrice === null) warnings.push({ level: "critical", text: "Live mark price unavailable. Simulation only." });
+  if (metrics.liquidityHealthy === false) warnings.push({ level: "warning", text: "Market liquidity is thin near the top of book." });
+  if (fundingAgainstPosition(draft.side, state.market.fundingPct)) warnings.push({ level: "warning", text: "Funding is currently against this direction." });
+  if (metrics.spreadBps !== null && metrics.spreadBps > 4) warnings.push({ level: "warning", text: "Spread is elevated; market orders may slip." });
+
+  let invalidationReason: string | null = null;
+  if (!entryPrice || !stopLoss || !takeProfit || !maxLossUsd || !leverage) {
+    invalidationReason = "Fill every required field to preview the ticket.";
+  } else if (draft.side === "Long" && stopLoss >= entryPrice) {
+    invalidationReason = "For a long, stop loss must be below entry.";
+  } else if (draft.side === "Long" && takeProfit <= entryPrice) {
+    invalidationReason = "For a long, take profit must be above entry.";
+  } else if (draft.side === "Short" && stopLoss <= entryPrice) {
+    invalidationReason = "For a short, stop loss must be above entry.";
+  } else if (draft.side === "Short" && takeProfit >= entryPrice) {
+    invalidationReason = "For a short, take profit must be below entry.";
+  }
+
+  const riskPerUnit = entryPrice && stopLoss ? Math.abs(entryPrice - stopLoss) : null;
+  if (riskPerUnit !== null && entryPrice && riskPerUnit / entryPrice < 0.0025) {
+    warnings.push({ level: "warning", text: "Stop loss is very close to entry; small noise can invalidate the trade." });
+  }
+  const positionSizeAsset = !invalidationReason && maxLossUsd && riskPerUnit && riskPerUnit > 0 ? maxLossUsd / riskPerUnit : null;
+  const positionSizeUsd = positionSizeAsset && entryPrice ? positionSizeAsset * entryPrice : null;
+  const rewardPerUnit = entryPrice && takeProfit ? Math.abs(takeProfit - entryPrice) : null;
+  const riskRewardRatio = rewardPerUnit && riskPerUnit && riskPerUnit > 0 ? rewardPerUnit / riskPerUnit : null;
+  if (riskRewardRatio !== null && riskRewardRatio < 1) warnings.push({ level: "warning", text: "Risk/reward is below 1. You risk more than the planned reward." });
+
+  const estimatedGainUsd = maxLossUsd !== null && riskRewardRatio !== null ? maxLossUsd * riskRewardRatio : null;
+  const estimatedFees = positionSizeUsd !== null ? positionSizeUsd * 0.0009 : null;
+  const estimatedSlippageBps = metrics.spreadBps === null ? null : Math.max(0.1, metrics.spreadBps / 2);
+  if (estimatedSlippageBps !== null && estimatedSlippageBps > 5) warnings.push({ level: "warning", text: "Estimated slippage is high for a market-style entry." });
+
+  const liquidationPrice = estimateLiquidation(draft.side, entryPrice, leverage);
+  const safety = liquidationSafety(draft.side, stopLoss, liquidationPrice, entryPrice);
+  if (safety === "Dangerous") warnings.push({ level: "critical", text: "Liquidation is too close to the stop loss." });
+  if (safety === "Medium") warnings.push({ level: "warning", text: "Liquidation is close enough to deserve caution." });
+
+  if (invalidationReason) warnings.unshift({ level: "critical", text: invalidationReason });
+
+  const confidence =
+    invalidationReason ? "Needs correction" :
+    health.live ? "Ready for preview" :
+    "Simulation only";
+
+  return {
+    asset,
+    side: draft.side,
+    entryPrice,
+    stopLoss,
+    takeProfit,
+    maxLossUsd,
+    leverage,
+    riskPerUnit,
+    positionSizeAsset,
+    positionSizeUsd,
+    estimatedGainUsd,
+    riskRewardRatio,
+    estimatedFees,
+    estimatedSlippageBps,
+    liquidationPrice,
+    liquidationSafety: safety,
+    invalidationReason,
+    confidence,
+    warnings,
+    dataIsLive: health.live,
+    executionEnabled: false,
+  };
 }
 
 function directionClass(value: number | null) {
@@ -2088,6 +2297,280 @@ function AssetMetricCard({ label, value, meta, title, timestamp }: { label: stri
   );
 }
 
+function DataHealthBar({ state, wsDebug, now }: { state: AssetState; wsDebug: WsDebugState; now: number }) {
+  const health = dataHealth(state, wsDebug, now);
+  return (
+    <div className={`data-health ${health.live ? "live" : health.marketStatus === "stale" ? "stale" : "waiting"}`}>
+      <strong>{health.label}</strong>
+      <span>Last update: {health.ageSeconds === null ? "waiting" : `${health.ageSeconds}s ago`}</span>
+      <span>WebSocket: {health.wsConnected ? "connected" : "disconnected"}</span>
+      <span>Market data source: Hyperliquid</span>
+      {!health.live ? <em>Data is not live enough for real execution. Simulation only.</em> : null}
+    </div>
+  );
+}
+
+function BeginnerModePanel({ calc }: { calc: RiskTicketCalc }) {
+  return (
+    <aside className="risk-mode-panel beginner-panel">
+      <span>Beginner Mode</span>
+      <h3>Simple mode: understand your downside before entering.</h3>
+      <div className="beginner-outcomes">
+        <article>
+          <small>You risk max</small>
+          <strong>{formatUsd(calc.maxLossUsd, "data unavailable")}</strong>
+          <p>The maximum amount you accept to lose on this trade.</p>
+        </article>
+        <article>
+          <small>If stop loss is hit</small>
+          <strong>{formatUsd(calc.maxLossUsd, "data unavailable")}</strong>
+          <p>The price where the trade is automatically invalidated.</p>
+        </article>
+        <article>
+          <small>If take profit is hit</small>
+          <strong>{formatUsd(calc.estimatedGainUsd, "data unavailable")}</strong>
+          <p>The price where you plan to take profit.</p>
+        </article>
+        <article>
+          <small>Risk/reward</small>
+          <strong>{calc.riskRewardRatio === null ? "data unavailable" : `1:${calc.riskRewardRatio.toFixed(2)}`}</strong>
+          <p>Compares planned reward against the fixed max loss.</p>
+        </article>
+        <article>
+          <small>Estimated fees</small>
+          <strong>{formatUsd(calc.estimatedFees, "data unavailable")}</strong>
+          <p>Estimated taker round trip. Your real fee tier can differ.</p>
+        </article>
+        <article>
+          <small>Liquidation safety</small>
+          <strong className={`safety-${calc.liquidationSafety.toLowerCase()}`}>{calc.liquidationSafety}</strong>
+          <p>The price where leverage can force-close your position.</p>
+        </article>
+      </div>
+    </aside>
+  );
+}
+
+function ProMetricRow({ label, value, status, impact, hint }: { label: string; value: string; status: "live" | "stale" | "unavailable"; impact: "favorable" | "neutral" | "warning"; hint: string }) {
+  return (
+    <article className={`pro-metric ${impact}`} title={hint}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{status} / {impact}</small>
+    </article>
+  );
+}
+
+function ProMetricsPanel({ state, metrics, calc, wsDebug, now }: { state: AssetState; metrics: MetricBundle; calc: RiskTicketCalc; wsDebug: WsDebugState; now: number }) {
+  const health = dataHealth(state, wsDebug, now);
+  const stale = !health.live && health.marketStatus === "stale";
+  const status = (value: number | null): "live" | "stale" | "unavailable" => value === null ? "unavailable" : stale ? "stale" : "live";
+  return (
+    <aside className="risk-mode-panel pro-panel">
+      <span>Pro Mode</span>
+      <h3>Verify market conditions, liquidity, funding and execution risk before signing.</h3>
+      <div className="pro-grid">
+        <ProMetricRow label="Mark price" value={formatUsd(state.market.price, "unavailable")} status={status(state.market.price)} impact="neutral" hint="Hyperliquid mark price from REST and live feed." />
+        <ProMetricRow label="Oracle price" value={formatUsd(state.market.oraclePx, "unavailable")} status={status(state.market.oraclePx)} impact="neutral" hint="Oracle reference price if exposed by Hyperliquid." />
+        <ProMetricRow label="Bid / ask" value={state.book ? `${formatUsd(state.book.bestBid)} / ${formatUsd(state.book.bestAsk)}` : "unavailable"} status={state.book ? (stale ? "stale" : "live") : "unavailable"} impact="neutral" hint="Best visible bid and ask from l2Book." />
+        <ProMetricRow label="Spread" value={metrics.spreadBps === null ? "unavailable" : `${metrics.spreadBps.toFixed(2)} bps`} status={status(metrics.spreadBps)} impact={metrics.spreadBps !== null && metrics.spreadBps > 4 ? "warning" : "neutral"} hint="Wide spread increases execution risk." />
+        <ProMetricRow label="Order book depth" value={formatUsd(metrics.depth10Bps, "unavailable")} status={status(metrics.depth10Bps)} impact={metrics.liquidityHealthy === false ? "warning" : "neutral"} hint="USD depth within +/-10 bps of mid." />
+        <ProMetricRow label="24h volume" value={formatUsd(state.market.volume24hUsd, "unavailable")} status={status(state.market.volume24hUsd)} impact="neutral" hint="24h notional volume from Hyperliquid asset context." />
+        <ProMetricRow label="Open interest" value={formatUsd(state.market.oiUsd, "unavailable")} status={status(state.market.oiUsd)} impact="neutral" hint="Open interest converted to USD." />
+        <ProMetricRow label="Funding rate" value={formatFunding(state.market.fundingPct)} status={status(state.market.fundingPct)} impact={fundingAgainstPosition(calc.side, state.market.fundingPct) ? "warning" : "neutral"} hint="Hourly funding. Positive usually means longs pay shorts." />
+        <ProMetricRow label="Recent trades flow" value={formatUsd(metrics.netFlow5m, "unavailable")} status={status(metrics.netFlow5m)} impact="neutral" hint="Aggressive buy minus sell notional over 5 minutes." />
+        <ProMetricRow label="CVD 5m" value={formatUsd(metrics.cvd5m, "unavailable")} status={status(metrics.cvd5m)} impact="neutral" hint="Cumulative volume delta over 5 minutes." />
+        <ProMetricRow label="Volatility proxy" value={formatPct(Math.abs(metrics.price1h ?? 0), 2, "unavailable", false)} status={status(metrics.price1h)} impact={metrics.price1h !== null && Math.abs(metrics.price1h) > 3 ? "warning" : "neutral"} hint="Short-term 1h price range proxy." />
+        <ProMetricRow label="Slippage estimate" value={calc.estimatedSlippageBps === null ? "unavailable" : `${calc.estimatedSlippageBps.toFixed(2)} bps`} status={status(calc.estimatedSlippageBps)} impact={calc.estimatedSlippageBps !== null && calc.estimatedSlippageBps > 5 ? "warning" : "neutral"} hint="Approximation from current spread, not a guaranteed execution value." />
+        <ProMetricRow label="Fee estimate" value={formatUsd(calc.estimatedFees, "unavailable")} status={status(calc.estimatedFees)} impact="neutral" hint="Estimated taker round trip. Exact fees depend on account tier." />
+        <ProMetricRow label="Builder fee" value="not active" status="unavailable" impact="neutral" hint="Prepared for future builder code, not presented as active." />
+        <ProMetricRow label="Data freshness" value={health.ageSeconds === null ? "waiting" : `${health.ageSeconds}s`} status={health.live ? "live" : health.marketStatus === "stale" ? "stale" : "unavailable"} impact={health.live ? "favorable" : "warning"} hint="How recent the latest market update is." />
+        <ProMetricRow label="WebSocket status" value={wsDebug.status} status={wsDebug.status === "streaming" ? "live" : "unavailable"} impact={wsDebug.status === "streaming" ? "favorable" : "warning"} hint="Live browser WebSocket connection status." />
+      </div>
+    </aside>
+  );
+}
+
+function RecentTickets({ tickets }: { tickets: RecentTicket[] }) {
+  return (
+    <section className="recent-tickets">
+      <div>
+        <span>Recent Tickets</span>
+        <h3>Local preview history</h3>
+      </div>
+      {tickets.length ? (
+        <div className="recent-ticket-list">
+          {tickets.slice(0, 5).map((ticket) => (
+            <article key={ticket.id}>
+              <strong>{ticket.asset} {ticket.side}</strong>
+              <span>{formatUsd(ticket.maxLossUsd)} max loss</span>
+              <span>{ticket.riskRewardRatio === null ? "R/R unavailable" : `1:${ticket.riskRewardRatio.toFixed(2)}`}</span>
+              <small>{ticket.status} / {new Date(ticket.createdAt).toLocaleTimeString()}</small>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p>No tickets yet. Preview one to keep a local audit trail in this browser.</p>
+      )}
+    </section>
+  );
+}
+
+function RiskTicket({
+  asset,
+  state,
+  metrics,
+  draft,
+  mode,
+  calc,
+  wsDebug,
+  now,
+  recentTickets,
+  onAssetChange,
+  onDraftChange,
+  onModeChange,
+  onPreview,
+}: {
+  asset: AssetConfig;
+  state: AssetState;
+  metrics: MetricBundle;
+  draft: RiskTicketDraft;
+  mode: RiskMode;
+  calc: RiskTicketCalc;
+  wsDebug: WsDebugState;
+  now: number;
+  recentTickets: RecentTicket[];
+  onAssetChange: (asset: ApiCoin) => void;
+  onDraftChange: (draft: RiskTicketDraft) => void;
+  onModeChange: (mode: RiskMode) => void;
+  onPreview: () => void;
+}) {
+  const entryFallback = draft.entryType === "Market" ? state.market.price : state.market.price;
+  const stopFallback = defaultStop(draft.side, calc.entryPrice);
+  const takeFallback = defaultTakeProfit(draft.side, calc.entryPrice);
+  const hyperliquidHref = `https://app.hyperliquid.xyz/trade/${asset.apiCoin}`;
+  const canPreview = !calc.invalidationReason;
+
+  return (
+    <section className="risk-ticket-hero">
+      <div className="risk-ticket-copy">
+        <span>Your max loss comes first.</span>
+        <h1>Trade Hyperliquid with a fixed max loss.</h1>
+        <p>Choose your dollar risk. HypurrScope calculates position size, stop loss, take profit, liquidation risk and execution preview.</p>
+        <div className="hero-actions">
+          <button className="primary-action" onClick={onPreview} disabled={!canPreview}>Create Risk Ticket</button>
+          <button className="ghost-action" onClick={onPreview}>Try Simulation</button>
+        </div>
+        <p className="risk-disclaimer">This is not financial advice. Perpetual futures are risky. You can lose money.</p>
+      </div>
+
+      <div className="risk-ticket-layout">
+        <section className="risk-ticket-card">
+          <DataHealthBar state={state} wsDebug={wsDebug} now={now} />
+          <div className="risk-ticket-head">
+            <div>
+              <span>Risk Ticket</span>
+              <h2>{asset.shortName} {draft.side}</h2>
+            </div>
+            <div className="mode-toggle" aria-label="Risk ticket mode">
+              <button className={mode === "beginner" ? "active" : ""} onClick={() => onModeChange("beginner")}>Beginner</button>
+              <button className={mode === "pro" ? "active" : ""} onClick={() => onModeChange("pro")}>Pro</button>
+            </div>
+          </div>
+
+          <div className="ticket-form-grid">
+            <label>
+              <span>Asset</span>
+              <select value={asset.apiCoin} onChange={(event) => onAssetChange(event.target.value as ApiCoin)}>
+                {ASSETS.map((row) => <option key={row.apiCoin} value={row.apiCoin}>{row.shortName}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Direction</span>
+              <select value={draft.side} onChange={(event) => onDraftChange({ ...draft, side: event.target.value as TicketSide })}>
+                <option>Long</option>
+                <option>Short</option>
+              </select>
+            </label>
+            <label className="max-loss-field">
+              <span>Risk amount USD</span>
+              <input value={draft.maxLossUsd} onChange={(event) => onDraftChange({ ...draft, maxLossUsd: event.target.value })} inputMode="decimal" />
+            </label>
+            <label>
+              <span>Entry type</span>
+              <select value={draft.entryType} onChange={(event) => onDraftChange({ ...draft, entryType: event.target.value as EntryType })}>
+                <option>Market</option>
+                <option>Limit</option>
+              </select>
+            </label>
+            <label>
+              <span>Entry price</span>
+              <input value={draft.entryPrice} onChange={(event) => onDraftChange({ ...draft, entryPrice: event.target.value })} placeholder={formatPriceInput(entryFallback)} disabled={draft.entryType === "Market"} inputMode="decimal" />
+            </label>
+            <label>
+              <span>Stop loss</span>
+              <input value={draft.stopLoss} onChange={(event) => onDraftChange({ ...draft, stopLoss: event.target.value })} placeholder={formatPriceInput(stopFallback)} inputMode="decimal" />
+            </label>
+            <label>
+              <span>Take profit</span>
+              <input value={draft.takeProfit} onChange={(event) => onDraftChange({ ...draft, takeProfit: event.target.value })} placeholder={formatPriceInput(takeFallback)} inputMode="decimal" />
+            </label>
+            <label>
+              <span>Leverage</span>
+              <input value={draft.leverage} onChange={(event) => onDraftChange({ ...draft, leverage: event.target.value })} inputMode="decimal" />
+            </label>
+          </div>
+
+          <div className="ticket-result-grid">
+            <article>
+              <span>Position size</span>
+              <strong>{formatUsd(calc.positionSizeUsd, "data unavailable")}</strong>
+              <small>{calc.positionSizeAsset === null ? "asset size unavailable" : `${calc.positionSizeAsset.toFixed(4)} ${asset.shortName}`}</small>
+            </article>
+            <article>
+              <span>Risk/reward</span>
+              <strong>{calc.riskRewardRatio === null ? "data unavailable" : `1:${calc.riskRewardRatio.toFixed(2)}`}</strong>
+              <small>Estimated gain {formatUsd(calc.estimatedGainUsd, "data unavailable")}</small>
+            </article>
+            <article>
+              <span>Liquidation</span>
+              <strong>{formatUsd(calc.liquidationPrice, "data unavailable")}</strong>
+              <small>{calc.liquidationSafety}</small>
+            </article>
+            <article>
+              <span>Fees / slippage</span>
+              <strong>{formatUsd(calc.estimatedFees, "data unavailable")}</strong>
+              <small>{calc.estimatedSlippageBps === null ? "slippage unavailable" : `${calc.estimatedSlippageBps.toFixed(2)} bps estimated`}</small>
+            </article>
+          </div>
+
+          <div className="ticket-warnings">
+            {calc.warnings.length ? calc.warnings.slice(0, 4).map((warning, index) => (
+              <p className={warning.level} key={`${warning.text}-${index}`}>{warning.text}</p>
+            )) : <p className="info">Ticket is ready for simulation preview.</p>}
+          </div>
+
+          <div className="ticket-actions">
+            <button className="primary-action" disabled={!canPreview} onClick={onPreview}>{mode === "beginner" ? "Preview my trade" : "Preview Ticket"}</button>
+            <button className="ghost-action" onClick={onPreview}>Confirm simulation</button>
+            {calc.executionEnabled ? (
+              <button className="primary-action">Execute on Hyperliquid</button>
+            ) : (
+              <button className="disabled-action" disabled>Execution not connected</button>
+            )}
+            <a className="table-action" href={hyperliquidHref} target="_blank" rel="noreferrer">Open on Hyperliquid</a>
+          </div>
+        </section>
+
+        <div className="risk-ticket-side">
+          {mode === "beginner" ? <BeginnerModePanel calc={calc} /> : <ProMetricsPanel state={state} metrics={metrics} calc={calc} wsDebug={wsDebug} now={now} />}
+          <RecentTickets tickets={recentTickets} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function AssetCard({
   asset,
   state,
@@ -2143,47 +2626,11 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
       </div>
     );
   }
-  const flowCollecting = rows.every((signal) => signal.status === "not_evaluable_flow_missing");
-
-  if (flowCollecting) {
-    const top = rows
-      .filter((signal) => signal.structureScore !== null)
-      .slice(0, 4);
-    return (
-      <div className="compact-empty" data-testid="setups-collecting">
-        Flow data is warming up. Full setup scores appear after a few minutes of live trades.
-        <small>
-          Structure conditions (price, OI, funding, liquidity) are already scored below. Flow
-          conditions (CVD, taker pressure) need the live trade stream, collected since page open.
-        </small>
-        {top.length ? (
-          <div className="table-wrap" style={{ marginTop: 10 }}>
-            <table>
-              <thead>
-                <tr><th>Asset</th><th>Setup</th><th>Structure score</th><th>Waiting on</th></tr>
-              </thead>
-              <tbody>
-                {top.map((signal) => (
-                  <tr key={`${signal.asset}-${signal.kind}`} data-testid={`closest-setup-${signal.asset}-${signal.kind.replace(/\s+/g, "-").toLowerCase()}`}>
-                    <td><strong>{signal.asset}</strong></td>
-                    <td>{signal.kind}</td>
-                    <td>{signal.structureScore}%</td>
-                    <td>{signal.flowMissing.length ? signal.flowMissing.join(", ") : "live flow"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
   return (
     <div className="table-wrap">
       <table>
         <thead>
-          <tr><th>Asset</th><th>Setup</th><th>Structure score</th><th>Flow score</th><th>Final score</th><th>Status</th><th>Details</th><th>Action</th></tr>
+          <tr><th>Asset</th><th>Setup</th><th>Structure score</th><th>Flow score</th><th>Final score</th><th>Status</th><th>Flow inputs</th><th>Passed conditions</th><th>Failed conditions</th><th>Current value / target value</th><th>Action</th></tr>
         </thead>
         <tbody>
           {rows.map((signal) => (
@@ -2194,15 +2641,10 @@ function SignalTable({ signals, onAlert }: { signals: SignalReadiness[]; onAlert
               <td data-col="flow-score">{signal.flowScore === null ? `unavailable${signal.flowMissing.length ? `: ${signal.flowMissing.join(", ")}` : ""}` : `${signal.flowScore}%`}</td>
               <td data-col="final-score">{signal.finalScore === null ? "not evaluable" : `${signal.finalScore}%`}</td>
               <td data-col="status">{signal.status}</td>
-              <td data-col="details">
-                <details className="signal-details">
-                  <summary>{signal.passed.length} OK / {signal.missing.length} KO</summary>
-                  <div data-col="flow-inputs">{signal.flowInputs.join(" | ")}</div>
-                  <div data-col="passed-conditions">{signal.passed.length ? signal.passed.join(" | ") : "No condition passed yet"}</div>
-                  <div data-col="failed-conditions">{signal.missing.length ? signal.missing.join(" | ") : "No missing condition"}</div>
-                  <div data-col="current-target">{signal.details.join(" | ")}</div>
-                </details>
-              </td>
+              <td data-col="flow-inputs">{signal.flowInputs.join(" | ")}</td>
+              <td data-col="passed-conditions">{signal.passed.length ? signal.passed.join(" | ") : "No condition passed yet"}</td>
+              <td data-col="failed-conditions">{signal.missing.length ? signal.missing.join(" | ") : "No missing condition"}</td>
+              <td data-col="current-target">{signal.details.join(" | ")}</td>
               <td data-col="action"><button className="table-action" disabled={signal.finalScore === null} onClick={() => onAlert(signal)}>{signal.finalScore === null ? "Not evaluable" : "Create alert"}</button></td>
             </tr>
           ))}
@@ -3008,146 +3450,6 @@ function QAPanel({
   );
 }
 
-const BEGINNER_DEPTH_TARGET: Record<ApiCoin, number> = { BTC: 5_000_000, ETH: 2_000_000, HYPE: 350_000 };
-
-function beginnerFundingLine(fundingPct: number | null): string {
-  if (fundingPct === null) return "Funding: loading.";
-  if (fundingPct > 0.004) return "Buyers pay a high fee to stay in: the crowd is very bullish.";
-  if (fundingPct > 0.0005) return "Buyers pay sellers a small fee: demand leans bullish.";
-  if (fundingPct < -0.004) return "Sellers pay a high fee to stay in: the crowd is very bearish.";
-  if (fundingPct < -0.0005) return "Sellers pay buyers a small fee: pressure leans bearish.";
-  return "Funding is neutral: neither side pays much to hold.";
-}
-
-function beginnerLiquidityLine(coin: ApiCoin, depth10Bps: number | null): string {
-  if (depth10Bps === null) return "Liquidity: loading.";
-  return depth10Bps >= BEGINNER_DEPTH_TARGET[coin]
-    ? "Liquidity is healthy: orders fill close to the displayed price."
-    : "Liquidity is thin: price can move fast, trade smaller.";
-}
-
-function beginnerSetup(kind: string): { name: string; text: string } {
-  if (kind === "Fresh Long") return { name: "Momentum buy", text: "Price pushes up while new positions open: a trend-following buy signal." };
-  if (kind === "Fresh Short") return { name: "Momentum sell", text: "Price drops while new positions open: a trend-following sell signal." };
-  if (kind === "Crowded Long") return { name: "Crowded buyers", text: "Too many buyers piled in: risk of a sharp pullback." };
-  if (kind === "Crowded Short") return { name: "Crowded sellers", text: "Too many sellers piled in: risk of a squeeze upward." };
-  return { name: kind, text: "" };
-}
-
-function BeginnerOverview({
-  marketState,
-  marketLine,
-  signals,
-  assetStates,
-  metricsByAsset,
-  onAlert,
-  onTrade,
-}: {
-  marketState: string;
-  marketLine: string;
-  signals: SignalReadiness[];
-  assetStates: Record<ApiCoin, AssetState>;
-  metricsByAsset: Record<ApiCoin, MetricBundle>;
-  onAlert: (signal: SignalReadiness) => void;
-  onTrade: () => void;
-}) {
-  const ranked = rankSignals(signals);
-  const collecting = ranked.length > 0 && ranked.every((signal) => signal.status === "not_evaluable_flow_missing");
-  const top = ranked.filter((signal) => signal.finalScore !== null).slice(0, 3);
-  return (
-    <>
-      <PageHead title="HypurrScope Risk Radar" subtitle="Plain-language view. Switch to Pro (top bar) for the full data." />
-      <section className="panel beginner-hero">
-        <span>Market right now</span>
-        <strong>{marketState}</strong>
-        <p>{marketLine}</p>
-      </section>
-
-      <section className="asset-grid">
-        {ASSETS.map((asset) => {
-          const st = assetStates[asset.apiCoin];
-          const metrics = metricsByAsset[asset.apiCoin];
-          return (
-            <article className="panel asset-card beginner-card" key={asset.apiCoin}>
-              <header>
-                <strong>{asset.shortName}</strong>
-                <span>{asset.bucket}</span>
-              </header>
-              <div className="beginner-price">
-                <strong>{formatUsd(st.market.price)}</strong>
-                <em className={directionClass(metrics.price1h)}>{formatPct(metrics.price1h)} last hour</em>
-              </div>
-              <ul className="beginner-lines">
-                <li>{beginnerFundingLine(st.market.fundingPct)}</li>
-                <li>{beginnerLiquidityLine(asset.apiCoin, metrics.depth10Bps)}</li>
-              </ul>
-            </article>
-          );
-        })}
-      </section>
-
-      <section className="two-panels">
-        <Panel title="Trading signals" right={collecting ? "warming up" : top.length ? `${top.length} shown` : "quiet"}>
-          {collecting ? (
-            <div className="compact-empty">
-              The radar is reading live trades. Signals unlock after a few minutes on this page.
-              <small>You can already place a risk-controlled trade with the Risk Ticket.</small>
-            </div>
-          ) : top.length ? (
-            <div className="beginner-signals">
-              {top.map((signal) => {
-                const plain = beginnerSetup(signal.kind);
-                return (
-                  <article className="beginner-signal" key={`${signal.asset}-${signal.kind}`}>
-                    <header>
-                      <strong>{signal.asset} · {plain.name}</strong>
-                      <span className={signal.active ? "positive" : ""}>{signal.active ? "Active now" : `${signal.finalScore}% ready`}</span>
-                    </header>
-                    <p>{plain.text}</p>
-                    <button className="table-action" onClick={() => onAlert(signal)}>Alert me when it triggers</button>
-                  </article>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="compact-empty">No clear signal right now. A quiet market is also information.</div>
-          )}
-        </Panel>
-        <Panel title="Trade with a fixed maximum loss" right="Risk Ticket">
-          <div className="beginner-cta">
-            <p>
-              Say how much you accept to lose. The Risk Ticket sizes the position and places entry,
-              stop loss and take profit on Hyperliquid in one signature.
-            </p>
-            <button className="primary-action" onClick={onTrade}>Open the Risk Ticket</button>
-          </div>
-        </Panel>
-      </section>
-
-      <Panel title="The four words that matter" right="mini glossary">
-        <div className="beginner-glossary">
-          <div><strong>Price</strong><span>The last traded price of the perpetual contract.</span></div>
-          <div><strong>Funding</strong><span>A small hourly fee one side pays the other. It shows which crowd is bigger.</span></div>
-          <div><strong>Open interest</strong><span>Money currently engaged in open positions. Rising means new bets coming in.</span></div>
-          <div><strong>Liquidity</strong><span>How much can be traded without moving the price. Thin liquidity means fast moves.</span></div>
-        </div>
-      </Panel>
-    </>
-  );
-}
-
-function connectionTitle(label: string): string {
-  switch (label) {
-    case "Streaming": return "Live trade stream is flowing: flow scores update in real time.";
-    case "Connected": return "Connected to Hyperliquid: waiting for the live trade stream.";
-    case "Warming up": return "Connecting: live data is being established.";
-    case "Reconnecting": return "Connection lost: trying to reconnect to the trade stream.";
-    case "Stale": return "No fresh data received recently: flow scores may be outdated.";
-    case "Error": return "Live connection error: flow scores are unreliable until it recovers.";
-    default: return "Live data connection status.";
-  }
-}
-
 export default function HypurrScopeClient({ initialAssets: initialAssetState }: { initialAssets?: InitialAssetStateMap }) {
   const wsRef = useRef<WebSocket | null>(null);
   const wsReconnectRef = useRef<number | null>(null);
@@ -3160,24 +3462,6 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   const [assets, setAssets] = useState<Record<ApiCoin, AssetState>>(() => mergeInitialAssets(initialAssetState));
   const [selected, setSelected] = useState<ApiCoin>("HYPE");
   const [view, setView] = useState<View>("overview");
-  const [uiMode, setUiMode] = useState<UiMode>("beginner");
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem("hs-ui-mode");
-      if (saved === "pro" || saved === "beginner") setUiMode(saved);
-    } catch {
-      // localStorage unavailable (private mode): keep default
-    }
-  }, []);
-  function switchMode(mode: UiMode) {
-    setUiMode(mode);
-    if (mode === "beginner" && view !== "overview" && view !== "alerts" && view !== "trade") setView("overview");
-    try {
-      window.localStorage.setItem("hs-ui-mode", mode);
-    } catch {
-      // best effort only
-    }
-  }
   const [chartMode, setChartMode] = useState<ChartMode>("price");
   const [chartInterval, setChartInterval] = useState<ChartInterval>("5m");
   const [connection, setConnection] = useState<ConnectionState>(() => hasInitialRestData ? "live" : "loading");
@@ -3194,6 +3478,17 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   const [walletResult, setWalletResult] = useState<WalletResult | null>(null);
   const [qaEnabled, setQaEnabled] = useState(false);
   const [nowTick, setNowTick] = useState(Date.now());
+  const [riskMode, setRiskMode] = useState<RiskMode>("beginner");
+  const [riskDraft, setRiskDraft] = useState<RiskTicketDraft>({
+    side: "Long",
+    entryType: "Market",
+    maxLossUsd: "100",
+    entryPrice: "",
+    stopLoss: "",
+    takeProfit: "",
+    leverage: "3",
+  });
+  const [recentTickets, setRecentTickets] = useState<RecentTicket[]>([]);
 
   const patchAsset = (coin: ApiCoin, updater: (state: AssetState) => AssetState) => {
     setAssets((current) => ({ ...current, [coin]: updater(current[coin]) }));
@@ -3202,6 +3497,21 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   useEffect(() => {
     setQaEnabled(typeof window !== "undefined" && new URLSearchParams(window.location.search).get("qa") === "1");
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem("hypurrscope_recent_risk_tickets");
+      if (stored) setRecentTickets(JSON.parse(stored).slice(0, 10));
+    } catch {
+      setRecentTickets([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("hypurrscope_recent_risk_tickets", JSON.stringify(recentTickets.slice(0, 10)));
+  }, [recentTickets]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -3781,6 +4091,10 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
   const selectedAsset = ASSET_BY_COIN[selected];
   const selectedState = assets[selected];
   const selectedMetrics = metricsByAsset[selected];
+  const riskTicketCalc = useMemo(
+    () => calculateRiskTicket(selectedAsset, selectedState, selectedMetrics, riskDraft, wsDebug, nowTick),
+    [selectedAsset, selectedState, selectedMetrics, riskDraft, wsDebug, nowTick],
+  );
   const selectedSignals = allSignals(selectedAsset, selectedMetrics);
   const selectedBest = bestSignal(selectedSignals);
   const customFingerprint = alertFingerprint(
@@ -3817,6 +4131,20 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
     }).catch(() => undefined);
     setView("alerts");
     setAlertTab("saved");
+  }
+
+  function previewRiskTicket() {
+    if (riskTicketCalc.invalidationReason || riskTicketCalc.maxLossUsd === null) return;
+    const ticket: RecentTicket = {
+      id: `risk-ticket-${selected}-${Date.now()}`,
+      createdAt: Date.now(),
+      asset: selected,
+      side: riskDraft.side,
+      maxLossUsd: riskTicketCalc.maxLossUsd,
+      riskRewardRatio: riskTicketCalc.riskRewardRatio,
+      status: riskTicketCalc.dataIsLive ? "previewed" : "simulated",
+    };
+    setRecentTickets((current) => [ticket].concat(current).slice(0, 10));
   }
 
   function createAlert(signal: SignalReadiness) {
@@ -3941,64 +4269,52 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
           </div>
         </div>
         <nav>
-          {([
+          {[
             ["overview", "Overview"],
             ["watchlist", "Watchlist"],
             ["flow", "Recent Flow"],
             ["alerts", "Alerts"],
             ["wallet", "Wallet Scanner"],
-          ] as const)
-            .filter(([key]) => uiMode === "pro" || key === "overview" || key === "alerts")
-            .map(([key, label]) => (
+          ].map(([key, label]) => (
             <button className={view === key || (key === "watchlist" && view === "asset") ? "active" : ""} key={key} onClick={() => setView(key as View)}>{label}</button>
           ))}
-          <button
-            onClick={() => setView("trade")}
-            className={view === "trade" ? "active" : ""}
-          >
-            Trade — Risk Ticket
-          </button>
         </nav>
         <div className="risk-rail-foot">
-          <span className={`connection ${connection}`} title={connectionTitle(connectionLabel)}>{connectionLabel}</span>
+          <span className={`connection ${connection}`}>{connectionLabel}</span>
           <small>Last update {ageLabel(lastUpdate)}</small>
         </div>
       </aside>
 
       <section className="risk-page">
         <header className="risk-topbar">
-          <div className="mode-toggle" role="group" aria-label="Interface mode">
-            <button className={uiMode === "beginner" ? "active" : ""} onClick={() => switchMode("beginner")}>Beginner</button>
-            <button className={uiMode === "pro" ? "active" : ""} onClick={() => switchMode("pro")}>Pro</button>
+          <div className="asset-switcher">
+            {ASSETS.map((asset) => (
+              <button className={selected === asset.apiCoin ? "active" : ""} key={asset.apiCoin} onClick={() => setSelected(asset.apiCoin)}>
+                {asset.shortName}
+              </button>
+            ))}
           </div>
-          {(view === "asset" || view === "alerts") && (
-            <div className="asset-switcher">
-              {ASSETS.map((asset) => (
-                <button className={selected === asset.apiCoin ? "active" : ""} key={asset.apiCoin} onClick={() => setSelected(asset.apiCoin)}>
-                  {asset.shortName}
-                </button>
-              ))}
-            </div>
-          )}
-          <span className={`connection ${connection}`} title={connectionTitle(connectionLabel)}>{connectionLabel}</span>
+          <span className={`connection ${connection}`}>{connectionLabel}</span>
           <button className="primary-action" onClick={() => best && createAlert(best)}>Create alert</button>
         </header>
 
-        {view === "overview" && uiMode === "beginner" && (
-          <BeginnerOverview
-            marketState={state}
-            marketLine={marketWarning || marketSentence(best, state)}
-            signals={signals}
-            assetStates={assets}
-            metricsByAsset={metricsByAsset}
-            onAlert={createAlert}
-            onTrade={() => setView("trade")}
-          />
-        )}
-
-        {view === "overview" && uiMode === "pro" && (
+        {view === "overview" && (
           <>
-            <PageHead title="HypurrScope Risk Radar" subtitle="BTC / ETH / HYPE live perps intelligence on Hyperliquid." />
+            <RiskTicket
+              asset={selectedAsset}
+              state={selectedState}
+              metrics={selectedMetrics}
+              draft={riskDraft}
+              mode={riskMode}
+              calc={riskTicketCalc}
+              wsDebug={wsDebug}
+              now={nowTick}
+              recentTickets={recentTickets}
+              onAssetChange={setSelected}
+              onDraftChange={setRiskDraft}
+              onModeChange={setRiskMode}
+              onPreview={previewRiskTicket}
+            />
             <section className="risk-summary">
               <article>
                 <span>Market State</span>
@@ -4157,13 +4473,6 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
               )}
               {alertTab === "saved" && <MyAlertsTable alerts={alerts} filter={alertFilter} onFilter={setAlertFilter} onToggle={toggleAlert} />}
             </Panel>
-          </>
-        )}
-
-        {view === "trade" && (
-          <>
-            <PageHead title="Trade — Risk Ticket" subtitle="Say how much you accept to lose: entry, stop loss and take profit go out in one signature." />
-            <RiskTicketClient embedded />
           </>
         )}
 

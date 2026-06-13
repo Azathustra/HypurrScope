@@ -5,9 +5,9 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export const metadata: Metadata = {
-  title: "HypurrScope | BTC ETH HYPE Hyperliquid Risk Radar",
+  title: "HypurrScope | Hyperliquid Fixed Max Loss Risk Ticket",
   description:
-    "Track BTC, ETH and HYPE perps on Hyperliquid with live price, open interest, funding, liquidity, flow events, closest setups and alerts.",
+    "Build BTC, ETH and HYPE Hyperliquid trade tickets from a fixed dollar risk with position sizing, stop loss, take profit, fees, slippage and liquidation preview.",
 };
 
 export default function RootLayout({
