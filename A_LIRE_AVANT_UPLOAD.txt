@@ -6,6 +6,9 @@ Tres important:
 1. Cette version ne contient PAS app/trade.
 2. Si app/trade existe encore sur GitHub, supprime ce dossier sur GitHub.
 3. L'ancienne erreur Vercel "@nktkas/hyperliquid" venait d'un vieux fichier app/trade/lib/hl.ts.
+4. Cette version ne contient PAS de Cron Vercel dans vercel.json.
+5. Correction incluse: plus de setView("alerts") invalide.
+6. Correction incluse: la homepage ne declenche plus /api/cron/snapshot pendant son rendu serveur.
 4. Ne garde pas de vieux fichiers melanges avec ce dossier.
 5. Il faut uploader le CONTENU du dossier, pas le dossier lui-meme.
 

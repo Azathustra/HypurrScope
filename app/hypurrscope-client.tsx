@@ -4983,7 +4983,7 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
       headers: { "content-type": "application/json" },
       body: JSON.stringify(rule),
     }).catch(() => undefined);
-    setView("alerts");
+    setView("flow");
     setAlertTab("saved");
   }
 

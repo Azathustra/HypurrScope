@@ -226,8 +226,6 @@ async function buildInitialAssets() {
   const markets = await fetchJson<any>(origin, "/api/hl/markets");
   applyMarkets(assets, markets);
 
-  await fetchJson(origin, "/api/cron/snapshot", { method: "POST", body: "{}" });
-
   const [candleRows, bookRows, oiRows] = await Promise.all([
     Promise.all(ASSETS.map(async (coin) => [coin, await fetchJson<any>(origin, `/api/hl/candles?coin=${coin}&interval=1m&hours=24`)] as const)),
     Promise.all(ASSETS.map(async (coin) => [coin, await fetchJson<any>(origin, `/api/hl/book?coin=${coin}`)] as const)),
