@@ -12,6 +12,12 @@ Correctif inclus:
 - Risk Ticket avec vraie machine d'etat.
 - Correctif TypeScript des boutons Quick targets: draft.side n'est plus lu comme null par Vercel.
 - Nouveau mode Debutant du Risk Ticket.
+- Nouveau mode Pro du Risk Ticket.
+- Moteur buildProTicketState: aucune recommandation, aucun verdict, seulement donnees brutes et blocages techniques neutres.
+- Composant ProRiskTicket avec sections: Trade Plan, Risk, Execution, Market Data, Data Quality, Advanced Raw Data.
+- Le mode Pro n'affiche pas "Accepter ce setup", pas de score qualite, pas de verdict, pas de conseil directionnel.
+- En mode Pro, le bouton disponible est uniquement "Preview order", et seulement si les controles techniques critiques passent.
+- Si la preview Pro est bloquee, le message reste technique: "Order preview unavailable: ...".
 - Moteur buildBeginnerTradeDecision avec verdicts: no_setup, blocked, wait, risky, setup_validated.
 - Le mode Debutant ne montre "Accepter ce setup" que si verdict setup_validated + preview possible.
 - Le clic sur "Accepter ce setup" ouvre une ProtectedOrderPreview; il n'envoie jamais un ordre directement.
@@ -28,6 +34,7 @@ Correctif inclus:
 
 Tests locaux passes avec le runtime Codex:
 - beginner-decision-tests: 10/10 passed
+- pro-ticket-tests: 12/12 passed
 - risk-ticket-tests: 7/7 passed
 - risk-state-tests: 7/7 passed
 - Smoke test passed

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { buildBeginnerTradeDecision, type BeginnerPrimaryButton, type BeginnerReason, type BeginnerTradeDecision } from "./lib/risk/buildBeginnerTradeDecision";
+import { buildProTicketState, type ProTicketRawData, type ProTicketState } from "./lib/risk/buildProTicketState";
 import { calculateRiskTicket as calculateRiskTicketCore } from "./lib/risk/calculateRiskTicket";
 import { riskPresetFor } from "./lib/risk/presets";
 import { getBuilderConfig } from "./lib/hyperliquid/builderCode";
@@ -821,6 +822,35 @@ function formatFunding(value: number | null) {
   const numberValue = value as number;
   if (Math.abs(numberValue) < 0.0001) return numberValue < 0 ? "-<0.0001%" : "<0.0001%";
   return formatPct(numberValue, 4);
+}
+
+function formatBps(value: number | null, fallback = "Unavailable") {
+  if (!Number.isFinite(value as number)) return fallback;
+  return `${(value as number).toFixed(2)} bps`;
+}
+
+function formatSlippagePct(value: number | null, fallback = "Unavailable") {
+  if (!Number.isFinite(value as number)) return fallback;
+  return `${((value as number) / 100).toFixed(4)}%`;
+}
+
+function formatRewardRiskValue(value: number | null, fallback = "Unavailable") {
+  if (!Number.isFinite(value as number)) return fallback;
+  return (value as number).toFixed(2);
+}
+
+function formatPositionAsset(value: number | null, asset: AssetConfig, fallback = "Unavailable") {
+  if (!Number.isFinite(value as number)) return fallback;
+  return `${(value as number).toFixed(4)} ${asset.shortName}`;
+}
+
+function formatDataAge(timestamp?: number | null) {
+  if (!timestamp) return "Unavailable";
+  return ageLabel(timestamp);
+}
+
+function availabilityLabel(value: boolean) {
+  return value ? "Available" : "Unavailable";
 }
 
 function formatSourceTimestamp(state: AssetState) {
@@ -2648,6 +2678,171 @@ function ProMetricRow({ label, value, status, impact, hint }: { label: string; v
   );
 }
 
+function buildProTicketStateForUi({
+  asset,
+  state,
+  metrics,
+  draft,
+  calc,
+  wsDebug,
+  now,
+  assetMeta,
+  ticketState,
+}: {
+  asset: AssetConfig;
+  state: AssetState;
+  metrics: MetricBundle;
+  draft: RiskTicketDraft;
+  calc: RiskTicketCalc;
+  wsDebug: WsDebugState;
+  now: number;
+  assetMeta: PerpAssetMeta | null;
+  ticketState: TicketState;
+}) {
+  const side = draft.side === "Long" ? "long" : draft.side === "Short" ? "short" : null;
+  const pricingAvailable = Number.isFinite(state.market.price as number);
+  const orderBookAvailable = Boolean(state.book && Number.isFinite(state.book.bestBid) && Number.isFinite(state.book.bestAsk));
+  const assetPrecisionAvailable = Boolean(assetMeta && assetMeta.szDecimals !== null);
+  const tpSlAvailable = Boolean(calc.stopLoss && calc.targetPrice && draft.side);
+  const rawData: ProTicketRawData = {
+    tradePlan: {
+      Market: asset.shortName,
+      Side: draft.side,
+      "Entry price": formatUsd(calc.entryPrice, "Unavailable"),
+      "Stop loss": formatUsd(calc.stopLoss, "Unavailable"),
+      "Take profit": formatUsd(calc.targetPrice, "Unavailable"),
+      "Position size": formatPositionAsset(calc.positionSizeAsset, asset),
+      "Position notional": formatUsd(calc.positionSizeUsd, "Unavailable"),
+      "Order type": draft.entryType,
+      "Margin mode": calc.marginMode,
+    },
+    risk: {
+      "Max risk": formatUsd(calc.maxTotalRiskUsd, "Unavailable"),
+      "Estimated loss at stop": formatUsd(calc.estimatedTotalLossAtStopUsd, "Unavailable"),
+      "Estimated profit": formatUsd(calc.estimatedNetProfitUsd, "Unavailable"),
+      "Net reward/risk": formatRewardRiskValue(calc.rewardRiskNet),
+      Leverage: calc.leverage === null ? null : `${calc.leverage.toFixed(1)}x`,
+      "Liquidation price": formatUsd(calc.liquidationPrice, "Unavailable"),
+    },
+    execution: {
+      "Order type": draft.entryType,
+      Spread: formatBps(metrics.spreadBps),
+      "Best bid": formatUsd(state.book?.bestBid ?? null, "Unavailable"),
+      "Best ask": formatUsd(state.book?.bestAsk ?? null, "Unavailable"),
+      "Mid price": formatUsd(state.market.midPx, "Unavailable"),
+      "Order book depth +/-10 bps": formatUsd(metrics.depth10Bps, "Unavailable"),
+      "Order book depth +/-25 bps": formatUsd(metrics.depth25Bps, "Unavailable"),
+      "Estimated slippage": formatSlippagePct(calc.estimatedSlippageBps),
+      "Estimated fees": formatUsd(calc.estimatedFees, "Unavailable"),
+      "Maker fee": null,
+      "Taker fee": "0.0450% model",
+    },
+    market: {
+      "15m price change": formatPct(metrics.price15m, 2, "Unavailable"),
+      "1h price change": formatPct(metrics.price1h, 2, "Unavailable"),
+      "24h volume": formatUsd(state.market.volume24hUsd, "Unavailable"),
+      "Open interest": formatUsd(state.market.oiUsd, "Unavailable"),
+      "OI change 15m": formatPct(metrics.oi15m, 2, "Unavailable"),
+      "OI change 1h": formatPct(metrics.oi1h, 2, "Unavailable"),
+      "OI change 4h": formatPct(metrics.oi4h, 2, "Unavailable"),
+      Funding: formatFunding(state.market.fundingPct).replace("Loading", "Unavailable"),
+      "Next funding time": null,
+      "Taker buy ratio 5m": formatPct(metrics.takerBuyRatio5m, 1, "Unavailable", false),
+      "Taker sell ratio 5m": formatPct(metrics.takerSellRatio5m, 1, "Unavailable", false),
+      "Net buy flow 5m": formatUsd(metrics.netBuyFlow5m, "Unavailable"),
+      "Net sell flow 5m": formatUsd(metrics.netSellFlow5m, "Unavailable"),
+      "CVD 5m": formatUsd(metrics.cvd5m, "Unavailable"),
+      "CVD 15m": formatUsd(metrics.cvd15m, "Unavailable"),
+    },
+    dataQuality: {
+      "Last price update": formatDataAge(state.freshness.meta || state.sourceUpdatedAt),
+      "Last order book update": formatDataAge(state.freshness.book),
+      "Last flow update": formatDataAge(state.freshness.trades),
+      "Asset precision": availabilityLabel(assetPrecisionAvailable),
+      "TP/SL availability": availabilityLabel(tpSlAvailable),
+      "Pricing data": availabilityLabel(pricingAvailable),
+      "Order book": availabilityLabel(orderBookAvailable),
+      "Flow status": wsDebug.status,
+    },
+    advancedRawData: {
+      "Ticket state": ticketState,
+      "Calculator error": calc.invalidationReason,
+      "REST source timestamp": state.sourceUpdatedAtIso,
+      "Market data error": state.dataError,
+      "Candle error": state.candleError,
+      "Book error": state.bookError,
+      "Missing fields": state.missingFields.length ? state.missingFields.join(", ") : null,
+      "Asset szDecimals": assetMeta?.szDecimals ?? null,
+      "WebSocket messages": wsDebug.rawMessagesCount,
+      "WebSocket last message": formatDataAge(wsDebug.lastMessageAt),
+      "Snapshot count": state.backendOi?.snapshotCount ?? null,
+    },
+  };
+
+  return buildProTicketState({
+    rawData,
+    checks: {
+      marketSelected: Boolean(asset.apiCoin),
+      side,
+      entry: calc.entryPrice,
+      stop: calc.stopLoss,
+      target: calc.targetPrice,
+      maxRisk: calc.maxTotalRiskUsd,
+      estimatedLossAtStop: calc.estimatedTotalLossAtStopUsd,
+      liquidationPrice: calc.liquidationPrice,
+      pricingAvailable,
+      orderBookAvailable,
+      assetPrecisionAvailable,
+      tpSlAvailable,
+      positionSize: calc.positionSizeAsset,
+    },
+  });
+}
+
+function ProTicketValue({ value }: { value: string | number | null }) {
+  return <strong>{value === null || value === "" ? "Unavailable" : value}</strong>;
+}
+
+function ProTicketSection({ title, rows }: { title: string; rows: Record<string, string | number | null> }) {
+  return (
+    <section className="pro-ticket-section">
+      <h4>{title}</h4>
+      <div className="pro-ticket-grid">
+        {Object.entries(rows).map(([label, value]) => (
+          <article key={`${title}-${label}`}>
+            <span>{label}</span>
+            <ProTicketValue value={value} />
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ProRiskTicket({ ticketState, onPreview }: { ticketState: ProTicketState; onPreview: () => void }) {
+  return (
+    <aside className="risk-mode-panel pro-risk-ticket">
+      <span>Mode Pro</span>
+      <h3>Raw trade ticket</h3>
+      <div className="pro-ticket-sections">
+        <ProTicketSection title="Trade Plan" rows={ticketState.rawData.tradePlan} />
+        <ProTicketSection title="Risk" rows={ticketState.rawData.risk} />
+        <ProTicketSection title="Execution" rows={ticketState.rawData.execution} />
+        <ProTicketSection title="Market Data" rows={ticketState.rawData.market} />
+        <ProTicketSection title="Data Quality" rows={ticketState.rawData.dataQuality} />
+        <ProTicketSection title="Advanced Raw Data" rows={ticketState.rawData.advancedRawData} />
+      </div>
+      <div className="ticket-actions single-primary pro-preview-actions">
+        {ticketState.canPreviewOrder ? (
+          <button className="primary-action" onClick={onPreview}>Preview order</button>
+        ) : (
+          <p className="pro-preview-unavailable">{ticketState.previewUnavailableReason}</p>
+        )}
+      </div>
+    </aside>
+  );
+}
+
 function TradeValidationWarnings({ warnings }: { warnings: TicketWarning[] }) {
   return (
     <div className="ticket-warnings">
@@ -3079,6 +3274,17 @@ function RiskTicket({
     minDepthUsd: asset.thresholds.minDepthUsd,
     minNetRewardRisk: 1.2,
   });
+  const proTicketState = buildProTicketStateForUi({
+    asset,
+    state,
+    metrics,
+    draft,
+    calc,
+    wsDebug,
+    now,
+    assetMeta,
+    ticketState,
+  });
   const primaryCta = derivePrimaryCta({
     ticketState,
     sideSelected: Boolean(draft.side),
@@ -3096,6 +3302,10 @@ function RiskTicket({
     void navigator.clipboard.writeText(ticketText(asset, calc));
   };
   const runPrimary = () => {
+    if (mode === "pro") {
+      if (proTicketState.canPreviewOrder) onPreview();
+      return;
+    }
     if (primaryCta.disabled) return;
     if (primaryCta.action === "copy") copyPlan();
     else onPreview();
@@ -3108,8 +3318,14 @@ function RiskTicket({
         <h1>Calculate your trade before you enter.</h1>
         <p>Choose your target profit and max total risk. HypurrScope calculates position size, stop loss, liquidation distance, fees and execution preview for Hyperliquid.</p>
         <div className="hero-actions">
-          <button className="ghost-action" onClick={runPrimary} disabled={primaryCta.disabled}>{primaryCta.label}</button>
-          <button className="ghost-action" onClick={onSampleHypeTrade}>Try sample HYPE trade</button>
+          {mode === "pro" ? (
+            proTicketState.canPreviewOrder ? <button className="ghost-action" onClick={runPrimary}>Preview order</button> : null
+          ) : (
+            <>
+              <button className="ghost-action" onClick={runPrimary} disabled={primaryCta.disabled}>{primaryCta.label}</button>
+              <button className="ghost-action" onClick={onSampleHypeTrade}>Try sample HYPE trade</button>
+            </>
+          )}
         </div>
         <p className="risk-disclaimer">Perpetual futures are risky. This is a planning tool, not financial advice.</p>
       </div>
@@ -3124,7 +3340,7 @@ function RiskTicket({
             </div>
             <div className="mode-toggle" aria-label="Risk ticket mode">
               <button className={mode === "beginner" ? "active" : ""} onClick={() => onModeChange("beginner")}>Beginner</button>
-              <button className={mode === "pro" ? "active" : ""} onClick={() => onModeChange("pro")}>Advanced data</button>
+              <button className={mode === "pro" ? "active" : ""} onClick={() => onModeChange("pro")}>Pro</button>
             </div>
           </div>
 
@@ -3252,50 +3468,11 @@ function RiskTicket({
             </details>
           </div>
 
-          {mode === "pro" ? (
-            ticketComputable ? (
-              <div className="ticket-result-grid">
-                <article>
-                  <span>Position size</span>
-                  <strong>{formatUsd(calc.positionSizeUsd, "Calculated after trade is built")}</strong>
-                  <small>{calc.positionSizeAsset === null ? "Calculated after trade is built." : `${calc.positionSizeAsset.toFixed(4)} ${asset.shortName}`}</small>
-                </article>
-                <article>
-                  <span>Potential profit</span>
-                  <strong>{formatUsd(calc.estimatedNetProfitUsd, "Calculated after target is set")}</strong>
-                  <small>After estimated costs if target is reached.</small>
-                </article>
-                <article>
-                  <span>Reward/Risk</span>
-                  <strong>{rewardRiskText(calc.rewardRiskNet)}</strong>
-                  <small>Potential profit after costs {formatUsd(calc.estimatedNetProfitUsd, "Calculated after target is set")}</small>
-                </article>
-                <article>
-                  <span>Max total risk</span>
-                  <strong>{formatUsd(calc.estimatedTotalLossAtStopUsd, "Calculated after target is set")}</strong>
-                  <small>Cost estimate {formatUsd(calc.totalEstimatedCostUsd, "Calculated after trade is built")} included.</small>
-                </article>
-              </div>
-            ) : (
-              <div className="compact-empty ticket-next-action">
-                {ticketStateNextAction(ticketState)}
-                <small>Complete this step to calculate position size, stop, costs and preview.</small>
-              </div>
-            )
-          ) : null}
-
-          {ticketComputable || ticketState === "invalid_target" || ticketState === "invalid_stop" ? (
+          {mode !== "pro" && (ticketComputable || ticketState === "invalid_target" || ticketState === "invalid_stop") ? (
             <TradeValidationWarnings warnings={calc.warnings} />
           ) : null}
-          {ticketComputable && (!assetMeta || assetMetaError) ? (
+          {mode !== "pro" && ticketComputable && (!assetMeta || assetMetaError) ? (
             <p className="execution-note">Asset precision unavailable - execution disabled. Preview remains available.</p>
-          ) : null}
-          {mode === "pro" ? (
-            <div className="ticket-actions single-primary ticket-main-action">
-              <button className="primary-action" disabled={primaryCta.disabled} onClick={runPrimary}>{primaryCta.label}</button>
-              {ticketComputable ? <a className="subtle-link" href={hyperliquidHref} target="_blank" rel="noreferrer">Open on Hyperliquid</a> : null}
-              <button className="subtle-button" onClick={copyPlan} disabled={!canPreview}>Copy details</button>
-            </div>
           ) : null}
         </section>
 
@@ -3303,22 +3480,20 @@ function RiskTicket({
           {mode === "beginner" ? (
             <BeginnerRiskTicket decision={beginnerDecision} orderType={draft.entryType} />
           ) : (
-            <>
-              <TradeSummaryCard asset={asset} calc={calc} ticketState={ticketState} />
-              <MarketSafetyChecks state={state} metrics={metrics} calc={calc} wsDebug={wsDebug} now={now} ticketState={ticketState} />
-            </>
+            <ProRiskTicket ticketState={proTicketState} onPreview={onPreview} />
           )}
         </div>
       </div>
 
-      {mode === "pro" ? <ExecutionPreview asset={asset} calc={calc} ticketState={ticketState} onPreview={onPreview} /> : null}
       <RecentTickets tickets={recentTickets} />
-      <details className="advanced-home risk-advanced-data" open={mode === "pro"}>
-        <summary>Advanced data</summary>
-        <p>{wsDebug.status === "streaming" ? "Live flow is streaming. Advanced metrics are optional." : "Flow data is still collecting. Trade planning remains available."}</p>
-        <ProMetricsPanel state={state} metrics={metrics} calc={calc} wsDebug={wsDebug} now={now} />
-        <BuilderCodePanel calc={calc} />
-      </details>
+      {mode === "beginner" ? (
+        <details className="advanced-home risk-advanced-data">
+          <summary>Advanced data</summary>
+          <p>{wsDebug.status === "streaming" ? "Live flow is streaming. Advanced metrics are optional." : "Flow data is still collecting. Trade planning remains available."}</p>
+          <ProMetricsPanel state={state} metrics={metrics} calc={calc} wsDebug={wsDebug} now={now} />
+          <BuilderCodePanel calc={calc} />
+        </details>
+      ) : null}
       <p className="footer-disclaimer">Perpetual futures are risky. HypurrScope helps you plan and preview; it does not provide financial advice.</p>
     </section>
   );

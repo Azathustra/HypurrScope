@@ -3751,6 +3751,80 @@ td {
   border-color: rgba(111, 240, 198, 0.34);
 }
 
+.pro-risk-ticket {
+  border-color: rgba(111, 240, 198, 0.34);
+}
+
+.pro-ticket-sections {
+  display: grid;
+  gap: 12px;
+}
+
+.pro-ticket-section {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.pro-ticket-section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.pro-ticket-section h4 {
+  color: var(--text);
+  font-size: 0.95rem;
+  margin: 0 0 9px;
+}
+
+.pro-ticket-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pro-ticket-grid article {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  min-width: 0;
+  padding: 10px;
+}
+
+.pro-ticket-grid span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pro-ticket-grid strong {
+  color: var(--text);
+  display: block;
+  font-size: 0.92rem;
+  line-height: 1.35;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.pro-preview-actions {
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.pro-preview-unavailable {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  color: var(--soft);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  margin: 0;
+  padding: 10px;
+  width: 100%;
+}
+
 .safety-checks,
 .execution-lines {
   display: grid;
@@ -3992,6 +4066,7 @@ td {
   .ticket-result-grid,
   .beginner-outcomes,
   .pro-grid,
+  .pro-ticket-grid,
   .ticket-form-grid.two-columns,
   .ticket-form-grid.three-columns {
     grid-template-columns: 1fr;
