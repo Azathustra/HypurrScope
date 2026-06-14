@@ -10,7 +10,7 @@ const checks = [
   ["Data missing status", page.includes("not_evaluable_data_missing")],
   ["Real flow aliases", page.includes("takerBuyRatio5m") && page.includes("takerSellRatio5m") && page.includes("netBuyFlow5m") && page.includes("netSellFlow5m") && page.includes("cvd5m") && page.includes("cvd15m") && page.includes("cvd1h")],
   ["Signal proof selectors", page.includes('data-col="flow-score"') && page.includes('data-col="final-score"') && page.includes('data-testid={`closest-setup-')],
-  ["Best active and closest setup summary", page.includes("Best active setup") && page.includes("Closest setup:") && page.includes("summarySignalText")],
+  ["Trade score panel replaces scanner summary", page.includes("Trade Score") && page.includes("buildTradeScore") && page.includes("Market alignment")],
   ["Flow inputs visible in setup rows", page.includes("flowInputs") && page.includes('data-col="flow-inputs"') && page.includes("takerBuyRatio5m") && page.includes("netBuyFlow5m") && page.includes("CVD 5m")],
   ["Flow proof selectors", page.includes('data-testid={`flow-metrics-') && page.includes('data-col="taker-buy-ratio-5m"') && page.includes('data-col="net-flow-5m"') && page.includes('data-col="cvd-5m"')],
   ["Trade side mapping debug", page.includes("Trade side mapping debug") && page.includes("raw B = Bid/buy taker")],

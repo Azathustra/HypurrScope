@@ -1,46 +1,44 @@
 DOSSIER A UPLOADER SUR GITHUB
 
-Prends tout le contenu de ce dossier et mets-le a la racine du repo GitHub HypurrScope.
+Prends tout le CONTENU de ce dossier et mets-le a la racine du repo GitHub HypurrScope.
 
 Tres important:
 1. Cette version ne contient PAS app/trade.
 2. Si app/trade existe encore sur GitHub, supprime ce dossier sur GitHub.
 3. L'ancienne erreur Vercel "@nktkas/hyperliquid" venait d'un vieux fichier app/trade/lib/hl.ts.
 4. Ne garde pas de vieux fichiers melanges avec ce dossier.
-5. Il faut uploader le CONTENU de ce dossier, pas le dossier lui-meme.
+5. Il faut uploader le CONTENU du dossier, pas le dossier lui-meme.
 
 Ce qui est inclus:
 - Base stable REST/WebSocket conservee.
-- Risk Ticket refondu en profondeur.
-- Mode Debutant automatique: l'utilisateur choisit seulement BTC / ETH / HYPE via les tabs globales.
-- Aucun second selecteur Market dans le ticket.
-- En mode Debutant, l'utilisateur ne choisit plus manuellement Long/Short, Entry, Target ou Stop.
-- Le moteur scanne les donnees et propose Long/Short seulement si les conditions sont propres.
-- Etats Debutant: scanning, no_setup, wait, blocked, setup_proposed.
-- Texte "Setup propose" utilise, pas "setup valide".
-- Le stop manuel est cache dans Advanced override.
-- Si Advanced override est active, la recommandation debutant est desactivee.
-- Mode Pro: champs manuels Side, Entry, Stop, Target, Position/Risk, Leverage, Margin, Order type.
-- Mode Pro neutre: pas de conseil, pas de verdict debutant, pas de bouton "Accepter ce setup".
-- Nouveau moteur app/lib/risk/buildTradeRecommendation.ts.
-- MARKET_CONFIG BTC / ETH / HYPE avec seuils differents.
-- Target calcule uniquement depuis Target move %, jamais depuis max risk ou leverage.
+- Experience principale unique: Trade Builder + Trade Score.
+- Tabs globales BTC / ETH / HYPE.
+- L'utilisateur construit son trade: Long/Short, entry, stop, target, max risk, leverage, margin, order type.
+- HypurrScope note le trade sur 100 sans presenter ce score comme une probabilite de gain.
+- Score breakdown: risk structure /40, execution quality /25, market alignment /25, data quality /10.
+- Top reasons avec Metric, Current, Rule, Impact, Action.
+- Boutons actionnables: corriger taille, baisser levier, passer en limit order, ajouter/corriger stop ou target, actualiser les donnees.
+- Preview protegee uniquement si les blocages de securite sont corriges.
+- Donnees avancees / Expert repliees par defaut.
+
+Regles verifiees:
 - Max risk modifie seulement la taille de position.
-- Leverage modifie seulement l'estimation de liquidation/marge.
-- Preview protegee: aucun ordre n'est envoye directement.
+- Leverage modifie seulement marge/liquidation.
+- Max risk et leverage ne modifient jamais target ni stop.
+- HYPE entry 60 + target move 1% donne 60.60 en Long et 59.40 en Short.
+- Les signaux de marche faibles baissent la note mais ne bloquent pas techniquement la preview.
+- Seuls les vrais problemes de securite bloquent la preview protegee.
 
-Tests locaux passes avec le runtime Codex:
-- trade-recommendation-tests: 12/12 passed
-- risk-ticket-ux-tests: 10/10 passed
-- beginner-decision-tests: 10/10 passed
-- pro-ticket-tests: 12/12 passed
-- risk-ticket-tests: 7/7 passed
-- risk-state-tests: 7/7 passed
-- Smoke test passed
-- Data test passed
-- Signal test passed
-- UI test passed
+Tests locaux a lancer si besoin:
+- npm run test:score
+- npm run test:builder
+- npm run test:risk
+- npm run test:state
+- npm run test:smoke
+- npm run test:data
+- npm run test:signals
+- npm run test:ui
 
-Limite locale:
-- npm run build n'a pas pu etre lance ici car npm n'est pas disponible dans cet environnement et node_modules n'existe pas localement.
-- Vercel lancera npm install puis npm run build au deploiement.
+Vercel lancera automatiquement:
+- npm install
+- npm run build

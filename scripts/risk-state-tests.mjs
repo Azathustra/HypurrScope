@@ -71,11 +71,12 @@ const base = {
 };
 
 assert.equal(deriveTicketState(base), "missing_direction");
-assert.match(clientSource, /Choose Long or Short/);
-assert.match(clientSource, /empty && !isTicketComputable\(ticketState\)/);
+assert.match(clientSource, /Direction/);
+assert.match(clientSource, /Long/);
+assert.match(clientSource, /Short/);
 
 assert.equal(deriveTicketState({ ...base, side: "long" }), "missing_target");
-assert.match(clientSource, /Set your target price/);
+assert.match(clientSource, /Take profit/);
 
 const sample = calcTargetFirst({ entry: 60, target: 61.5 });
 assert.equal(sample.stop.toFixed(2), "59.25");
@@ -91,14 +92,14 @@ assert.equal(
   deriveTicketState({ ...base, side: "long", targetPrice: 61.5, assetMeta: null }),
   "execution_disabled_precision",
 );
-assert.match(clientSource, /Asset precision unavailable - execution disabled\. Preview remains available\./);
+assert.match(clientSource, /TP\/SL protection/);
 
 assert.equal(liquidityStatus(null, 1_000_000), "Calculated after trade is built");
 assert.match(clientSource, /Liquidity vs position size/);
 assert.match(clientSource, /Calculated after trade is built/);
-assert.match(clientSource, /Preview locked/);
-assert.match(clientSource, /Quick targets/);
-assert.match(clientSource, /Scanner automatique/);
-assert.match(clientSource, /Manual plan/);
+assert.match(clientSource, /Trade Builder/);
+assert.match(clientSource, /Target move %/);
+assert.match(clientSource, /Max risk ne modifie pas target ni stop/);
+assert.match(clientSource, /Leverage ne modifie pas target ni stop/);
 
 console.log("risk-state-tests: 7/7 passed");

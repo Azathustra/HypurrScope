@@ -4,15 +4,15 @@ const page = `${fs.readFileSync("app/page.tsx", "utf8")}\n${fs.readFileSync("app
 const layout = fs.readFileSync("app/layout.tsx", "utf8");
 
 const checks = [
-  ["Risk ticket scanner hero", page.includes("Scanner un setup propre.")],
+  ["Trade score hero", page.includes("Build your trade. HypurrScope scores the risk.")],
   ["Trade Builder nav", page.includes("Trade Builder")],
-  ["Trade Summary card", page.includes("Trade Summary")],
+  ["Trade Score card", page.includes("Trade Score")],
   ["BTC support", page.includes('"BTC"')],
   ["ETH support", page.includes('"ETH"')],
   ["HYPE support", page.includes('"HYPE"')],
   ["Advanced data page", page.includes("Advanced Data")],
-  ["Alerts tabs", page.includes("Presets") && page.includes("Create your own") && page.includes("My alerts")],
-  ["Wallet scanner read-only", page.includes("Read-only") && page.includes("public address only")],
+  ["Expert data panel", page.includes("Données avancées / Expert")],
+  ["Score disclaimer", page.includes("Ce score évalue la structure")],
   ["SEO title", layout.includes("HypurrScope | Hyperliquid Trade Planner")],
   ["SEO description", layout.includes("Plan BTC, ETH and HYPE Hyperliquid trades from target profit and max total risk")],
 ];
