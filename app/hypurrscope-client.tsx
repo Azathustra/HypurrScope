@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { buildBeginnerTradeDecision, type BeginnerPrimaryButton, type BeginnerReason, type BeginnerTradeDecision } from "./lib/risk/buildBeginnerTradeDecision";
 import { calculateRiskTicket as calculateRiskTicketCore } from "./lib/risk/calculateRiskTicket";
 import { riskPresetFor } from "./lib/risk/presets";
 import { getBuilderConfig } from "./lib/hyperliquid/builderCode";
@@ -2869,6 +2870,135 @@ function TargetPresetButtons({
   );
 }
 
+function beginnerButtonLabel(button: BeginnerPrimaryButton) {
+  switch (button) {
+    case "choose_market":
+      return "Choisir le marche";
+    case "refresh_data":
+      return "Refresh data";
+    case "fix_levels":
+      return "Fix levels";
+    case "auto_fix_size":
+      return "Auto-fix size";
+    case "lower_leverage":
+      return "Lower leverage";
+    case "wait_for_confirmation":
+      return "Wait for confirmation";
+    case "set_alert":
+      return "Set alert";
+    case "reduce_size":
+      return "Reduce size";
+    case "switch_to_limit":
+      return "Switch to limit order";
+    case "accept_setup":
+      return "Accepter ce setup";
+    default:
+      return null;
+  }
+}
+
+function BeginnerReasonList({ reasons }: { reasons: BeginnerReason[] }) {
+  return (
+    <div className="beginner-reasons">
+      {reasons.slice(0, 5).map((item) => (
+        <article className={`beginner-reason ${item.status}`} key={item.id}>
+          <span>{item.status === "ok" ? "OK" : item.status === "danger" ? "BLOCK" : item.status === "missing" ? "WAIT" : "CHECK"}</span>
+          <div>
+            <strong>{item.label}</strong>
+            <small>{item.value}</small>
+            <small>{item.rule}</small>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function ProtectedOrderPreview({ decision, orderType }: { decision: BeginnerTradeDecision; orderType: EntryType }) {
+  const setup = decision.setup;
+  if (!setup) return null;
+  return (
+    <div className="protected-order-preview">
+      <span>ProtectedOrderPreview</span>
+      <h4>Preview d'ordre protege</h4>
+      <div className="execution-lines">
+        <div><span>Market</span><strong>{setup.market}</strong></div>
+        <div><span>Side</span><strong>{setup.side === "long" ? "Long" : "Short"}</strong></div>
+        <div><span>Entry</span><strong>{formatUsd(setup.entry)}</strong></div>
+        <div><span>Stop loss</span><strong>{formatUsd(setup.stop)}</strong></div>
+        <div><span>Take profit</span><strong>{formatUsd(setup.target)}</strong></div>
+        <div><span>Position size</span><strong>{setup.positionSize.toFixed(4)}</strong></div>
+        <div><span>Max loss</span><strong>{formatUsd(setup.estimatedLoss)}</strong></div>
+        <div><span>Estimated fees</span><strong>{formatUsd(setup.fees)}</strong></div>
+        <div><span>Estimated slippage</span><strong>{setup.slippage.toFixed(2)} bps</strong></div>
+        <div><span>Liquidation price</span><strong>{formatUsd(setup.liquidationPrice, "Not available")}</strong></div>
+        <div><span>TP/SL attached</span><strong>Yes</strong></div>
+        <div><span>Order type</span><strong>{orderType}</strong></div>
+      </div>
+      <p className="execution-note">Cette preview ne place pas l'ordre. Elle sert seulement a verifier le stop loss et le take profit avant toute action.</p>
+    </div>
+  );
+}
+
+function BeginnerRiskTicket({ decision, orderType }: { decision: BeginnerTradeDecision; orderType: EntryType }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const buttonLabel = beginnerButtonLabel(decision.primaryButton);
+  const canAccept = decision.verdict === "setup_validated" && decision.canAcceptSetup && decision.canPreviewOrder;
+
+  useEffect(() => {
+    setPreviewOpen(false);
+  }, [decision.verdict, decision.setup?.entry, decision.setup?.stop, decision.setup?.target, decision.setup?.positionSize]);
+
+  const handleAction = () => {
+    if (canAccept) {
+      setPreviewOpen(true);
+      return;
+    }
+    if (decision.primaryButton === "refresh_data" && typeof window !== "undefined") {
+      window.location.reload();
+    }
+  };
+
+  return (
+    <aside className={`risk-mode-panel beginner-decision-card verdict-${decision.verdict}`}>
+      <span>Mode Debutant</span>
+      <h3>{decision.title}</h3>
+      <p>{decision.summary}</p>
+
+      {decision.setup ? (
+        <div className="beginner-setup-grid">
+          <article><span>Market</span><strong>{decision.setup.market}</strong></article>
+          <article><span>Side</span><strong>{decision.setup.side === "long" ? "Long" : "Short"}</strong></article>
+          <article><span>Entry</span><strong>{formatUsd(decision.setup.entry)}</strong></article>
+          <article><span>Stop loss</span><strong>{formatUsd(decision.setup.stop)}</strong></article>
+          <article><span>Take profit</span><strong>{formatUsd(decision.setup.target)}</strong></article>
+          <article><span>Position size</span><strong>{decision.setup.positionSize.toFixed(4)}</strong></article>
+          <article><span>Max risk</span><strong>{formatUsd(decision.setup.maxRisk)}</strong></article>
+          <article><span>Estimated loss</span><strong>{formatUsd(decision.setup.estimatedLoss)}</strong></article>
+          <article><span>Estimated profit</span><strong>{formatUsd(decision.setup.estimatedProfit)}</strong></article>
+          <article><span>Net reward/risk</span><strong>{decision.setup.netRewardRisk.toFixed(2)}x</strong></article>
+        </div>
+      ) : null}
+
+      <BeginnerReasonList reasons={decision.reasons} />
+
+      {buttonLabel ? (
+        <div className="ticket-actions single-primary">
+          <button
+            className={canAccept ? "primary-action" : "ghost-action"}
+            disabled={!canAccept && decision.primaryButton !== "refresh_data"}
+            onClick={handleAction}
+          >
+            {buttonLabel}
+          </button>
+        </div>
+      ) : null}
+
+      {previewOpen && canAccept ? <ProtectedOrderPreview decision={decision} orderType={orderType} /> : null}
+    </aside>
+  );
+}
+
 function RiskTicket({
   asset,
   state,
@@ -2912,6 +3042,43 @@ function RiskTicket({
   const ticketComputable = isTicketComputable(ticketState);
   const canPreview = ticketComputable && !calc.invalidationReason && Boolean(draft.side);
   const builderConfig = getBuilderConfig(false, 0);
+  const health = dataHealth(state, wsDebug, now);
+  const preset = riskPresetFor(asset.apiCoin);
+  const beginnerDecision = buildBeginnerTradeDecision({
+    market: asset.shortName,
+    side: draft.side === "Long" ? "long" : draft.side === "Short" ? "short" : null,
+    entry: calc.entryPrice,
+    stop: calc.stopLoss,
+    target: calc.targetPrice,
+    positionSize: calc.positionSizeAsset,
+    positionSizeUsd: calc.positionSizeUsd,
+    maxRisk: calc.maxTotalRiskUsd,
+    estimatedLoss: calc.estimatedTotalLossAtStopUsd,
+    estimatedProfit: calc.estimatedNetProfitUsd,
+    netRewardRisk: calc.rewardRiskNet,
+    liquidationPrice: calc.liquidationPrice,
+    fees: calc.estimatedFees,
+    slippageBps: calc.estimatedSlippageBps,
+    spreadBps: metrics.spreadBps,
+    orderBookDepthUsd: metrics.depth10Bps,
+    leverage: calc.leverage,
+    marginMode: calc.marginMode,
+    fundingPct: state.market.fundingPct,
+    openInterestUsd: state.market.oiUsd,
+    volume24hUsd: state.market.volume24hUsd,
+    price15mPct: metrics.price15m,
+    price1hPct: metrics.price1h,
+    cvd5m: metrics.cvd5m,
+    netFlow5m: metrics.netFlow5m,
+    dataFresh: health.marketStatus === "live" && health.orderBookStatus === "live",
+    assetPrecisionAvailable: Boolean(assetMeta && assetMeta.szDecimals !== null),
+    tpSlAvailable: Boolean(calc.stopLoss && calc.targetPrice && draft.side),
+    orderType: draft.entryType === "Market" ? "market" : "limit",
+    maxSpreadBps: preset.maxSpreadBps,
+    maxSlippageBps: preset.maxSlippageBps,
+    minDepthUsd: asset.thresholds.minDepthUsd,
+    minNetRewardRisk: 1.2,
+  });
   const primaryCta = derivePrimaryCta({
     ticketState,
     sideSelected: Boolean(draft.side),
@@ -3085,35 +3252,37 @@ function RiskTicket({
             </details>
           </div>
 
-          {ticketComputable ? (
-            <div className="ticket-result-grid">
-              <article>
-                <span>Position size</span>
-                <strong>{formatUsd(calc.positionSizeUsd, "Calculated after trade is built")}</strong>
-                <small>{calc.positionSizeAsset === null ? "Calculated after trade is built." : `${calc.positionSizeAsset.toFixed(4)} ${asset.shortName}`}</small>
-              </article>
-              <article>
-                <span>Potential profit</span>
-                <strong>{formatUsd(calc.estimatedNetProfitUsd, "Calculated after target is set")}</strong>
-                <small>After estimated costs if target is reached.</small>
-              </article>
-              <article>
-                <span>Reward/Risk</span>
-                <strong>{rewardRiskText(calc.rewardRiskNet)}</strong>
-                <small>Potential profit after costs {formatUsd(calc.estimatedNetProfitUsd, "Calculated after target is set")}</small>
-              </article>
-              <article>
-                <span>Max total risk</span>
-                <strong>{formatUsd(calc.estimatedTotalLossAtStopUsd, "Calculated after target is set")}</strong>
-                <small>Cost estimate {formatUsd(calc.totalEstimatedCostUsd, "Calculated after trade is built")} included.</small>
-              </article>
-            </div>
-          ) : (
-            <div className="compact-empty ticket-next-action">
-              {ticketStateNextAction(ticketState)}
-              <small>Complete this step to calculate position size, stop, costs and preview.</small>
-            </div>
-          )}
+          {mode === "pro" ? (
+            ticketComputable ? (
+              <div className="ticket-result-grid">
+                <article>
+                  <span>Position size</span>
+                  <strong>{formatUsd(calc.positionSizeUsd, "Calculated after trade is built")}</strong>
+                  <small>{calc.positionSizeAsset === null ? "Calculated after trade is built." : `${calc.positionSizeAsset.toFixed(4)} ${asset.shortName}`}</small>
+                </article>
+                <article>
+                  <span>Potential profit</span>
+                  <strong>{formatUsd(calc.estimatedNetProfitUsd, "Calculated after target is set")}</strong>
+                  <small>After estimated costs if target is reached.</small>
+                </article>
+                <article>
+                  <span>Reward/Risk</span>
+                  <strong>{rewardRiskText(calc.rewardRiskNet)}</strong>
+                  <small>Potential profit after costs {formatUsd(calc.estimatedNetProfitUsd, "Calculated after target is set")}</small>
+                </article>
+                <article>
+                  <span>Max total risk</span>
+                  <strong>{formatUsd(calc.estimatedTotalLossAtStopUsd, "Calculated after target is set")}</strong>
+                  <small>Cost estimate {formatUsd(calc.totalEstimatedCostUsd, "Calculated after trade is built")} included.</small>
+                </article>
+              </div>
+            ) : (
+              <div className="compact-empty ticket-next-action">
+                {ticketStateNextAction(ticketState)}
+                <small>Complete this step to calculate position size, stop, costs and preview.</small>
+              </div>
+            )
+          ) : null}
 
           {ticketComputable || ticketState === "invalid_target" || ticketState === "invalid_stop" ? (
             <TradeValidationWarnings warnings={calc.warnings} />
@@ -3121,20 +3290,28 @@ function RiskTicket({
           {ticketComputable && (!assetMeta || assetMetaError) ? (
             <p className="execution-note">Asset precision unavailable - execution disabled. Preview remains available.</p>
           ) : null}
-          <div className="ticket-actions single-primary ticket-main-action">
-            <button className="primary-action" disabled={primaryCta.disabled} onClick={runPrimary}>{primaryCta.label}</button>
-            {ticketComputable ? <a className="subtle-link" href={hyperliquidHref} target="_blank" rel="noreferrer">Open on Hyperliquid</a> : null}
-            <button className="subtle-button" onClick={copyPlan} disabled={!canPreview}>Copy details</button>
-          </div>
+          {mode === "pro" ? (
+            <div className="ticket-actions single-primary ticket-main-action">
+              <button className="primary-action" disabled={primaryCta.disabled} onClick={runPrimary}>{primaryCta.label}</button>
+              {ticketComputable ? <a className="subtle-link" href={hyperliquidHref} target="_blank" rel="noreferrer">Open on Hyperliquid</a> : null}
+              <button className="subtle-button" onClick={copyPlan} disabled={!canPreview}>Copy details</button>
+            </div>
+          ) : null}
         </section>
 
         <div className="risk-ticket-side">
-          <TradeSummaryCard asset={asset} calc={calc} ticketState={ticketState} />
-          <MarketSafetyChecks state={state} metrics={metrics} calc={calc} wsDebug={wsDebug} now={now} ticketState={ticketState} />
+          {mode === "beginner" ? (
+            <BeginnerRiskTicket decision={beginnerDecision} orderType={draft.entryType} />
+          ) : (
+            <>
+              <TradeSummaryCard asset={asset} calc={calc} ticketState={ticketState} />
+              <MarketSafetyChecks state={state} metrics={metrics} calc={calc} wsDebug={wsDebug} now={now} ticketState={ticketState} />
+            </>
+          )}
         </div>
       </div>
 
-      <ExecutionPreview asset={asset} calc={calc} ticketState={ticketState} onPreview={onPreview} />
+      {mode === "pro" ? <ExecutionPreview asset={asset} calc={calc} ticketState={ticketState} onPreview={onPreview} /> : null}
       <RecentTickets tickets={recentTickets} />
       <details className="advanced-home risk-advanced-data" open={mode === "pro"}>
         <summary>Advanced data</summary>

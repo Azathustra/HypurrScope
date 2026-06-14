@@ -10,6 +10,7 @@
     "test:e2e": "playwright test",
     "test:risk": "node scripts/risk-ticket-tests.mjs",
     "test:state": "node scripts/risk-state-tests.mjs",
+    "test:beginner": "node scripts/beginner-decision-tests.mjs",
     "test:smoke": "node scripts/smoke-test.mjs",
     "test:data": "node scripts/data-test.mjs",
     "test:signals": "node scripts/signal-test.mjs",

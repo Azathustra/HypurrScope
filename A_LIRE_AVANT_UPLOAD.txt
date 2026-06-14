@@ -11,6 +11,12 @@ Important:
 Correctif inclus:
 - Risk Ticket avec vraie machine d'etat.
 - Correctif TypeScript des boutons Quick targets: draft.side n'est plus lu comme null par Vercel.
+- Nouveau mode Debutant du Risk Ticket.
+- Moteur buildBeginnerTradeDecision avec verdicts: no_setup, blocked, wait, risky, setup_validated.
+- Le mode Debutant ne montre "Accepter ce setup" que si verdict setup_validated + preview possible.
+- Le clic sur "Accepter ce setup" ouvre une ProtectedOrderPreview; il n'envoie jamais un ordre directement.
+- Les raisons sont limitees a 5, et viennent des donnees de risque/marche.
+- Les setups bloques montrent seulement les 3 raisons principales.
 - Au chargement initial, le panneau de droite demande l'etape suivante au lieu d'afficher plein de "data unavailable".
 - Execution Preview affiche "Preview locked" tant que le ticket est incomplet.
 - "Try sample HYPE trade" remplit un exemple complet HYPE.
@@ -21,6 +27,7 @@ Correctif inclus:
 - Les couts n'affichent plus un faux $0.0000 quand le ticket n'est pas calculable.
 
 Tests locaux passes avec le runtime Codex:
+- beginner-decision-tests: 10/10 passed
 - risk-ticket-tests: 7/7 passed
 - risk-state-tests: 7/7 passed
 - Smoke test passed

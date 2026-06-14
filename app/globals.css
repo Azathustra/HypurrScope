@@ -3553,6 +3553,124 @@ td {
     rgba(12, 18, 16, 0.94);
 }
 
+.beginner-decision-card {
+  border-color: rgba(111, 240, 198, 0.34);
+  background:
+    linear-gradient(135deg, rgba(111, 240, 198, 0.08), rgba(12, 18, 16, 0.96)),
+    rgba(12, 18, 16, 0.96);
+}
+
+.beginner-decision-card.verdict-blocked {
+  border-color: rgba(255, 101, 121, 0.48);
+}
+
+.beginner-decision-card.verdict-wait,
+.beginner-decision-card.verdict-risky {
+  border-color: rgba(255, 201, 107, 0.42);
+}
+
+.beginner-decision-card.verdict-setup_validated {
+  border-color: rgba(111, 240, 198, 0.72);
+}
+
+.beginner-decision-card p {
+  color: var(--soft);
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+
+.beginner-setup-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 12px 0;
+}
+
+.beginner-setup-grid article {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 10px;
+}
+
+.beginner-setup-grid span,
+.beginner-reason span,
+.protected-order-preview > span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.beginner-setup-grid strong {
+  color: var(--text);
+  display: block;
+  font-size: 0.96rem;
+  margin-top: 5px;
+}
+
+.beginner-reasons {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.beginner-reason {
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 58px minmax(0, 1fr);
+  padding: 10px;
+}
+
+.beginner-reason.ok {
+  border-color: rgba(111, 240, 198, 0.32);
+}
+
+.beginner-reason.warning,
+.beginner-reason.missing {
+  border-color: rgba(255, 201, 107, 0.36);
+}
+
+.beginner-reason.danger {
+  border-color: rgba(255, 101, 121, 0.48);
+}
+
+.beginner-reason strong {
+  color: var(--text);
+  display: block;
+  font-size: 0.88rem;
+}
+
+.beginner-reason small {
+  color: var(--muted);
+  display: block;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  margin-top: 3px;
+}
+
+.protected-order-preview {
+  border: 1px solid rgba(111, 240, 198, 0.34);
+  border-radius: 8px;
+  background: rgba(111, 240, 198, 0.06);
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+}
+
+.protected-order-preview h4 {
+  color: var(--text);
+  font-size: 1rem;
+  margin: 0;
+}
+
 .risk-mode-panel h3,
 .recent-tickets h3 {
   color: var(--text);
