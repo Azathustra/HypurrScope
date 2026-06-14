@@ -12,6 +12,8 @@
     "test:state": "node scripts/risk-state-tests.mjs",
     "test:beginner": "node scripts/beginner-decision-tests.mjs",
     "test:pro": "node scripts/pro-ticket-tests.mjs",
+    "test:recommendation": "node scripts/trade-recommendation-tests.mjs",
+    "test:risk-ux": "node scripts/risk-ticket-ux-tests.mjs",
     "test:smoke": "node scripts/smoke-test.mjs",
     "test:data": "node scripts/data-test.mjs",
     "test:signals": "node scripts/signal-test.mjs",

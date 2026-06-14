@@ -12,14 +12,16 @@ for (const verdict of ["no_setup", "blocked", "wait", "risky", "setup_validated"
 }
 
 assert.match(decisionSource, /export function buildBeginnerTradeDecision/);
-assert.match(clientSource, /function BeginnerRiskTicket/);
-assert.match(clientSource, /function ProtectedOrderPreview/);
-assert.match(clientSource, /decision\.verdict === "setup_validated" && decision\.canAcceptSetup && decision\.canPreviewOrder/);
+assert.match(clientSource, /function BeginnerScannerTicket/);
+assert.match(clientSource, /function RecommendedOrderPreview/);
+assert.match(clientSource, /recommendation\.state === "setup_proposed" && recommendation\.canAcceptSetup && trade/);
 assert.match(clientSource, /Accepter ce setup/);
 assert.match(clientSource, /Preview d'ordre protege/);
 
-const acceptOccurrences = (clientSource.match(/Accepter ce setup/g) || []).length;
-assert.equal(acceptOccurrences, 1, "accept button label should appear only in controlled beginner button map");
+const scannerBlock = clientSource.slice(clientSource.indexOf("function BeginnerScannerTicket"), clientSource.indexOf("function ManualPlanFields"));
+assert.doesNotMatch(scannerBlock, /Choose Long or Short/);
+assert.doesNotMatch(scannerBlock, /Pick the direction/);
+assert.doesNotMatch(scannerBlock, /Set your target price/);
 
 assert.match(decisionSource, /Liquidation must stay safely beyond the stop/);
 assert.match(decisionSource, /Estimated loss at stop must stay within user max risk/);

@@ -39,8 +39,11 @@ assert.doesNotMatch(proBlock, /Reduce size/);
 assert.doesNotMatch(proBlock, /Switch to limit/);
 assert.doesNotMatch(proBlock, /Score de qualite/i);
 
-assert.match(clientSource, /mode === "pro"[\s\S]*?proTicketState\.canPreviewOrder[\s\S]*?Preview order/);
-assert.match(clientSource, /mode !== "pro" && \(ticketComputable/);
-assert.match(clientSource, /<ProRiskTicket ticketState=\{proTicketState\} onPreview=\{onPreview\} \/>/);
+const riskTicketBlock = clientSource.slice(clientSource.indexOf("function RiskTicket"), clientSource.indexOf("function AssetCard"));
+assert.match(riskTicketBlock, /mode === "pro"/);
+assert.match(riskTicketBlock, /<ManualPlanFields draft=\{draft\} onDraftChange=\{onDraftChange\} \/>/);
+assert.match(riskTicketBlock, /<ProRiskTicket ticketState=\{proTicketState\} onPreview=\{proPreview\} \/>/);
+assert.doesNotMatch(proBlock, /Setup propos/i);
+assert.doesNotMatch(proBlock, /Pourquoi ce setup/i);
 
 console.log("pro-ticket-tests: 12/12 passed");

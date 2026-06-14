@@ -1,8 +1,9 @@
-"use client";
+﻿"use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { buildBeginnerTradeDecision, type BeginnerPrimaryButton, type BeginnerReason, type BeginnerTradeDecision } from "./lib/risk/buildBeginnerTradeDecision";
 import { buildProTicketState, type ProTicketRawData, type ProTicketState } from "./lib/risk/buildProTicketState";
+import { buildTradeRecommendation, MARKET_CONFIG, type EntryPreference, type MetricReason, type SuggestedTrade, type TradeRecommendationResult } from "./lib/risk/buildTradeRecommendation";
 import { calculateRiskTicket as calculateRiskTicketCore } from "./lib/risk/calculateRiskTicket";
 import { riskPresetFor } from "./lib/risk/presets";
 import { getBuilderConfig } from "./lib/hyperliquid/builderCode";
@@ -380,12 +381,15 @@ type RiskTicketDraft = {
   entryType: EntryType;
   maxTotalRiskUsd: string;
   desiredRewardRisk: string;
+  targetMovePct: string;
   entryPrice: string;
   stopLoss: string;
   targetPrice: string;
   leverage: string;
   marginMode: MarginMode;
   accountEquityUsd: string;
+  entryPreference: EntryPreference;
+  beginnerManualOverride: boolean;
 };
 
 type TicketWarning = {
@@ -3194,6 +3198,249 @@ function BeginnerRiskTicket({ decision, orderType }: { decision: BeginnerTradeDe
   );
 }
 
+function reasonStatusLabel(status: MetricReason["status"]) {
+  if (status === "pass") return "OK";
+  if (status === "missing") return "Manquant";
+  if (status === "warning") return "A verifier";
+  return "Bloquant";
+}
+
+function MetricReasonCard({ item }: { item: MetricReason }) {
+  return (
+    <article className={`metric-reason-card ${item.status}`}>
+      <span>{reasonStatusLabel(item.status)}</span>
+      <div>
+        <strong>{item.label}</strong>
+        <small><b>Metric:</b> {item.label}</small>
+        <small><b>Current:</b> {item.current}</small>
+        <small><b>Required:</b> {item.required}</small>
+        <small><b>Impact:</b> {item.impact}</small>
+      </div>
+    </article>
+  );
+}
+
+function RecommendedOrderPreview({ trade }: { trade: SuggestedTrade }) {
+  return (
+    <div className="protected-order-preview">
+      <span>ProtectedOrderPreview</span>
+      <h4>Preview d'ordre protege</h4>
+      <div className="execution-lines">
+        <div><span>Market</span><strong>{trade.market}</strong></div>
+        <div><span>Side</span><strong>{trade.side === "long" ? "Long" : "Short"}</strong></div>
+        <div><span>Entry</span><strong>{formatUsd(trade.entry)}</strong></div>
+        <div><span>Stop loss</span><strong>{formatUsd(trade.stop)}</strong></div>
+        <div><span>Take profit</span><strong>{formatUsd(trade.target)}</strong></div>
+        <div><span>Position size</span><strong>{trade.positionSize.toFixed(4)}</strong></div>
+        <div><span>Max loss</span><strong>{formatUsd(trade.estimatedLoss)}</strong></div>
+        <div><span>Estimated profit</span><strong>{formatUsd(trade.estimatedProfit)}</strong></div>
+        <div><span>Fees</span><strong>{formatUsd(trade.fees)}</strong></div>
+        <div><span>Slippage</span><strong>{formatUsd(trade.slippage)}</strong></div>
+        <div><span>Liquidation</span><strong>{formatUsd(trade.liquidationPrice, "Unavailable")}</strong></div>
+        <div><span>Order type</span><strong>{trade.orderType}</strong></div>
+        <div><span>TP/SL attached</span><strong>Yes</strong></div>
+        <div><span>Reduce-only protection</span><strong>Exit orders only</strong></div>
+      </div>
+      <p className="execution-note">Cette preview ne place pas l'ordre. Elle sert uniquement a verifier le stop loss et le take profit.</p>
+    </div>
+  );
+}
+
+function BeginnerRiskControls({
+  asset,
+  draft,
+  onDraftChange,
+}: {
+  asset: AssetConfig;
+  draft: RiskTicketDraft;
+  onDraftChange: (draft: RiskTicketDraft) => void;
+}) {
+  const config = MARKET_CONFIG[asset.apiCoin];
+  return (
+    <section className="beginner-scanner-controls">
+      <div className="scanner-control-group">
+        <span>Max risk USD</span>
+        <div className="quick-row">
+          {["25", "50", "100"].map((value) => (
+            <button className={draft.maxTotalRiskUsd === value ? "active" : ""} key={value} onClick={() => onDraftChange({ ...draft, maxTotalRiskUsd: value })}>${value}</button>
+          ))}
+          <input aria-label="Custom max risk" value={draft.maxTotalRiskUsd} onChange={(event) => onDraftChange({ ...draft, maxTotalRiskUsd: event.target.value })} inputMode="decimal" />
+        </div>
+      </div>
+      <div className="scanner-control-group">
+        <span>Target move</span>
+        <div className="quick-row">
+          {config.defaultTargetMovesPct.map((value) => {
+            const label = `${value}%`;
+            return <button className={draft.targetMovePct === String(value) ? "active" : ""} key={value} onClick={() => onDraftChange({ ...draft, targetMovePct: String(value) })}>{label}</button>;
+          })}
+          <input aria-label="Custom target move" value={draft.targetMovePct} onChange={(event) => onDraftChange({ ...draft, targetMovePct: event.target.value })} inputMode="decimal" />
+        </div>
+      </div>
+      <div className="scanner-control-group">
+        <span>Risk/reward target</span>
+        <div className="quick-row">
+          {["1", "1.25", "1.5", "2"].map((value) => (
+            <button className={draft.desiredRewardRisk === value ? "active" : ""} key={value} onClick={() => onDraftChange({ ...draft, desiredRewardRisk: value })}>{value}R</button>
+          ))}
+          <input aria-label="Custom reward risk" value={draft.desiredRewardRisk} onChange={(event) => onDraftChange({ ...draft, desiredRewardRisk: event.target.value })} inputMode="decimal" />
+        </div>
+      </div>
+      <div className="scanner-control-group">
+        <span>Leverage</span>
+        <div className="quick-row">
+          {["1", "2", "3", "5"].map((value) => (
+            <button className={draft.leverage === value ? "active" : ""} key={value} onClick={() => onDraftChange({ ...draft, leverage: value })}>{value}x</button>
+          ))}
+          <input aria-label="Custom leverage" value={draft.leverage} onChange={(event) => onDraftChange({ ...draft, leverage: event.target.value })} inputMode="decimal" />
+        </div>
+      </div>
+      <div className="ticket-form-grid two-columns scanner-selects">
+        <label>
+          <span>Margin mode</span>
+          <select value={draft.marginMode} onChange={(event) => onDraftChange({ ...draft, marginMode: event.target.value as MarginMode })}>
+            <option>Isolated</option>
+            <option>Cross</option>
+          </select>
+        </label>
+        <label>
+          <span>Entry preference</span>
+          <select value={draft.entryPreference} onChange={(event) => onDraftChange({ ...draft, entryPreference: event.target.value as EntryPreference })}>
+            <option value="safer-limit">Safer limit</option>
+            <option value="market-if-strong-liquidity">Market only if liquidity is strong</option>
+          </select>
+        </label>
+      </div>
+      <details className="advanced-stop">
+        <summary>Advanced override</summary>
+        <p className="execution-note">Manual override is for advanced users. Beginner recommendation will be disabled.</p>
+        <label className="override-toggle">
+          <input type="checkbox" checked={draft.beginnerManualOverride} onChange={(event) => onDraftChange({ ...draft, beginnerManualOverride: event.target.checked })} />
+          <span>Enable manual plan mode</span>
+        </label>
+        {draft.beginnerManualOverride ? (
+          <div className="ticket-form-grid three-columns">
+            <label>
+              <span>Side</span>
+              <select value={draft.side ?? ""} onChange={(event) => onDraftChange({ ...draft, side: event.target.value ? event.target.value as TicketSide : null })}>
+                <option value="">Select side</option>
+                <option>Long</option>
+                <option>Short</option>
+              </select>
+            </label>
+            <label><span>Entry</span><input value={draft.entryPrice} onChange={(event) => onDraftChange({ ...draft, entryPrice: event.target.value })} inputMode="decimal" /></label>
+            <label><span>Stop</span><input value={draft.stopLoss} onChange={(event) => onDraftChange({ ...draft, stopLoss: event.target.value })} inputMode="decimal" /></label>
+            <label><span>Target</span><input value={draft.targetPrice} onChange={(event) => onDraftChange({ ...draft, targetPrice: event.target.value })} inputMode="decimal" /></label>
+          </div>
+        ) : null}
+      </details>
+    </section>
+  );
+}
+
+function BeginnerScannerTicket({ recommendation }: { recommendation: TradeRecommendationResult }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const trade = recommendation.recommendation;
+  useEffect(() => {
+    setPreviewOpen(false);
+  }, [recommendation.state, trade?.entry, trade?.stop, trade?.target, trade?.positionSize]);
+  return (
+    <aside className={`risk-mode-panel beginner-scanner-card state-${recommendation.state}`}>
+      <span>Recommendation Card</span>
+      <h3>{recommendation.title}</h3>
+      <p>{recommendation.summary}</p>
+      {recommendation.state === "wait" ? (
+        <div className="candidate-line">
+          <span>Candidate side</span>
+          <strong>{recommendation.longCandidate.score >= recommendation.shortCandidate.score ? "Long" : "Short"}</strong>
+          <span>Confidence</span>
+          <strong>{Math.max(recommendation.longCandidate.score, recommendation.shortCandidate.score) >= 65 ? "Medium" : "Low"}</strong>
+        </div>
+      ) : null}
+      {trade ? (
+        <div className="beginner-setup-grid">
+          <article><span>Setup</span><strong>{trade.side === "long" ? "Long" : "Short"} {trade.market}</strong></article>
+          <article><span>Entry</span><strong>{formatUsd(trade.entry)}</strong></article>
+          <article><span>Stop loss</span><strong>{formatUsd(trade.stop)}</strong></article>
+          <article><span>Take profit</span><strong>{formatUsd(trade.target)}</strong></article>
+          <article><span>Position size</span><strong>{trade.positionSize.toFixed(4)}</strong></article>
+          <article><span>Max risk</span><strong>{formatUsd(trade.maxRiskUsd)}</strong></article>
+          <article><span>Estimated loss</span><strong>{formatUsd(trade.estimatedLoss)}</strong></article>
+          <article><span>Estimated profit</span><strong>{formatUsd(trade.estimatedProfit)}</strong></article>
+          <article><span>Net reward/risk</span><strong>{trade.netRewardRisk.toFixed(2)}R</strong></article>
+          <article><span>Liquidation</span><strong>{formatUsd(trade.liquidationPrice, "Unavailable")}</strong></article>
+          <article><span>Fees</span><strong>{formatUsd(trade.fees)}</strong></article>
+          <article><span>Slippage</span><strong>{formatUsd(trade.slippage)}</strong></article>
+          <article><span>Order type</span><strong>{trade.orderType}</strong></article>
+        </div>
+      ) : null}
+      <div className="reason-section-title">{recommendation.state === "setup_proposed" ? "Pourquoi ce setup est proposé" : "Raisons"}</div>
+      <div className="beginner-reasons">
+        {recommendation.visibleReasons.slice(0, 5).map((item) => <MetricReasonCard key={item.id} item={item} />)}
+      </div>
+      <div className="ticket-actions single-primary">
+        {recommendation.state === "setup_proposed" && recommendation.canAcceptSetup && trade ? (
+          <button className="primary-action" onClick={() => setPreviewOpen(true)}>Accepter ce setup</button>
+        ) : (
+          <>
+            <button className="ghost-action" onClick={() => typeof window !== "undefined" ? window.location.reload() : undefined}>Actualiser les données</button>
+            {recommendation.state === "wait" ? <button className="ghost-action" type="button">Créer une alerte</button> : null}
+            {recommendation.state === "blocked" ? <button className="ghost-action" type="button">Réduire la taille</button> : null}
+            {recommendation.state === "blocked" ? <button className="ghost-action" type="button">Baisser le levier</button> : null}
+          </>
+        )}
+      </div>
+      {previewOpen && trade ? <RecommendedOrderPreview trade={trade} /> : null}
+    </aside>
+  );
+}
+
+function ManualPlanFields({
+  draft,
+  onDraftChange,
+}: {
+  draft: RiskTicketDraft;
+  onDraftChange: (draft: RiskTicketDraft) => void;
+}) {
+  return (
+    <section className="guided-step pro-manual-plan">
+      <div className="guided-step-head">
+        <span>Manual plan</span>
+        <h3>Mode Pro manual inputs</h3>
+      </div>
+      <div className="ticket-form-grid three-columns">
+        <label>
+          <span>Side</span>
+          <select value={draft.side ?? ""} onChange={(event) => onDraftChange({ ...draft, side: event.target.value ? event.target.value as TicketSide : null })}>
+            <option value="">Select side</option>
+            <option>Long</option>
+            <option>Short</option>
+          </select>
+        </label>
+        <label>
+          <span>Order type</span>
+          <select value={draft.entryType} onChange={(event) => onDraftChange({ ...draft, entryType: event.target.value as EntryType })}>
+            <option>Market</option>
+            <option>Limit</option>
+          </select>
+        </label>
+        <label><span>Entry</span><input value={draft.entryPrice} onChange={(event) => onDraftChange({ ...draft, entryPrice: event.target.value })} inputMode="decimal" disabled={draft.entryType === "Market"} /></label>
+        <label><span>Stop</span><input value={draft.stopLoss} onChange={(event) => onDraftChange({ ...draft, stopLoss: event.target.value })} inputMode="decimal" /></label>
+        <label><span>Target</span><input value={draft.targetPrice} onChange={(event) => onDraftChange({ ...draft, targetPrice: event.target.value })} inputMode="decimal" /></label>
+        <label><span>Max risk</span><input value={draft.maxTotalRiskUsd} onChange={(event) => onDraftChange({ ...draft, maxTotalRiskUsd: event.target.value })} inputMode="decimal" /></label>
+        <label><span>Leverage</span><input value={draft.leverage} onChange={(event) => onDraftChange({ ...draft, leverage: event.target.value })} inputMode="decimal" /></label>
+        <label>
+          <span>Margin mode</span>
+          <select value={draft.marginMode} onChange={(event) => onDraftChange({ ...draft, marginMode: event.target.value as MarginMode })}>
+            <option>Isolated</option>
+            <option>Cross</option>
+          </select>
+        </label>
+      </div>
+    </section>
+  );
+}
+
 function RiskTicket({
   asset,
   state,
@@ -3206,11 +3453,8 @@ function RiskTicket({
   recentTickets,
   ticketState,
   assetMeta,
-  assetMetaError,
-  onAssetChange,
   onDraftChange,
   onModeChange,
-  onSampleHypeTrade,
   onPreview,
 }: {
   asset: AssetConfig;
@@ -3231,49 +3475,8 @@ function RiskTicket({
   onSampleHypeTrade: () => void;
   onPreview: () => void;
 }) {
-  const entryFallback = draft.entryType === "Market" ? state.market.price : state.market.price;
-  const stopFallback = defaultStop(draft.side, calc.entryPrice);
-  const takeFallback = defaultTakeProfit(draft.side, calc.entryPrice);
-  const ticketComputable = isTicketComputable(ticketState);
-  const canPreview = ticketComputable && !calc.invalidationReason && Boolean(draft.side);
-  const builderConfig = getBuilderConfig(false, 0);
   const health = dataHealth(state, wsDebug, now);
-  const preset = riskPresetFor(asset.apiCoin);
-  const beginnerDecision = buildBeginnerTradeDecision({
-    market: asset.shortName,
-    side: draft.side === "Long" ? "long" : draft.side === "Short" ? "short" : null,
-    entry: calc.entryPrice,
-    stop: calc.stopLoss,
-    target: calc.targetPrice,
-    positionSize: calc.positionSizeAsset,
-    positionSizeUsd: calc.positionSizeUsd,
-    maxRisk: calc.maxTotalRiskUsd,
-    estimatedLoss: calc.estimatedTotalLossAtStopUsd,
-    estimatedProfit: calc.estimatedNetProfitUsd,
-    netRewardRisk: calc.rewardRiskNet,
-    liquidationPrice: calc.liquidationPrice,
-    fees: calc.estimatedFees,
-    slippageBps: calc.estimatedSlippageBps,
-    spreadBps: metrics.spreadBps,
-    orderBookDepthUsd: metrics.depth10Bps,
-    leverage: calc.leverage,
-    marginMode: calc.marginMode,
-    fundingPct: state.market.fundingPct,
-    openInterestUsd: state.market.oiUsd,
-    volume24hUsd: state.market.volume24hUsd,
-    price15mPct: metrics.price15m,
-    price1hPct: metrics.price1h,
-    cvd5m: metrics.cvd5m,
-    netFlow5m: metrics.netFlow5m,
-    dataFresh: health.marketStatus === "live" && health.orderBookStatus === "live",
-    assetPrecisionAvailable: Boolean(assetMeta && assetMeta.szDecimals !== null),
-    tpSlAvailable: Boolean(calc.stopLoss && calc.targetPrice && draft.side),
-    orderType: draft.entryType === "Market" ? "market" : "limit",
-    maxSpreadBps: preset.maxSpreadBps,
-    maxSlippageBps: preset.maxSlippageBps,
-    minDepthUsd: asset.thresholds.minDepthUsd,
-    minNetRewardRisk: 1.2,
-  });
+  const ticketComputable = isTicketComputable(ticketState);
   const proTicketState = buildProTicketStateForUi({
     asset,
     state,
@@ -3285,47 +3488,56 @@ function RiskTicket({
     assetMeta,
     ticketState,
   });
-  const primaryCta = derivePrimaryCta({
-    ticketState,
-    sideSelected: Boolean(draft.side),
-    targetPresent: parsePositiveNumber(draft.targetPrice) !== null,
-    maxTotalRiskPresent: parsePositiveNumber(draft.maxTotalRiskUsd) !== null,
-    ticketInvalid: Boolean(calc.invalidationReason) || ticketState === "invalid_target" || ticketState === "invalid_stop" || ticketState === "missing_entry",
-    realExecutionEnabled: getHyperliquidConfig().enableRealExecution,
-    walletConnected: false,
-    builderEnabled: builderConfig.enabled,
-    builderApproved: builderConfig.status === "approved",
+  const recommendation = buildTradeRecommendation({
+    selectedMarket: asset.apiCoin,
+    price: state.market.price,
+    bestBid: state.book?.bestBid ?? null,
+    bestAsk: state.book?.bestAsk ?? null,
+    midPrice: state.market.midPx,
+    price15mPct: metrics.price15m,
+    price1hPct: metrics.price1h,
+    oi15mPct: metrics.oi15m,
+    fundingPct: state.market.fundingPct,
+    spreadBps: metrics.spreadBps,
+    depth10BpsUsd: metrics.depth10Bps,
+    depth25BpsUsd: metrics.depth25Bps,
+    volume24hUsd: state.market.volume24hUsd,
+    takerBuyRatio5m: metrics.takerBuyRatio5m,
+    takerSellRatio5m: metrics.takerSellRatio5m,
+    netBuyFlow5m: metrics.netBuyFlow5m,
+    netSellFlow5m: metrics.netSellFlow5m,
+    cvd5m: metrics.cvd5m,
+    cvd15m: metrics.cvd15m,
+    dataFresh: health.marketStatus === "live",
+    pricingAvailable: health.marketStatus === "live" && state.market.price !== null,
+    orderBookAvailable: health.orderBookStatus === "live",
+    assetPrecisionAvailable: Boolean(assetMeta && assetMeta.szDecimals !== null),
+    tpSlAvailable: Boolean(assetMeta && assetMeta.szDecimals !== null),
+    maxRiskUsd: parsePositiveNumber(draft.maxTotalRiskUsd),
+    targetMovePct: parsePositiveNumber(draft.targetMovePct),
+    desiredRewardRisk: parsePositiveNumber(draft.desiredRewardRisk),
+    leverage: parsePositiveNumber(draft.leverage),
+    marginMode: draft.marginMode === "Cross" ? "cross" : "isolated",
+    entryPreference: draft.entryPreference,
   });
   const hyperliquidHref = `https://app.hyperliquid.xyz/trade/${asset.apiCoin}`;
-  const copyPlan = () => {
-    if (typeof navigator === "undefined" || !navigator.clipboard) return;
-    void navigator.clipboard.writeText(ticketText(asset, calc));
-  };
-  const runPrimary = () => {
-    if (mode === "pro") {
-      if (proTicketState.canPreviewOrder) onPreview();
-      return;
-    }
-    if (primaryCta.disabled) return;
-    if (primaryCta.action === "copy") copyPlan();
-    else onPreview();
+  const proPreview = () => {
+    if (proTicketState.canPreviewOrder) onPreview();
   };
 
   return (
     <section className="risk-ticket-hero">
-      <div className="risk-ticket-copy">
-        <span>Risk-first execution for Hyperliquid</span>
-        <h1>Calculate your trade before you enter.</h1>
-        <p>Choose your target profit and max total risk. HypurrScope calculates position size, stop loss, liquidation distance, fees and execution preview for Hyperliquid.</p>
-        <div className="hero-actions">
-          {mode === "pro" ? (
-            proTicketState.canPreviewOrder ? <button className="ghost-action" onClick={runPrimary}>Preview order</button> : null
-          ) : (
-            <>
-              <button className="ghost-action" onClick={runPrimary} disabled={primaryCta.disabled}>{primaryCta.label}</button>
-              <button className="ghost-action" onClick={onSampleHypeTrade}>Try sample HYPE trade</button>
-            </>
-          )}
+      <div className="risk-ticket-copy scanner-hero-copy">
+        <span>{mode === "beginner" ? `Mode Débutant — ${asset.shortName}` : `Mode Pro — ${asset.shortName}`}</span>
+        <h1>{mode === "beginner" ? "Scanner un setup propre." : "Lire les données et décider seul."}</h1>
+        <p>
+          {mode === "beginner"
+            ? "HypurrScope analyse les données et propose un setup uniquement si les conditions sont suffisamment propres."
+            : "Le mode Pro affiche le plan, le risque, l'exécution, le marché, le flow et la qualité des données sans recommandation."}
+        </p>
+        <div className="mode-toggle risk-mode-top" aria-label="Risk ticket mode">
+          <button className={mode === "beginner" ? "active" : ""} onClick={() => onModeChange("beginner")}>Beginner</button>
+          <button className={mode === "pro" ? "active" : ""} onClick={() => onModeChange("pro")}>Pro</button>
         </div>
         <p className="risk-disclaimer">Perpetual futures are risky. This is a planning tool, not financial advice.</p>
       </div>
@@ -3335,170 +3547,61 @@ function RiskTicket({
           <DataHealthBar state={state} wsDebug={wsDebug} now={now} />
           <div className="risk-ticket-head">
             <div>
-              <span>Trade Builder</span>
-              <h2>{asset.shortName} {draft.side || "Choose direction"}</h2>
+              <span>{mode === "beginner" ? "Scanner automatique" : "Manual plan"}</span>
+              <h2>{mode === "beginner" ? `Mode Débutant — ${asset.shortName}` : `Mode Pro — ${asset.shortName}`}</h2>
             </div>
-            <div className="mode-toggle" aria-label="Risk ticket mode">
-              <button className={mode === "beginner" ? "active" : ""} onClick={() => onModeChange("beginner")}>Beginner</button>
-              <button className={mode === "pro" ? "active" : ""} onClick={() => onModeChange("pro")}>Pro</button>
-            </div>
+            <a className="subtle-link" href={hyperliquidHref} target="_blank" rel="noreferrer">Open on Hyperliquid</a>
           </div>
 
-          <div className="ticket-stepper" aria-label="Trade builder steps">
-            <div className="active"><span>1</span><strong>Choose market & direction</strong><small>Pick the direction you want to trade.</small></div>
-            <div className={draft.side ? "active" : ""}><span>2</span><strong>Set your target</strong><small>Start with where you think price can go.</small></div>
-            <div className={!calc.invalidationReason && draft.side ? "active" : ""}><span>3</span><strong>Choose your max risk</strong><small>HypurrScope sizes the position.</small></div>
-          </div>
-
-          <div className="guided-step">
-            <div className="guided-step-head">
-              <span>Step 1</span>
-              <h3>Choose market & direction</h3>
-              <p>Pick the direction you want to trade.</p>
-            </div>
-            <div className="ticket-form-grid two-columns">
-              <label>
-                <span>Market</span>
-                <select value={asset.apiCoin} onChange={(event) => onAssetChange(event.target.value as ApiCoin)}>
-                  {ASSETS.map((row) => <option key={row.apiCoin} value={row.apiCoin}>{row.shortName}</option>)}
-                </select>
-              </label>
-              <label>
-                <span>Direction</span>
-                <select value={draft.side ?? ""} onChange={(event) => onDraftChange({ ...draft, side: event.target.value ? event.target.value as TicketSide : null })}>
-                  <option value="">Choose Long or Short</option>
-                  <option>Long</option>
-                  <option>Short</option>
-                </select>
-              </label>
-            </div>
-          </div>
-
-          <div className="guided-step">
-            <div className="guided-step-head">
-              <span>Step 2</span>
-              <h3>Set your target</h3>
-              <p>Your target price for this trade.</p>
-            </div>
-            <div className="ticket-form-grid three-columns">
-              <label>
-                <span>Entry type</span>
-                <select value={draft.entryType} onChange={(event) => onDraftChange({ ...draft, entryType: event.target.value as EntryType })}>
-                  <option>Market</option>
-                  <option>Limit</option>
-                </select>
-              </label>
-              <label>
-                <span>Entry price</span>
-                <input value={draft.entryPrice} onChange={(event) => onDraftChange({ ...draft, entryPrice: event.target.value })} placeholder={formatPriceInput(entryFallback)} disabled={draft.entryType === "Market"} inputMode="decimal" />
-              </label>
-              <label>
-                <span>Target price</span>
-                <input value={draft.targetPrice} onChange={(event) => onDraftChange({ ...draft, targetPrice: event.target.value })} placeholder={formatPriceInput(takeFallback)} inputMode="decimal" />
-              </label>
-            </div>
-            <TargetPresetButtons asset={asset} state={state} draft={draft} assetMeta={assetMeta} onDraftChange={onDraftChange} />
-            <div className="potential-move">{potentialMoveText(calc)}</div>
-          </div>
-
-          <div className="guided-step">
-            <div className="guided-step-head">
-              <span>Step 3</span>
-              <h3>Choose your max risk</h3>
-              <p>The total risk budget for this trade, including estimated costs.</p>
-            </div>
-            <div className="quick-row" aria-label="Max total risk presets">
-              {["25", "50", "100"].map((value) => (
-                <button className={draft.maxTotalRiskUsd === value ? "active" : ""} key={value} onClick={() => onDraftChange({ ...draft, maxTotalRiskUsd: value })}>${value}</button>
-              ))}
-              <span>or custom below</span>
-            </div>
-            <div className="quick-row" aria-label="Reward risk presets">
-              <span>Reward/Risk</span>
-              {["1.5", "2", "3"].map((value) => (
-                <button className={draft.desiredRewardRisk === value ? "active" : ""} key={value} onClick={() => onDraftChange({ ...draft, desiredRewardRisk: value })}>{value}x</button>
-              ))}
-            </div>
-            <div className="quick-row" aria-label="Leverage presets">
-              <span>Leverage</span>
-              {["1", "2", "3"].map((value) => (
-                <button className={draft.leverage === value ? "active" : ""} key={value} onClick={() => onDraftChange({ ...draft, leverage: value })}>{value}x</button>
-              ))}
-            </div>
-            <div className="ticket-form-grid three-columns">
-              <label className="max-loss-field">
-                <span>Max total risk</span>
-                <input value={draft.maxTotalRiskUsd} onChange={(event) => onDraftChange({ ...draft, maxTotalRiskUsd: event.target.value })} inputMode="decimal" />
-              </label>
-              <label>
-                <span>Reward/Risk</span>
-                <input value={draft.desiredRewardRisk} onChange={(event) => onDraftChange({ ...draft, desiredRewardRisk: event.target.value })} disabled={draft.ticketMode === "manual"} inputMode="decimal" />
-              </label>
-              <label>
-                <span>Leverage</span>
-                <input value={draft.leverage} onChange={(event) => onDraftChange({ ...draft, leverage: event.target.value })} inputMode="decimal" />
-              </label>
-            </div>
-            <details className="advanced-stop">
-              <summary>Advanced: set stop manually</summary>
-              <div className="ticket-form-grid three-columns">
-                <label>
-                  <span>Mode</span>
-                  <select value={draft.ticketMode} onChange={(event) => onDraftChange({ ...draft, ticketMode: event.target.value as RiskTicketDraft["ticketMode"] })}>
-                    <option value="target-first">Target first</option>
-                    <option value="manual">Manual stop</option>
-                  </select>
-                </label>
-                <label>
-                  <span>Stop price</span>
-                  <input value={draft.stopLoss} onChange={(event) => onDraftChange({ ...draft, stopLoss: event.target.value })} placeholder={formatPriceInput(calc.stopLoss ?? stopFallback)} disabled={draft.ticketMode === "target-first"} inputMode="decimal" />
-                </label>
-                <label>
-                  <span>Account equity USD</span>
-                  <input value={draft.accountEquityUsd} onChange={(event) => onDraftChange({ ...draft, accountEquityUsd: event.target.value })} placeholder="Optional" inputMode="decimal" />
-                </label>
-                <label>
-                  <span>Margin mode</span>
-                  <select value={draft.marginMode} onChange={(event) => onDraftChange({ ...draft, marginMode: event.target.value as MarginMode })}>
-                    <option>Isolated</option>
-                    <option>Cross</option>
-                  </select>
-                </label>
-              </div>
-            </details>
-          </div>
-
-          {mode !== "pro" && (ticketComputable || ticketState === "invalid_target" || ticketState === "invalid_stop") ? (
-            <TradeValidationWarnings warnings={calc.warnings} />
-          ) : null}
-          {mode !== "pro" && ticketComputable && (!assetMeta || assetMetaError) ? (
-            <p className="execution-note">Asset precision unavailable - execution disabled. Preview remains available.</p>
-          ) : null}
+          {mode === "beginner" ? (
+            <>
+              <BeginnerRiskControls asset={asset} draft={draft} onDraftChange={onDraftChange} />
+              {draft.beginnerManualOverride ? (
+                <aside className="risk-mode-panel manual-plan-card">
+                  <span>Manual plan mode</span>
+                  <h3>Manual plan mode</h3>
+                  <p>Manual override is for advanced users. Beginner recommendation will be disabled.</p>
+                </aside>
+              ) : null}
+              <details className="advanced-home risk-advanced-data">
+                <summary>Voir le détail des données</summary>
+                <p>{wsDebug.status === "streaming" ? "Live flow is streaming." : "Flow data is still collecting."}</p>
+                <ProMetricsPanel state={state} metrics={metrics} calc={calc} wsDebug={wsDebug} now={now} />
+              </details>
+            </>
+          ) : (
+            <>
+              <ManualPlanFields draft={draft} onDraftChange={onDraftChange} />
+              {ticketComputable ? (
+                <div className="ticket-result-grid">
+                  <article><span>Position size</span><strong>{formatUsd(calc.positionSizeUsd, "Unavailable")}</strong><small>{calc.positionSizeAsset === null ? "Unavailable" : `${calc.positionSizeAsset.toFixed(4)} ${asset.shortName}`}</small></article>
+                  <article><span>Estimated profit</span><strong>{formatUsd(calc.estimatedNetProfitUsd, "Unavailable")}</strong><small>After estimated costs.</small></article>
+                  <article><span>Net R/R</span><strong>{rewardRiskText(calc.rewardRiskNet)}</strong><small>Net reward/risk after costs.</small></article>
+                  <article><span>Estimated loss</span><strong>{formatUsd(calc.estimatedTotalLossAtStopUsd, "Unavailable")}</strong><small>Included in risk model.</small></article>
+                </div>
+              ) : (
+                <div className="compact-empty ticket-next-action">
+                  Complete the manual plan to calculate position size, costs and preview.
+                </div>
+              )}
+            </>
+          )}
         </section>
 
         <div className="risk-ticket-side">
           {mode === "beginner" ? (
-            <BeginnerRiskTicket decision={beginnerDecision} orderType={draft.entryType} />
+            draft.beginnerManualOverride ? null : <BeginnerScannerTicket recommendation={recommendation} />
           ) : (
-            <ProRiskTicket ticketState={proTicketState} onPreview={onPreview} />
+            <ProRiskTicket ticketState={proTicketState} onPreview={proPreview} />
           )}
         </div>
       </div>
 
       <RecentTickets tickets={recentTickets} />
-      {mode === "beginner" ? (
-        <details className="advanced-home risk-advanced-data">
-          <summary>Advanced data</summary>
-          <p>{wsDebug.status === "streaming" ? "Live flow is streaming. Advanced metrics are optional." : "Flow data is still collecting. Trade planning remains available."}</p>
-          <ProMetricsPanel state={state} metrics={metrics} calc={calc} wsDebug={wsDebug} now={now} />
-          <BuilderCodePanel calc={calc} />
-        </details>
-      ) : null}
       <p className="footer-disclaimer">Perpetual futures are risky. HypurrScope helps you plan and preview; it does not provide financial advice.</p>
     </section>
   );
 }
-
 function AssetCard({
   asset,
   state,
@@ -4415,12 +4518,15 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
     entryType: "Market",
     maxTotalRiskUsd: "100",
     desiredRewardRisk: "2",
+    targetMovePct: "0.5",
     entryPrice: "",
     stopLoss: "",
     targetPrice: "",
     leverage: "3",
     marginMode: "Isolated",
     accountEquityUsd: "",
+    entryPreference: "safer-limit",
+    beginnerManualOverride: false,
   });
   const [recentTickets, setRecentTickets] = useState<RecentTicket[]>([]);
 
@@ -5135,12 +5241,15 @@ export default function HypurrScopeClient({ initialAssets: initialAssetState }: 
       entryType: "Market",
       maxTotalRiskUsd: "100",
       desiredRewardRisk: "2",
+      targetMovePct: "1",
       entryPrice: "",
       stopLoss: "",
       targetPrice,
       leverage: "2",
       marginMode: "Isolated",
       accountEquityUsd: "",
+      entryPreference: "safer-limit",
+      beginnerManualOverride: false,
     });
   }
 

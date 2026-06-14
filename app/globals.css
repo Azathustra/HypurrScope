@@ -3434,6 +3434,139 @@ td {
   margin-top: 10px;
 }
 
+.beginner-scanner-controls {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.scanner-control-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+}
+
+.scanner-control-group > span,
+.reason-section-title {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.scanner-control-group input,
+.scanner-selects select {
+  min-height: 36px;
+}
+
+.scanner-selects {
+  margin-top: 0;
+}
+
+.override-toggle {
+  align-items: center;
+  color: var(--text);
+  display: flex;
+  font-weight: 800;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.manual-plan-card,
+.pro-manual-plan {
+  margin-top: 14px;
+}
+
+.beginner-scanner-card {
+  border-color: rgba(111, 240, 198, 0.28);
+}
+
+.beginner-scanner-card.state-setup_proposed {
+  background: linear-gradient(180deg, rgba(111, 240, 198, 0.08), rgba(255, 255, 255, 0.025));
+}
+
+.beginner-scanner-card.state-blocked {
+  border-color: rgba(255, 101, 121, 0.36);
+}
+
+.candidate-line {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 12px 0;
+  padding: 10px;
+}
+
+.candidate-line span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.candidate-line strong {
+  color: var(--text);
+}
+
+.metric-reason-card {
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 78px minmax(0, 1fr);
+  padding: 10px;
+}
+
+.metric-reason-card.pass {
+  border-color: rgba(111, 240, 198, 0.32);
+}
+
+.metric-reason-card.warning,
+.metric-reason-card.missing {
+  border-color: rgba(255, 201, 107, 0.36);
+}
+
+.metric-reason-card.fail {
+  border-color: rgba(255, 101, 121, 0.48);
+}
+
+.metric-reason-card > span {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.metric-reason-card strong,
+.metric-reason-card small {
+  display: block;
+}
+
+.metric-reason-card strong {
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.metric-reason-card small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  margin-top: 3px;
+}
+
+.risk-advanced-data {
+  margin-top: 14px;
+}
+
 .mode-toggle {
   border: 1px solid var(--line);
   border-radius: 8px;

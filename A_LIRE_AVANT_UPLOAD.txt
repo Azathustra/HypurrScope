@@ -2,37 +2,36 @@ DOSSIER A UPLOADER SUR GITHUB
 
 Prends tout le contenu de ce dossier et mets-le a la racine du repo GitHub HypurrScope.
 
-Important:
+Tres important:
 1. Cette version ne contient PAS app/trade.
 2. Si app/trade existe encore sur GitHub, supprime ce dossier sur GitHub.
 3. L'ancienne erreur Vercel "@nktkas/hyperliquid" venait d'un vieux fichier app/trade/lib/hl.ts.
 4. Ne garde pas de vieux fichiers melanges avec ce dossier.
+5. Il faut uploader le CONTENU de ce dossier, pas le dossier lui-meme.
 
-Correctif inclus:
-- Risk Ticket avec vraie machine d'etat.
-- Correctif TypeScript des boutons Quick targets: draft.side n'est plus lu comme null par Vercel.
-- Nouveau mode Debutant du Risk Ticket.
-- Nouveau mode Pro du Risk Ticket.
-- Moteur buildProTicketState: aucune recommandation, aucun verdict, seulement donnees brutes et blocages techniques neutres.
-- Composant ProRiskTicket avec sections: Trade Plan, Risk, Execution, Market Data, Data Quality, Advanced Raw Data.
-- Le mode Pro n'affiche pas "Accepter ce setup", pas de score qualite, pas de verdict, pas de conseil directionnel.
-- En mode Pro, le bouton disponible est uniquement "Preview order", et seulement si les controles techniques critiques passent.
-- Si la preview Pro est bloquee, le message reste technique: "Order preview unavailable: ...".
-- Moteur buildBeginnerTradeDecision avec verdicts: no_setup, blocked, wait, risky, setup_validated.
-- Le mode Debutant ne montre "Accepter ce setup" que si verdict setup_validated + preview possible.
-- Le clic sur "Accepter ce setup" ouvre une ProtectedOrderPreview; il n'envoie jamais un ordre directement.
-- Les raisons sont limitees a 5, et viennent des donnees de risque/marche.
-- Les setups bloques montrent seulement les 3 raisons principales.
-- Au chargement initial, le panneau de droite demande l'etape suivante au lieu d'afficher plein de "data unavailable".
-- Execution Preview affiche "Preview locked" tant que le ticket est incomplet.
-- "Try sample HYPE trade" remplit un exemple complet HYPE.
-- Quick targets apres selection Long/Short.
-- Metadata Hyperliquid perp { type: "meta" } pour szDecimals.
-- Si la precision asset manque, seule l'execution est bloquee; la preview reste calculable.
-- Market Safety Checks separe Market readiness et Ticket-specific checks.
-- Les couts n'affichent plus un faux $0.0000 quand le ticket n'est pas calculable.
+Ce qui est inclus:
+- Base stable REST/WebSocket conservee.
+- Risk Ticket refondu en profondeur.
+- Mode Debutant automatique: l'utilisateur choisit seulement BTC / ETH / HYPE via les tabs globales.
+- Aucun second selecteur Market dans le ticket.
+- En mode Debutant, l'utilisateur ne choisit plus manuellement Long/Short, Entry, Target ou Stop.
+- Le moteur scanne les donnees et propose Long/Short seulement si les conditions sont propres.
+- Etats Debutant: scanning, no_setup, wait, blocked, setup_proposed.
+- Texte "Setup propose" utilise, pas "setup valide".
+- Le stop manuel est cache dans Advanced override.
+- Si Advanced override est active, la recommandation debutant est desactivee.
+- Mode Pro: champs manuels Side, Entry, Stop, Target, Position/Risk, Leverage, Margin, Order type.
+- Mode Pro neutre: pas de conseil, pas de verdict debutant, pas de bouton "Accepter ce setup".
+- Nouveau moteur app/lib/risk/buildTradeRecommendation.ts.
+- MARKET_CONFIG BTC / ETH / HYPE avec seuils differents.
+- Target calcule uniquement depuis Target move %, jamais depuis max risk ou leverage.
+- Max risk modifie seulement la taille de position.
+- Leverage modifie seulement l'estimation de liquidation/marge.
+- Preview protegee: aucun ordre n'est envoye directement.
 
 Tests locaux passes avec le runtime Codex:
+- trade-recommendation-tests: 12/12 passed
+- risk-ticket-ux-tests: 10/10 passed
 - beginner-decision-tests: 10/10 passed
 - pro-ticket-tests: 12/12 passed
 - risk-ticket-tests: 7/7 passed

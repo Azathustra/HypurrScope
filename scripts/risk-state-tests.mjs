@@ -97,7 +97,8 @@ assert.equal(liquidityStatus(null, 1_000_000), "Calculated after trade is built"
 assert.match(clientSource, /Liquidity vs position size/);
 assert.match(clientSource, /Calculated after trade is built/);
 assert.match(clientSource, /Preview locked/);
-assert.match(clientSource, /Try sample HYPE trade/);
 assert.match(clientSource, /Quick targets/);
+assert.match(clientSource, /Scanner automatique/);
+assert.match(clientSource, /Manual plan/);
 
 console.log("risk-state-tests: 7/7 passed");

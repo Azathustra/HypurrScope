@@ -4,7 +4,7 @@ const page = `${fs.readFileSync("app/page.tsx", "utf8")}\n${fs.readFileSync("app
 const layout = fs.readFileSync("app/layout.tsx", "utf8");
 
 const checks = [
-  ["Trade planner hero", page.includes("Calculate your trade before you enter.")],
+  ["Risk ticket scanner hero", page.includes("Scanner un setup propre.")],
   ["Trade Builder nav", page.includes("Trade Builder")],
   ["Trade Summary card", page.includes("Trade Summary")],
   ["BTC support", page.includes('"BTC"')],
