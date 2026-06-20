@@ -8,21 +8,11 @@ import { useAuth } from "@/components/auth-provider";
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { isLoggedIn, isLoading, login } = useAuth();
+  const { isLoggedIn, login } = useAuth();
   const isPublicPage = pathname === "/";
 
   if (isPublicPage || isLoggedIn) {
     return <>{children}</>;
-  }
-
-  if (isLoading) {
-    return (
-      <div className="premium-card min-h-[420px] rounded-[22px] p-8">
-        <div className="h-5 w-40 animate-pulse rounded-full bg-white/10" />
-        <div className="mt-6 h-10 max-w-xl animate-pulse rounded-full bg-white/10" />
-        <div className="mt-4 h-4 max-w-2xl animate-pulse rounded-full bg-white/10" />
-      </div>
-    );
   }
 
   return (

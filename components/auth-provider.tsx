@@ -4,7 +4,6 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 type AuthContextValue = {
   isLoggedIn: boolean;
-  isLoading: boolean;
   login: () => void;
   logout: () => void;
 };
@@ -14,17 +13,14 @@ const storageKey = "insider-crypto-member";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     setIsLoggedIn(window.localStorage.getItem(storageKey) === "active");
-    setIsLoading(false);
   }, []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       isLoggedIn,
-      isLoading,
       login: () => {
         window.localStorage.setItem(storageKey, "active");
         setIsLoggedIn(true);
