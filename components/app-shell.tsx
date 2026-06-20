@@ -8,6 +8,8 @@ import { MobileNav } from "@/components/mobile-nav";
 import { AuthProvider } from "@/components/auth-provider";
 import { AuthGate } from "@/components/auth-gate";
 
+const publicPrefixes = ["/", "/pricing", "/methodologie", "/research", "/about", "/faq", "/legal", "/login", "/signup"];
+
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <AuthProvider>
@@ -18,8 +20,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function ShellContent({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const isPublicRoute = publicPrefixes.some((prefix) => pathname === prefix || (prefix !== "/" && pathname.startsWith(prefix)));
 
-  if (pathname === "/") {
+  if (isPublicRoute) {
     return <div className="min-h-screen bg-ink">{children}</div>;
   }
 

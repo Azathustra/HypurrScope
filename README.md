@@ -1,49 +1,154 @@
-# Insider Crypto
+# Insider Crypto / HypurrScope
 
-Site web crypto/research premium construit avec Next.js, TypeScript, Tailwind CSS, Recharts et Lucide React.
+SaaS crypto research premium en Next.js 15, TypeScript, Tailwind, Supabase et Stripe.
 
-## Pages incluses
+## Stack
 
-- `/` : page d'accueil publique avec accès premium simulé
-- `/portfolio` : portefeuille Insider Crypto, allocations, transactions, performance et onglets d'analyse
-- `/cryptos` : table de cryptos monitorées
-- `/hyperliquid` : dashboard HYPE conservé dans le code, non affiché dans la navigation
-- `/feed` : alpha feed filtrable
-- `/research` : moteur de recherche visuel
-- `/formation` : parcours de formation premium
+- Next.js 15 App Router
+- TypeScript strict
+- Tailwind CSS
+- Lucide React
+- Recharts
+- Supabase Auth + PostgreSQL + RLS
+- Stripe Billing + Customer Portal + webhooks
+- Zod
+- React Hook Form
+- Date-fns
+- Sonner
 
-## Accès membre
-
-La home reste publique. Les autres pages sont verrouillées tant que l'utilisateur n'a pas activé l'accès premium simulé.
-
-Cette logique est volontairement côté frontend pour la maquette. Elle peut ensuite être remplacée par une vraie intégration Auth + Stripe.
-
-## Installation
+## Commandes
 
 ```bash
 pnpm install
 pnpm dev
-```
-
-Puis ouvrir :
-
-```txt
-http://localhost:3000
-```
-
-## Build production
-
-```bash
 pnpm build
 pnpm start
 ```
 
-## Stack
+## Variables d'environnement
 
-- Next.js 15
-- React 19
-- TypeScript
-- Tailwind CSS
-- Recharts
-- Lucide React
-- Données mockées locales dans `lib/mock-data.ts`
+Copier `.env.example` vers `.env.local` :
+
+```bash
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_MEMBER_MONTHLY=
+STRIPE_PRICE_MEMBER_YEARLY=
+STRIPE_PRICE_DESK_YEARLY=
+NEXT_PUBLIC_DEMO_ADMIN=false
+```
+
+## Supabase
+
+1. Créer un projet Supabase.
+2. Copier `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+3. Copier `SUPABASE_SERVICE_ROLE_KEY` côté serveur uniquement.
+4. Exécuter `supabase/schema.sql` dans SQL Editor.
+5. Activer l'auth email/password.
+6. Définir les admins via `profiles.role = 'admin'`.
+
+Le schéma contient :
+
+- `profiles`
+- `subscriptions`
+- `research_posts`
+- `alpha_signals`
+- `portfolios`
+- `portfolio_allocations`
+- `portfolio_transactions`
+- `portfolio_performance_points`
+- `reports`
+- `bookmarks`
+
+RLS est activé sur les tables sensibles. Les contenus premium doivent être servis côté serveur après vérification du plan.
+
+## Stripe
+
+Créer 3 produits/prix :
+
+- `member_monthly` : 49 €/mois
+- `member_yearly` : 399 €/an
+- `desk` : 990 €/an ou sur demande
+
+Renseigner :
+
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_PRICE_MEMBER_MONTHLY`
+- `STRIPE_PRICE_MEMBER_YEARLY`
+- `STRIPE_PRICE_DESK_YEARLY`
+
+Configurer le webhook Stripe vers :
+
+```txt
+https://votre-domaine.com/api/stripe/webhook
+```
+
+Événements suivis :
+
+- `checkout.session.completed`
+- `customer.subscription.created`
+- `customer.subscription.updated`
+- `customer.subscription.deleted`
+- `invoice.payment_succeeded`
+- `invoice.payment_failed`
+
+## Routes
+
+Publiques :
+
+- `/`
+- `/pricing`
+- `/methodologie`
+- `/research`
+- `/research/[slug]`
+- `/about`
+- `/faq`
+- `/legal/mentions-legales`
+- `/legal/cgu`
+- `/legal/confidentialite`
+- `/legal/risques`
+- `/login`
+- `/signup`
+
+Membres :
+
+- `/dashboard`
+- `/feed`
+- `/portfolios`
+- `/portfolios/[slug]`
+- `/projects`
+- `/projects/[slug]`
+- `/hyperliquid`
+- `/reports`
+- `/formations`
+- `/account`
+- `/account/billing`
+
+Admin :
+
+- `/admin`
+- `/admin/posts`
+- `/admin/posts/new`
+- `/admin/posts/[id]/edit`
+- `/admin/portfolios`
+- `/admin/signals`
+- `/admin/users`
+- `/admin/subscriptions`
+
+API :
+
+- `/api/stripe/create-checkout-session`
+- `/api/stripe/create-portal-session`
+- `/api/stripe/webhook`
+- `/api/admin/posts`
+- `/api/admin/portfolios`
+- `/api/admin/signals`
+
+## Disclaimer
+
+Contenu fourni à titre informatif et éducatif. Ne constitue pas un conseil en investissement personnalisé. Les crypto-actifs sont risqués.

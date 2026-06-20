@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { Toaster } from "sonner";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 
@@ -13,6 +14,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="fr">
       <body>
         <AppShell>{children}</AppShell>
+        <Toaster theme="dark" richColors position="top-right" />
       </body>
     </html>
   );
