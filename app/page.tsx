@@ -1,18 +1,30 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import {
   ArrowRight,
   Bell,
   CheckCircle2,
   ChevronDown,
+  CreditCard,
   LockKeyhole,
   LogOut,
   Menu,
+  ShieldCheck,
   Star,
-  UserRoundCheck
+  UserRoundCheck,
+  X
 } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
+
+type Plan = {
+  name: string;
+  price: string;
+  cadence: string;
+  detail: string;
+  perks: string[];
+};
 
 const navItems = [
   { label: "Accueil", href: "#accueil" },
@@ -23,52 +35,57 @@ const navItems = [
 ];
 
 const benefits = [
-  "Accès illimité aux analyses, signaux et publications privées Insider Crypto.",
-  "Portefeuilles modèles, suivi de performance et thèses d'investissement détaillées.",
-  "Formations crypto structurées pour progresser du débutant au research avancé.",
+  "Acces illimite aux analyses, signaux et publications privees Insider Crypto.",
+  "Portefeuilles modeles, suivi de performance et theses d'investissement detaillees.",
+  "Formations crypto structurees pour progresser du debutant au research avance.",
   "Alpha Feed, monitoring et recap pour ne pas manquer les rotations importantes."
 ];
 
-const plans = [
+const plans: Plan[] = [
   {
     name: "Mensuel",
-    price: "49€",
-    detail: "Pour suivre le marché chaque semaine.",
-    perks: ["Terminal privé", "Alpha Feed", "Formations", "Support communauté"]
+    price: "49 EUR",
+    cadence: "par mois",
+    detail: "Pour suivre le marche chaque semaine.",
+    perks: ["Terminal prive", "Alpha Feed", "Formations", "Support communaute"]
   },
   {
     name: "Annuel",
-    price: "399€",
+    price: "399 EUR",
+    cadence: "par an",
     detail: "Le meilleur choix pour construire un vrai process.",
-    perks: ["Tout le mensuel", "Rapports longs", "Portefeuille modèle", "Priorité services"]
+    perks: ["Tout le mensuel", "Rapports longs", "Portefeuille modele", "Priorite services"]
   },
   {
     name: "Desk",
-    price: "990€",
-    detail: "Pour profils avancés et accompagnement premium.",
-    perks: ["Session stratégique", "Watchlist privée", "Review portefeuille", "Accès prioritaire"]
+    price: "990 EUR",
+    cadence: "sur demande",
+    detail: "Pour profils avances et accompagnement premium.",
+    perks: ["Session strategique", "Watchlist privee", "Review portefeuille", "Acces prioritaire"]
   }
 ];
 
 const services = [
   "Research crypto & macro",
-  "Portefeuilles modèles",
+  "Portefeuilles modeles",
   "Formations premium",
   "Monitoring on-chain",
-  "Recaps marché",
+  "Recaps marche",
   "Services investisseurs"
 ];
 
 const links = ["Twitter", "Telegram", "Discord", "Newsletter"];
 
 const faqs = [
-  ["Faut-il être abonné pour accéder au terminal ?", "Oui. L'abonnement active ton compte, puis tu peux te connecter au contenu privé."],
-  ["Le paiement est-il déjà branché ?", "Pas encore dans cette maquette. Le parcours est simulé pour préparer Stripe ou une solution équivalente."],
-  ["Qu'est-ce qu'on trouve dans le contenu privé ?", "Portefeuilles, formations, Alpha Feed, recherche visuelle, données crypto et monitoring."]
+  ["Faut-il etre abonne pour acceder au terminal ?", "Oui. L'abonnement active ton compte, puis tu peux te connecter au contenu prive."],
+  ["Le paiement est-il deja branche ?", "Pas encore dans cette maquette. Le recap et le bouton paiement preparent une future integration Stripe."],
+  ["Qu'est-ce qu'on trouve dans le contenu prive ?", "Portefeuilles, formations, Alpha Feed, recherche visuelle, donnees crypto et monitoring."]
 ];
 
 export default function HomePage() {
   const { hasSubscription, isLoggedIn, subscribe, login, logout } = useAuth();
+  const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [showLoginNotice, setShowLoginNotice] = useState(false);
 
   const handleLogin = () => {
     if (login()) {
@@ -76,7 +93,13 @@ export default function HomePage() {
       return;
     }
 
-    document.getElementById("abonnements")?.scrollIntoView({ behavior: "smooth" });
+    setShowLoginNotice(true);
+  };
+
+  const handlePaymentSimulation = () => {
+    subscribe();
+    setSelectedPlan(null);
+    setShowLoginNotice(true);
   };
 
   return (
@@ -117,7 +140,7 @@ export default function HomePage() {
                   className="hidden h-10 items-center gap-2 rounded-full bg-white px-4 text-xs font-black uppercase tracking-[0.18em] text-black md:flex"
                 >
                   <LockKeyhole size={14} />
-                  Contenu privé
+                  Contenu prive
                 </Link>
                 <button onClick={logout} className="h-10 rounded-full border border-white/15 px-4 text-xs font-bold text-white">
                   <LogOut size={16} />
@@ -139,31 +162,34 @@ export default function HomePage() {
         </div>
       </header>
 
-      <section id="accueil" className="relative overflow-hidden bg-[#0947D7]">
-        <div className="absolute inset-0 opacity-40 [background-image:linear-gradient(rgba(255,255,255,0.14)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.12)_1px,transparent_1px)] [background-size:72px_72px]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_82%_18%,rgba(255,255,255,0.18),transparent_25rem),linear-gradient(90deg,rgba(0,0,0,0.4),rgba(0,0,0,0.04)_55%,rgba(0,0,0,0.28))]" />
-        <div className="absolute bottom-20 left-0 right-0 h-44 opacity-35">
-          <div className="h-full w-[130%] -translate-x-20 rotate-[-2deg] border-t-[10px] border-cyan/70" />
-          <div className="-mt-24 h-full w-[120%] translate-x-12 rotate-[3deg] border-t-[4px] border-white/50" />
+      <section
+        id="accueil"
+        className="relative overflow-hidden bg-[radial-gradient(circle_at_76%_20%,rgba(20,184,166,0.36),transparent_28rem),radial-gradient(circle_at_24%_15%,rgba(124,109,255,0.28),transparent_30rem),linear-gradient(135deg,#080A0F_0%,#171124_46%,#0B2A2A_100%)]"
+      >
+        <div className="absolute inset-0 opacity-35 [background-image:linear-gradient(rgba(255,255,255,0.10)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.08)_1px,transparent_1px)] [background-size:72px_72px]" />
+        <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(0,0,0,0.58),rgba(0,0,0,0.12)_58%,rgba(0,0,0,0.38))]" />
+        <div className="absolute bottom-16 left-0 right-0 h-44 opacity-35">
+          <div className="h-full w-[130%] -translate-x-20 rotate-[-2deg] border-t-[10px] border-teal-300/60" />
+          <div className="-mt-24 h-full w-[120%] translate-x-12 rotate-[3deg] border-t-[4px] border-accent/60" />
         </div>
 
         <div className="relative mx-auto grid min-h-[720px] max-w-[1500px] items-center gap-12 px-6 py-16 lg:grid-cols-[1.05fr_0.95fr] lg:px-10">
           <div className="max-w-4xl">
             <p className="mb-6 text-xs font-black uppercase tracking-[0.36em] text-white/80">Terminal crypto premium</p>
             <h1 className="max-w-4xl text-4xl font-black uppercase leading-[1.08] tracking-[0.12em] text-white md:text-6xl">
-              La communauté privée pour suivre les marchés crypto avec méthode.
+              La communaute privee pour suivre les marches crypto avec methode.
             </h1>
             <div className="mt-8 max-w-3xl space-y-3">
               {benefits.map((benefit) => (
                 <div key={benefit} className="flex gap-3 text-base font-semibold leading-6 text-white md:text-lg">
-                  <CheckCircle2 className="mt-0.5 shrink-0 text-white" size={20} />
+                  <CheckCircle2 className="mt-0.5 shrink-0 text-teal-200" size={20} />
                   <p>{benefit}</p>
                 </div>
               ))}
             </div>
 
             <p className="mt-9 max-w-3xl text-xl font-black tracking-[0.2em] text-white">
-              Votre accès au terminal, aux formations et à l'alpha feed commence ici.
+              Votre acces au terminal, aux formations et a l'alpha feed commence ici.
             </p>
             <div className="mt-7 flex flex-wrap items-center gap-4">
               <button
@@ -187,12 +213,12 @@ export default function HomePage() {
               {[0, 1, 2, 3, 4].map((star) => (
                 <Star key={star} size={18} className="fill-[#F5B642] text-[#F5B642]" />
               ))}
-              <span className="text-black/70">(613 évaluations)</span>
+              <span className="text-black/70">(613 evaluations)</span>
             </div>
           </div>
 
           <div className="mx-auto w-full max-w-[520px]">
-            <p className="mb-5 text-center text-2xl font-black uppercase tracking-[0.22em] text-white">Articles récents</p>
+            <p className="mb-5 text-center text-2xl font-black uppercase tracking-[0.22em] text-white">Articles recents</p>
             <div className="relative">
               <button className="absolute -left-8 top-1/2 hidden h-14 w-12 -translate-y-1/2 items-center justify-center rounded-md bg-black text-3xl text-white lg:flex">
                 ‹
@@ -200,22 +226,22 @@ export default function HomePage() {
               <article className="overflow-hidden rounded-[18px] bg-white text-black shadow-[0_28px_90px_rgba(0,0,0,0.35)]">
                 <div className="grid h-56 grid-cols-[1.55fr_0.85fr] bg-[#10141F]">
                   <div className="relative overflow-hidden p-5">
-                    <div className="absolute inset-0 opacity-70 [background-image:linear-gradient(rgba(89,216,255,0.16)_1px,transparent_1px),linear-gradient(90deg,rgba(89,216,255,0.16)_1px,transparent_1px)] [background-size:28px_28px]" />
+                    <div className="absolute inset-0 opacity-70 [background-image:linear-gradient(rgba(20,184,166,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(124,109,255,0.16)_1px,transparent_1px)] [background-size:28px_28px]" />
                     <div className="relative mt-14 h-24 border-l border-b border-white/20">
-                      <div className="absolute bottom-6 left-3 h-20 w-[88%] rounded-tl-[80px] border-t-4 border-cyan" />
-                      <div className="absolute bottom-10 left-12 h-16 w-[62%] rotate-[-14deg] border-t-4 border-negative" />
+                      <div className="absolute bottom-6 left-3 h-20 w-[88%] rounded-tl-[80px] border-t-4 border-teal-300" />
+                      <div className="absolute bottom-10 left-12 h-16 w-[62%] rotate-[-14deg] border-t-4 border-accent" />
                     </div>
                   </div>
-                  <div className="bg-[linear-gradient(180deg,#E8EEF8,#B8C5D8)] p-5">
+                  <div className="bg-[linear-gradient(180deg,#ECE7FF,#A9D8D2)] p-5">
                     <div className="h-full rounded-2xl bg-black/12" />
                   </div>
                 </div>
                 <div className="p-5">
-                  <span className="rounded-full bg-[#0947D7] px-3 py-1 text-xs font-bold text-white">Research</span>
+                  <span className="rounded-full bg-[#171124] px-3 py-1 text-xs font-bold text-white">Research</span>
                   <p className="mt-4 text-xs font-bold text-black/60">20 juin 2026</p>
-                  <h2 className="mt-2 text-xl font-black leading-snug">Points d'entrée intéressants sur Bitcoin et HYPE</h2>
+                  <h2 className="mt-2 text-xl font-black leading-snug">Points d'entree interessants sur Bitcoin et HYPE</h2>
                   <p className="mt-3 text-sm leading-6 text-black/65">
-                    Lecture marché, niveaux clés, flux ETF et signaux protocolaires surveillés par l'équipe.
+                    Lecture marche, niveaux cles, flux ETF et signaux protocolaires surveilles par l'equipe.
                   </p>
                 </div>
               </article>
@@ -235,7 +261,7 @@ export default function HomePage() {
       <section className="bg-black px-6 py-16 lg:px-10">
         <div className="mx-auto max-w-[1300px]">
           <p className="text-center text-2xl font-black tracking-[0.28em] text-white md:text-4xl">
-            Accédez à nos analyses sur les marchés financiers, les cryptomonnaies et l'alpha on-chain.
+            Accedez a nos analyses sur les marches financiers, les cryptomonnaies et l'alpha on-chain.
           </p>
         </div>
       </section>
@@ -244,18 +270,20 @@ export default function HomePage() {
         <div className="mx-auto max-w-[1300px]">
           <div className="mb-10 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="text-xs font-black uppercase tracking-[0.3em] text-cyan">Abonnements</p>
-              <h2 className="mt-3 text-3xl font-black uppercase tracking-[0.12em] text-white md:text-5xl">Choisir son accès</h2>
+              <p className="text-xs font-black uppercase tracking-[0.3em] text-teal-300">Abonnements</p>
+              <h2 className="mt-3 text-3xl font-black uppercase tracking-[0.12em] text-white md:text-5xl">Choisir son acces</h2>
             </div>
             <p className="max-w-xl text-sm leading-6 text-muted">
-              Dans la maquette, choisir un abonnement active l'accès membre. Ensuite, le bouton Login ouvre le terminal privé.
+              Choisis une formule, verifie le recapitulatif, puis continue vers le paiement. Le bouton final simule le paiement
+              en attendant l'integration Stripe.
             </p>
           </div>
           <div className="grid gap-5 lg:grid-cols-3">
             {plans.map((plan) => (
-              <article key={plan.name} className="rounded-[20px] border border-white/10 bg-white/[0.04] p-6 transition hover:border-cyan/45">
-                <p className="text-sm font-black uppercase tracking-[0.22em] text-cyan">{plan.name}</p>
+              <article key={plan.name} className="rounded-[20px] border border-white/10 bg-white/[0.04] p-6 transition hover:border-teal-300/45">
+                <p className="text-sm font-black uppercase tracking-[0.22em] text-teal-300">{plan.name}</p>
                 <p className="mt-5 text-5xl font-black text-white">{plan.price}</p>
+                <p className="mt-1 text-xs font-bold uppercase tracking-[0.16em] text-muted">{plan.cadence}</p>
                 <p className="mt-3 text-sm leading-6 text-muted">{plan.detail}</p>
                 <div className="mt-6 space-y-3">
                   {plan.perks.map((perk) => (
@@ -266,10 +294,10 @@ export default function HomePage() {
                   ))}
                 </div>
                 <button
-                  onClick={subscribe}
+                  onClick={() => setSelectedPlan(plan)}
                   className="mt-7 w-full rounded-full bg-white px-5 py-3 text-sm font-black uppercase tracking-[0.16em] text-black transition hover:bg-white/90"
                 >
-                  {hasSubscription ? "Abonnement actif" : "Choisir l'abonnement"}
+                  {hasSubscription ? "Changer d'abonnement" : "Choisir l'abonnement"}
                 </button>
               </article>
             ))}
@@ -280,7 +308,7 @@ export default function HomePage() {
       <section id="services" className="border-t border-white/10 bg-black px-6 py-20 lg:px-10">
         <div className="mx-auto grid max-w-[1300px] gap-8 lg:grid-cols-[0.8fr_1.2fr]">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.3em] text-cyan">Services</p>
+            <p className="text-xs font-black uppercase tracking-[0.3em] text-teal-300">Services</p>
             <h2 className="mt-3 text-3xl font-black uppercase tracking-[0.12em] text-white md:text-5xl">Un desk crypto dans une interface</h2>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
@@ -295,10 +323,10 @@ export default function HomePage() {
 
       <section id="liens" className="border-t border-white/10 bg-[#07090D] px-6 py-20 lg:px-10">
         <div className="mx-auto max-w-[1300px]">
-          <p className="text-xs font-black uppercase tracking-[0.3em] text-cyan">Liens</p>
+          <p className="text-xs font-black uppercase tracking-[0.3em] text-teal-300">Liens</p>
           <div className="mt-6 grid gap-3 md:grid-cols-4">
             {links.map((link) => (
-              <a key={link} href="#accueil" className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 font-black text-white transition hover:border-cyan/45">
+              <a key={link} href="#accueil" className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 font-black text-white transition hover:border-teal-300/45">
                 {link}
               </a>
             ))}
@@ -308,7 +336,7 @@ export default function HomePage() {
 
       <section id="faq" className="border-t border-white/10 bg-black px-6 py-20 lg:px-10">
         <div className="mx-auto max-w-[1000px]">
-          <p className="text-xs font-black uppercase tracking-[0.3em] text-cyan">FAQ</p>
+          <p className="text-xs font-black uppercase tracking-[0.3em] text-teal-300">FAQ</p>
           <div className="mt-6 space-y-3">
             {faqs.map(([question, answer]) => (
               <div key={question} className="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
@@ -319,6 +347,157 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      {selectedPlan ? (
+        <CheckoutModal
+          plan={selectedPlan}
+          onClose={() => setSelectedPlan(null)}
+          onConfirm={handlePaymentSimulation}
+        />
+      ) : null}
+
+      {showLoginNotice ? (
+        <LoginModal
+          hasSubscription={hasSubscription}
+          onClose={() => setShowLoginNotice(false)}
+          onSubscribe={() => {
+            setShowLoginNotice(false);
+            document.getElementById("abonnements")?.scrollIntoView({ behavior: "smooth" });
+          }}
+          onLogin={() => {
+            if (login()) {
+              window.location.href = "/portfolio";
+            }
+          }}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function CheckoutModal({
+  plan,
+  onClose,
+  onConfirm
+}: {
+  plan: Plan;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-xl rounded-[24px] border border-white/10 bg-[#0B0D13] p-6 shadow-glow">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-teal-300">Recapitulatif</p>
+            <h2 className="mt-3 text-2xl font-black text-white">Abonnement {plan.name}</h2>
+            <p className="mt-2 text-sm text-muted">Verifie ta formule avant de continuer vers le paiement.</p>
+          </div>
+          <button onClick={onClose} className="rounded-full border border-white/10 p-2 text-white hover:border-white/25">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.035] p-5">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <p className="text-sm font-bold text-muted">Total aujourd'hui</p>
+              <p className="mt-1 text-4xl font-black text-white">{plan.price}</p>
+            </div>
+            <p className="rounded-full bg-teal-300/12 px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-teal-200">
+              {plan.cadence}
+            </p>
+          </div>
+          <div className="mt-5 space-y-2">
+            {plan.perks.map((perk) => (
+              <p key={perk} className="flex items-center gap-2 text-sm text-white">
+                <ShieldCheck size={16} className="text-positive" />
+                {perk}
+              </p>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-4 text-sm leading-6 text-muted">
+          Paiement simule pour la maquette. Le prochain branchement logique sera Stripe Checkout, puis creation de compte et
+          acces membre automatique.
+        </div>
+
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+          <button
+            onClick={onConfirm}
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-black uppercase tracking-[0.14em] text-black transition hover:bg-white/90"
+          >
+            <CreditCard size={16} />
+            Continuer vers le paiement
+          </button>
+          <button
+            onClick={onClose}
+            className="rounded-full border border-white/12 px-5 py-3 text-sm font-bold text-white transition hover:border-white/25"
+          >
+            Annuler
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoginModal({
+  hasSubscription,
+  onClose,
+  onSubscribe,
+  onLogin
+}: {
+  hasSubscription: boolean;
+  onClose: () => void;
+  onSubscribe: () => void;
+  onLogin: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-[24px] border border-white/10 bg-[#0B0D13] p-6 shadow-glow">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-teal-300">
+              {hasSubscription ? "Connexion membre" : "Abonnement requis"}
+            </p>
+            <h2 className="mt-3 text-2xl font-black text-white">
+              {hasSubscription ? "Ton abonnement est actif." : "Il faut d'abord choisir un abonnement."}
+            </h2>
+          </div>
+          <button onClick={onClose} className="rounded-full border border-white/10 p-2 text-white hover:border-white/25">
+            <X size={18} />
+          </button>
+        </div>
+        <p className="mt-4 text-sm leading-6 text-muted">
+          {hasSubscription
+            ? "Clique sur connexion pour entrer dans le terminal prive Insider Crypto."
+            : "Le login donne acces au terminal seulement apres abonnement. Choisis une formule, valide le recapitulatif, puis connecte-toi."}
+        </p>
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+          {hasSubscription ? (
+            <button
+              onClick={onLogin}
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-black uppercase tracking-[0.14em] text-black"
+            >
+              <UserRoundCheck size={16} />
+              Se connecter
+            </button>
+          ) : (
+            <button
+              onClick={onSubscribe}
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-black uppercase tracking-[0.14em] text-black"
+            >
+              <ArrowRight size={16} />
+              Voir les abonnements
+            </button>
+          )}
+          <button onClick={onClose} className="rounded-full border border-white/12 px-5 py-3 text-sm font-bold text-white">
+            Fermer
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
