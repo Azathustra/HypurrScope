@@ -1,9 +1,6 @@
 import Link from "next/link";
 import {
-  Activity,
   BarChart3,
-  BookOpen,
-  Boxes,
   BriefcaseBusiness,
   ChevronRight,
   CircleDollarSign,
@@ -11,12 +8,12 @@ import {
   Disc3,
   FileText,
   Flame,
+  GraduationCap,
   Home,
   LineChart,
   MessageCircle,
   Radio,
   Search,
-  Shield,
   UsersRound
 } from "lucide-react";
 
@@ -30,14 +27,15 @@ const sections = [
     items: [
       { label: "Cryptos", href: "/cryptos", icon: CircleDollarSign },
       { label: "TradFi", href: "/research", icon: LineChart },
-      { label: "Projects", href: "/research", icon: Boxes },
-      { label: "Hyperliquid", href: "/hyperliquid", icon: Activity },
       { label: "Portefeuilles", href: "/portfolio", icon: BriefcaseBusiness }
     ]
   },
   {
     title: "Recherche",
-    items: [{ label: "Voir tout", href: "/research", icon: Search }]
+    items: [
+      { label: "Voir tout", href: "/research", icon: Search },
+      { label: "Formation", href: "/formation", icon: GraduationCap }
+    ]
   },
   {
     title: "Fil d'actualité",
@@ -46,13 +44,6 @@ const sections = [
       { label: "Alpha Feed", href: "/feed", icon: Flame },
       { label: "Recap", href: "/feed", icon: FileText },
       { label: "Monitoring", href: "/feed", icon: BarChart3 }
-    ]
-  },
-  {
-    title: "Premium",
-    items: [
-      { label: "Rapport annuel", href: "/research", icon: BookOpen },
-      { label: "Portefeuille modèle", href: "/portfolio", icon: Shield }
     ]
   }
 ];
@@ -107,24 +98,7 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div className="my-6 rounded-[18px] border border-accent/30 bg-accent/10 p-4">
-        <p className="text-sm font-semibold leading-snug text-white">
-          Les cryptos en 2026
-        </p>
-        <p className="mt-2 text-xs leading-5 text-muted">
-          Découvre notre rapport annuel complet.
-        </p>
-        <div className="mt-4 grid gap-2">
-          <button className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-ink">
-            Version physique
-          </button>
-          <button className="rounded-full border border-white/12 px-3 py-2 text-xs font-semibold text-white">
-            Version numérique
-          </button>
-        </div>
-      </div>
-
-      <div className="space-y-1 border-t border-line pt-4">
+      <div className="mt-6 space-y-1 border-t border-line pt-4">
         {footerItems.map((item) => {
           const Icon = item.icon;
           return (

@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { ArrowRight, BellRing, BriefcaseBusiness, Radar } from "lucide-react";
+import { BriefcaseBusiness, GraduationCap, LockKeyhole, Radar } from "lucide-react";
+import { AccessCta } from "@/components/access-cta";
 import { AssetIcon } from "@/components/asset-icon";
 import { StatCard } from "@/components/stat-card";
-import { allocations, latestSignals, portfolioSummary } from "@/lib/mock-data";
+import { allocations, formationTracks, latestSignals, portfolioSummary } from "@/lib/mock-data";
 
 export default function HomePage() {
   return (
@@ -20,21 +21,12 @@ export default function HomePage() {
             Une interface dense et lisible pour piloter allocations, signaux marché et thèses d'investissement avec le niveau
             d'exigence d'un desk crypto.
           </p>
-          <div className="mt-7 flex flex-wrap gap-3">
-            <Link
-              href="/portfolio"
-              className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-semibold text-ink transition hover:bg-white/90"
-            >
-              Explorer les portefeuilles
-              <ArrowRight size={16} />
-            </Link>
-            <Link
-              href="/feed"
-              className="inline-flex items-center gap-2 rounded-full border border-line bg-black/20 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/16"
-            >
-              Voir l'alpha feed
-              <BellRing size={16} />
-            </Link>
+          <div className="mt-7">
+            <AccessCta />
+          </div>
+          <div className="mt-7 inline-flex max-w-2xl items-center gap-2 rounded-2xl border border-line bg-black/20 px-4 py-3 text-sm text-muted">
+            <LockKeyhole size={16} className="shrink-0 text-accent" />
+            Les données, portefeuilles, formations et signaux sont accessibles après connexion premium.
           </div>
         </div>
       </section>
@@ -101,6 +93,31 @@ export default function HomePage() {
               ))}
             </div>
           </Link>
+        </div>
+      </section>
+
+      <section className="premium-card rounded-[20px] p-5 lg:p-6">
+        <div className="mb-5 flex items-center gap-3">
+          <GraduationCap className="text-accent" size={22} />
+          <div>
+            <h2 className="text-xl font-semibold text-white">Formation</h2>
+            <p className="mt-1 text-sm text-muted">
+              Parcours structurés pour progresser du niveau débutant au research avancé.
+            </p>
+          </div>
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          {formationTracks.map((track) => (
+            <Link
+              href="/formation"
+              key={track.title}
+              className="rounded-2xl border border-line bg-white/[0.025] p-4 transition hover:border-white/16 hover:bg-white/[0.045]"
+            >
+              <span className="rounded-full bg-accent/14 px-3 py-1 text-xs font-semibold text-white">{track.level}</span>
+              <p className="mt-4 text-base font-semibold text-white">{track.title}</p>
+              <p className="mt-2 text-sm leading-6 text-muted">{track.description}</p>
+            </Link>
+          ))}
         </div>
       </section>
     </div>

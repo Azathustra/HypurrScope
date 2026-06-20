@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { Activity, BriefcaseBusiness, CircleDollarSign, Flame, Home, Search } from "lucide-react";
+import { BriefcaseBusiness, CircleDollarSign, Flame, GraduationCap, Home, Search } from "lucide-react";
 
 const items = [
   { label: "Accueil", href: "/", icon: Home },
   { label: "Crypto", href: "/cryptos", icon: CircleDollarSign },
   { label: "Portfolio", href: "/portfolio", icon: BriefcaseBusiness },
-  { label: "HYPE", href: "/hyperliquid", icon: Activity },
   { label: "Feed", href: "/feed", icon: Flame },
+  { label: "Formation", href: "/formation", icon: GraduationCap },
   { label: "Recherche", href: "/research", icon: Search }
 ];
 

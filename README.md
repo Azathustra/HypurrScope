@@ -4,12 +4,19 @@ Site web crypto/research premium construit avec Next.js, TypeScript, Tailwind CS
 
 ## Pages incluses
 
-- `/` : accueil premium avec signaux et portefeuilles en vedette
+- `/` : page d'accueil publique avec accès premium simulé
 - `/portfolio` : portefeuille Insider Crypto, allocations, transactions, performance et onglets d'analyse
 - `/cryptos` : table de cryptos monitorées
-- `/hyperliquid` : dashboard HYPE avec métriques et graphique volume/open interest
+- `/hyperliquid` : dashboard HYPE conservé dans le code, non affiché dans la navigation
 - `/feed` : alpha feed filtrable
 - `/research` : moteur de recherche visuel
+- `/formation` : parcours de formation premium
+
+## Accès membre
+
+La home reste publique. Les autres pages sont verrouillées tant que l'utilisateur n'a pas activé l'accès premium simulé.
+
+Cette logique est volontairement côté frontend pour la maquette. Elle peut ensuite être remplacée par une vraie intégration Auth + Stripe.
 
 ## Installation
 

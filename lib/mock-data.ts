@@ -252,3 +252,27 @@ export const researchResults = [
     excerpt: "Cadre de scoring pour TAO, compute markets et agents autonomes."
   }
 ];
+
+export const formationTracks = [
+  {
+    title: "Crypto Foundations",
+    level: "Débutant",
+    duration: "4 modules",
+    description: "Comprendre Bitcoin, Ethereum, wallets, stablecoins, cycles de marché et sécurité opérationnelle.",
+    lessons: ["Wallets & self-custody", "Lire un cycle crypto", "Bases on-chain", "Gestion du risque"]
+  },
+  {
+    title: "Portfolio & Risk",
+    level: "Intermédiaire",
+    duration: "6 modules",
+    description: "Construire une allocation crypto/TradFi, définir des tailles de position et piloter les rééquilibrages.",
+    lessons: ["Allocation modèle", "Cash management", "Drawdowns", "Performance vs BTC"]
+  },
+  {
+    title: "Alpha On-chain",
+    level: "Avancé",
+    duration: "5 modules",
+    description: "Transformer les flux, revenus protocole, volumes DEX et données de wallets en signaux exploitables.",
+    lessons: ["Flux et revenus", "DEX & perpétuels", "Wallet tracking", "Signal scoring"]
+  }
+];
