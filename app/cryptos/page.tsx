@@ -1,0 +1,23 @@
+import { DataTable } from "@/components/data-table";
+import { StatCard } from "@/components/stat-card";
+import { cryptoRows } from "@/lib/mock-data";
+
+export default function CryptosPage() {
+  return (
+    <div className="space-y-7">
+      <div>
+        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-accent">Données crypto</p>
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white lg:text-5xl">Cryptos monitorées</h1>
+        <p className="mt-3 max-w-3xl text-base leading-7 text-muted">
+          Prix, momentum et score Insider sur les actifs suivis par l'équipe research.
+        </p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-3">
+        <StatCard label="Capitalisation suivie" value="$2.89T" detail="Top actifs liquides" />
+        <StatCard label="Momentum moyen 7j" value="+5.8%" detail="Univers watchlist" tone="positive" />
+        <StatCard label="Score médian" value="79" detail="Qualité, flux, risque" />
+      </div>
+      <DataTable rows={cryptoRows} />
+    </div>
+  );
+}
