@@ -218,41 +218,37 @@ export default function HomePage() {
           </div>
 
           <div className="mx-auto w-full max-w-[520px]">
-            <p className="mb-5 text-center text-2xl font-black uppercase tracking-[0.22em] text-white">Articles recents</p>
-            <div className="relative">
-              <button className="absolute -left-8 top-1/2 hidden h-14 w-12 -translate-y-1/2 items-center justify-center rounded-md bg-black text-3xl text-white lg:flex">
-                ‹
-              </button>
-              <article className="overflow-hidden rounded-[18px] bg-white text-black shadow-[0_28px_90px_rgba(0,0,0,0.35)]">
-                <div className="grid h-56 grid-cols-[1.55fr_0.85fr] bg-[#10141F]">
-                  <div className="relative overflow-hidden p-5">
-                    <div className="absolute inset-0 opacity-70 [background-image:linear-gradient(rgba(20,184,166,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(124,109,255,0.16)_1px,transparent_1px)] [background-size:28px_28px]" />
-                    <div className="relative mt-14 h-24 border-l border-b border-white/20">
-                      <div className="absolute bottom-6 left-3 h-20 w-[88%] rounded-tl-[80px] border-t-4 border-teal-300" />
-                      <div className="absolute bottom-10 left-12 h-16 w-[62%] rotate-[-14deg] border-t-4 border-accent" />
-                    </div>
+            <div className="rounded-[24px] border border-white/12 bg-black/36 p-6 shadow-glow backdrop-blur-md">
+              <p className="text-xs font-black uppercase tracking-[0.28em] text-teal-200">Acces membre</p>
+              <h2 className="mt-4 text-3xl font-black uppercase leading-tight tracking-[0.08em] text-white">
+                Abonnez-vous, connectez-vous, entrez dans le terminal.
+              </h2>
+              <div className="mt-6 space-y-3">
+                {[
+                  ["1", "Choisir une formule"],
+                  ["2", "Verifier le recapitulatif"],
+                  ["3", "Debloquer le terminal prive"]
+                ].map(([step, label]) => (
+                  <div key={step} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-sm font-black text-black">
+                      {step}
+                    </span>
+                    <span className="text-sm font-bold text-white">{label}</span>
                   </div>
-                  <div className="bg-[linear-gradient(180deg,#ECE7FF,#A9D8D2)] p-5">
-                    <div className="h-full rounded-2xl bg-black/12" />
-                  </div>
-                </div>
-                <div className="p-5">
-                  <span className="rounded-full bg-[#171124] px-3 py-1 text-xs font-bold text-white">Research</span>
-                  <p className="mt-4 text-xs font-bold text-black/60">20 juin 2026</p>
-                  <h2 className="mt-2 text-xl font-black leading-snug">Points d'entree interessants sur Bitcoin et HYPE</h2>
-                  <p className="mt-3 text-sm leading-6 text-black/65">
-                    Lecture marche, niveaux cles, flux ETF et signaux protocolaires surveilles par l'equipe.
-                  </p>
-                </div>
-              </article>
-              <button className="absolute -right-8 top-1/2 hidden h-14 w-12 -translate-y-1/2 items-center justify-center rounded-md bg-black text-3xl text-white lg:flex">
-                ›
+                ))}
+              </div>
+              <div className="mt-6 rounded-2xl border border-teal-300/20 bg-teal-300/10 p-4">
+                <p className="text-sm font-semibold leading-6 text-teal-100">
+                  Les portefeuilles, formations, signaux et outils research sont accessibles uniquement apres abonnement.
+                </p>
+              </div>
+              <button
+                onClick={() => document.getElementById("abonnements")?.scrollIntoView({ behavior: "smooth" })}
+                className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-black uppercase tracking-[0.14em] text-black transition hover:bg-white/90"
+              >
+                Voir les abonnements
+                <ArrowRight size={16} />
               </button>
-            </div>
-            <div className="mt-6 flex justify-center gap-2">
-              <span className="h-3 w-3 rounded-full bg-white" />
-              <span className="h-3 w-3 rounded-full bg-black" />
-              <span className="h-3 w-3 rounded-full bg-black" />
             </div>
           </div>
         </div>
