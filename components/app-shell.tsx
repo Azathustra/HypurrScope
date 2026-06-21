@@ -30,7 +30,7 @@ function ShellContent({ children }: { children: ReactNode }) {
       <Sidebar />
       <div className="lg:pl-[250px]">
         <Topbar />
-        <main className="mx-auto max-w-7xl px-4 pb-28 pt-8 lg:px-8 lg:pb-8">
+        <main className="mx-auto max-w-[1680px] px-4 pb-28 pt-6 lg:px-8 lg:pb-8">
           {children}
         </main>
       </div>

@@ -17,24 +17,24 @@ export function CryptoTreasuriesDashboard({ data }: { data: CryptoTreasuryData }
       [...asset.sections.flatMap((section) => section.rows)]
         .filter((row) => row.amountValue)
         .sort((a, b) => (b.amountValue ?? 0) - (a.amountValue ?? 0))
-        .slice(0, 10),
+        .slice(0, 7),
     [asset]
   );
 
   return (
-    <div className="premium-card overflow-hidden rounded-[20px]">
-      <div className="border-b border-line px-5 pt-4">
+    <div className="premium-card overflow-hidden rounded-[18px]">
+      <div className="border-b border-line px-4 pt-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-xl font-semibold tracking-tight text-white">Crypto Treasuries</h2>
-            <p className="mt-1 text-sm text-muted">
+            <h2 className="text-lg font-semibold tracking-tight text-white">Crypto Treasuries</h2>
+            <p className="mt-0.5 text-sm text-muted">
               Latest Total: {asset.totalAmount} {asset.symbol} ({asset.supplyShare} of supply)
             </p>
           </div>
           <p className="text-xs text-muted">Synchro {formatDate(data.updatedAt)}</p>
         </div>
 
-        <div className="mt-5 flex gap-6 overflow-x-auto">
+        <div className="mt-3 flex gap-6 overflow-x-auto">
           {data.assets.map((item) => (
             <button
               key={item.symbol}
@@ -43,7 +43,7 @@ export function CryptoTreasuriesDashboard({ data }: { data: CryptoTreasuryData }
                 setCategory("etfs");
               }}
               className={cn(
-                "border-b-2 px-1 pb-3 text-sm font-semibold transition",
+                "border-b-2 px-1 pb-2 text-sm font-semibold transition",
                 asset.symbol === item.symbol ? "border-accent text-accent" : "border-transparent text-muted hover:text-white"
               )}
             >
@@ -53,22 +53,22 @@ export function CryptoTreasuriesDashboard({ data }: { data: CryptoTreasuryData }
         </div>
       </div>
 
-      <div className="grid gap-6 border-b border-line p-5 xl:grid-cols-3">
+      <div className="grid items-start gap-4 border-b border-line p-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.05fr)_minmax(0,0.9fr)]">
         <HoldingsByCategory asset={asset} />
         <TopHolders rows={topRows} unit={asset.symbol} />
         <Distribution asset={asset} />
       </div>
 
-      <div className="p-5">
-        <div className="mb-4">
+      <div className="p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-lg font-semibold text-white">Detailed {asset.name} Holdings</h3>
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
             {asset.sections.map((section) => (
               <button
                 key={section.id}
                 onClick={() => setCategory(section.id)}
                 className={cn(
-                  "rounded-full border px-3 py-2 text-xs font-semibold transition",
+                  "rounded-full border px-3 py-1.5 text-xs font-semibold transition",
                   activeSection.id === section.id
                     ? "border-accent bg-accent/10 text-accent"
                     : "border-white/10 text-muted hover:border-white/20 hover:text-white"
@@ -91,17 +91,17 @@ function HoldingsByCategory({ asset }: { asset: TreasuryAsset }) {
   const max = Math.max(...asset.sections.map((section) => section.totalAmountValue), 1);
 
   return (
-    <div className="rounded-[18px] border border-line bg-black/20 p-4">
+    <div className="h-fit rounded-[14px] border border-line bg-black/20 p-3">
       <p className="text-sm font-semibold text-white">Holdings by category</p>
       <p className="mt-1 text-xs text-muted">Spot price {asset.price}</p>
-      <div className="mt-6 space-y-4">
+      <div className="mt-4 space-y-3">
         {asset.sections.map((section, index) => (
           <div key={section.id}>
-            <div className="mb-2 flex items-center justify-between text-xs">
+            <div className="mb-1.5 flex items-center justify-between text-xs">
               <span className="font-semibold text-white">{section.shortTitle}</span>
               <span className="text-muted">{section.totalAmount} {asset.symbol}</span>
             </div>
-            <div className="h-3 overflow-hidden rounded-full bg-white/[0.06]">
+            <div className="h-2.5 overflow-hidden rounded-full bg-white/[0.06]">
               <div
                 className="h-full rounded-full"
                 style={{ width: `${Math.max(2, (section.totalAmountValue / max) * 100)}%`, backgroundColor: colors[index % colors.length] }}
@@ -118,17 +118,17 @@ function TopHolders({ rows, unit }: { rows: TreasuryItem[]; unit: string }) {
   const max = Math.max(...rows.map((row) => row.amountValue ?? 0), 1);
 
   return (
-    <div className="rounded-[18px] border border-line bg-black/20 p-4">
-      <p className="text-sm font-semibold text-white">Top 10 holders</p>
+    <div className="h-fit rounded-[14px] border border-line bg-black/20 p-3">
+      <p className="text-sm font-semibold text-white">Top holders</p>
       <p className="mt-1 text-xs text-muted">Classement courant par reserves</p>
-      <div className="mt-5 space-y-3">
+      <div className="mt-4 space-y-2.5">
         {rows.map((row) => (
           <div key={`${row.rank}-${row.name}`}>
-            <div className="mb-1 flex items-center justify-between gap-3 text-xs">
+            <div className="mb-1 flex items-center justify-between gap-3 text-[11px]">
               <span className="truncate font-semibold text-white">{row.name}</span>
               <span className="shrink-0 text-muted">{row.amount} {unit}</span>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-white/[0.06]">
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
               <div className="h-full rounded-full bg-accent" style={{ width: `${Math.max(2, ((row.amountValue ?? 0) / max) * 100)}%` }} />
             </div>
           </div>
@@ -145,11 +145,11 @@ function Distribution({ asset }: { asset: TreasuryAsset }) {
   const circumference = 2 * Math.PI * radius;
 
   return (
-    <div className="rounded-[18px] border border-line bg-black/20 p-4">
+    <div className="h-fit rounded-[14px] border border-line bg-black/20 p-3">
       <p className="text-sm font-semibold text-white">{asset.name} distribution</p>
       <p className="mt-1 text-xs text-muted">Largest category: {largestSection(asset).shortTitle}</p>
-      <div className="mt-5 flex items-center justify-center gap-6">
-        <svg viewBox="0 0 120 120" className="h-44 w-44 -rotate-90">
+      <div className="mt-4 flex items-center justify-center gap-5">
+        <svg viewBox="0 0 120 120" className="h-32 w-32 -rotate-90">
           <circle cx="60" cy="60" r={radius} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="18" />
           {asset.sections.map((section, index) => {
             const length = (section.totalAmountValue / total) * circumference;
@@ -171,7 +171,7 @@ function Distribution({ asset }: { asset: TreasuryAsset }) {
             return element;
           })}
         </svg>
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {asset.sections.map((section, index) => (
             <div key={section.id} className="flex items-center gap-2 text-xs">
               <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
