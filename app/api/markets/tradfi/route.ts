@@ -80,7 +80,7 @@ const trackedAssets = [
   ["ADI", "Analog Devices"],
   ["VRTX", "Vertex"],
   ["SBUX", "Starbucks"],
-  ["MMC", "Marsh McLennan"],
+  ["MU", "Micron Technology"],
   ["COP", "ConocoPhillips"],
   ["SPY", "S&P 500 ETF"],
   ["QQQ", "Nasdaq 100 ETF"],
@@ -105,6 +105,7 @@ const trackedAssets = [
 ] as const;
 
 export const revalidate = 60;
+export const dynamic = "force-dynamic";
 
 function percentChange(current: number, previous?: number) {
   if (!previous) return 0;
@@ -116,7 +117,13 @@ function logoUrl(symbol: string) {
 }
 
 async function fetchJson(url: string) {
-  const response = await fetch(url, { next: { revalidate: 60 } });
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "Mozilla/5.0"
+    },
+    next: { revalidate: 60 }
+  });
   if (!response.ok) return null;
   return response.json();
 }
@@ -131,18 +138,32 @@ function compactCloses(value: unknown) {
     : [];
 }
 
+function chunkSymbols(symbols: string[], size: number) {
+  return Array.from({ length: Math.ceil(symbols.length / size) }, (_, index) => symbols.slice(index * size, index * size + size));
+}
+
+async function fetchSparkData(symbols: string[]) {
+  const chunks = chunkSymbols(symbols, 20);
+  const payloads = await Promise.all(
+    chunks.map((chunk) =>
+      fetchJson(`https://query1.finance.yahoo.com/v8/finance/spark?symbols=${encodeURIComponent(chunk.join(","))}&range=1mo&interval=1d`)
+    )
+  );
+
+  return payloads.reduce<Record<string, { close?: number[] }>>((merged, payload) => {
+    if (!payload || typeof payload !== "object") return merged;
+    return { ...merged, ...payload };
+  }, {});
+}
+
 export async function GET() {
   try {
-    const symbols = trackedAssets.map(([symbol]) => symbol).join(",");
-    const sparkPayload = await fetchJson(
-      `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${encodeURIComponent(symbols)}&range=1mo&interval=1d`
-    );
+    const symbols = trackedAssets.map(([symbol]) => symbol);
+    const sparkResults = await fetchSparkData(symbols);
 
-    if (!sparkPayload) {
+    if (!Object.keys(sparkResults).length) {
       return NextResponse.json({ rows: fallbackRows(), source: "fallback" });
     }
-
-    const sparkResults = sparkPayload ?? {};
 
     const rows: MarketRow[] = trackedAssets.map(([symbol, fallbackName], index) => {
       const closes = compactCloses(sparkResults[symbol]?.close);
