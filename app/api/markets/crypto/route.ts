@@ -1,24 +1,12 @@
 import { NextResponse } from "next/server";
 import { cryptoFallbackRows, formatCompactUsd, formatUsd, type MarketRow } from "@/lib/market-data";
 
-const trackedAssets = [
-  { id: "bitcoin", name: "Bitcoin", ticker: "BTC", score: 92 },
-  { id: "ethereum", name: "Ethereum", ticker: "ETH", score: 81 },
-  { id: "solana", name: "Solana", ticker: "SOL", score: 84 },
-  { id: "hyperliquid", name: "Hyperliquid", ticker: "HYPE", score: 89 },
-  { id: "bittensor", name: "Bittensor", ticker: "TAO", score: 76 },
-  { id: "chainlink", name: "Chainlink", ticker: "LINK", score: 78 },
-  { id: "binancecoin", name: "BNB", ticker: "BNB", score: 72 },
-  { id: "ripple", name: "XRP", ticker: "XRP", score: 61 }
-];
-
 export const revalidate = 60;
 
 export async function GET() {
   try {
-    const ids = trackedAssets.map((asset) => asset.id).join(",");
     const response = await fetch(
-      `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=24h,7d`,
+      "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&sparkline=true&price_change_percentage=24h,7d,30d",
       { next: { revalidate: 60 } }
     );
 
@@ -27,33 +15,32 @@ export async function GET() {
     }
 
     const payload = await response.json();
-    const rows: MarketRow[] = trackedAssets.map((asset) => {
-      const live = payload.find((item: { id: string }) => item.id === asset.id);
+    const rows: MarketRow[] = payload.map((coin: {
+      market_cap_rank?: number;
+      name: string;
+      symbol: string;
+      image?: string;
+      current_price?: number;
+      price_change_percentage_24h_in_currency?: number;
+      price_change_percentage_7d_in_currency?: number;
+      price_change_percentage_30d_in_currency?: number;
+      market_cap?: number;
+      sparkline_in_7d?: { price?: number[] };
+    }) => ({
+      rank: coin.market_cap_rank,
+      name: coin.name,
+      ticker: coin.symbol.toUpperCase(),
+      logoUrl: coin.image,
+      price: formatUsd(coin.current_price),
+      day: Number((coin.price_change_percentage_24h_in_currency ?? 0).toFixed(2)),
+      week: Number((coin.price_change_percentage_7d_in_currency ?? 0).toFixed(2)),
+      month: Number((coin.price_change_percentage_30d_in_currency ?? 0).toFixed(2)),
+      cap: formatCompactUsd(coin.market_cap),
+      score: Math.max(50, Math.min(96, 98 - Math.round((coin.market_cap_rank ?? 100) / 2))),
+      sparkline: coin.sparkline_in_7d?.price?.filter((value) => typeof value === "number").slice(-80)
+    }));
 
-      if (!live) {
-        return cryptoFallbackRows.find((row) => row.ticker === asset.ticker) ?? {
-          name: asset.name,
-          ticker: asset.ticker,
-          price: "-",
-          day: 0,
-          week: 0,
-          cap: "-",
-          score: asset.score
-        };
-      }
-
-      return {
-        name: asset.name,
-        ticker: asset.ticker,
-        price: formatUsd(live.current_price),
-        day: Number((live.price_change_percentage_24h_in_currency ?? live.price_change_percentage_24h ?? 0).toFixed(2)),
-        week: Number((live.price_change_percentage_7d_in_currency ?? 0).toFixed(2)),
-        cap: formatCompactUsd(live.market_cap),
-        score: asset.score
-      };
-    });
-
-    return NextResponse.json({ rows, source: "coingecko" });
+    return NextResponse.json({ rows, source: "coingecko-top-100" });
   } catch {
     return NextResponse.json({ rows: cryptoFallbackRows, source: "fallback" });
   }

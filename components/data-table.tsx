@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AssetIcon } from "@/components/asset-icon";
 import { cn } from "@/lib/utils";
@@ -20,10 +19,10 @@ export function DataTable({ rows, endpoint }: { rows: MarketRow[]; endpoint?: st
       .then((payload: { rows?: MarketRow[]; source?: string }) => {
         if (!active || !payload.rows?.length) return;
         setTableRows(payload.rows);
-        setSource(payload.source === "fallback" ? "Données de secours" : "Prix live");
+        setSource(payload.source === "fallback" ? "Donnees de secours" : "Flux marche live");
       })
       .catch(() => {
-        if (active) setSource("Données de secours");
+        if (active) setSource("Donnees de secours");
       });
 
     return () => {
@@ -37,41 +36,38 @@ export function DataTable({ rows, endpoint }: { rows: MarketRow[]; endpoint?: st
         <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">{source}</p>
         {endpoint ? <p className="text-xs text-muted">Mise a jour automatique</p> : null}
       </div>
-      <div className="min-w-[820px]">
-        <div className="grid grid-cols-[1.25fr_0.8fr_0.65fr_0.65fr_0.85fr_0.75fr_0.55fr] border-b border-line px-5 py-4 text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+      <div className="min-w-[1260px]">
+        <div className="grid grid-cols-[0.35fr_2fr_0.85fr_0.7fr_0.7fr_0.7fr_1fr_1.45fr] border-b border-line px-5 py-4 text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+          <span>#</span>
           <span>Nom</span>
-          <span>Ticker</span>
-          <span>24h</span>
-          <span>7j</span>
-          <span>Market cap</span>
-          <span>Score</span>
-          <span />
+          <span className="text-right">Prix</span>
+          <span className="text-right">24h %</span>
+          <span className="text-right">7j %</span>
+          <span className="text-right">30j %</span>
+          <span className="text-right">Capitalisation</span>
+          <span className="text-right">Derniere tendance</span>
         </div>
-        {tableRows.map((row) => (
+        {tableRows.map((row, index) => (
           <div
-            key={row.ticker}
-            className="grid grid-cols-[1.25fr_0.8fr_0.65fr_0.65fr_0.85fr_0.75fr_0.55fr] items-center border-b border-line px-5 py-4 last:border-b-0 hover:bg-white/[0.025]"
+            key={`${row.ticker}-${index}`}
+            className="grid grid-cols-[0.35fr_2fr_0.85fr_0.7fr_0.7fr_0.7fr_1fr_1.45fr] items-center border-b border-line px-5 py-4 last:border-b-0 hover:bg-white/[0.025]"
           >
+            <span className="text-sm font-semibold text-white">{row.rank ?? index + 1}</span>
             <div className="flex items-center gap-3">
-              <AssetIcon ticker={row.ticker} />
-              <div>
-                <p className="text-sm font-semibold text-white">{row.name}</p>
-                <p className="text-xs text-muted">{row.price}</p>
+              <AssetIcon ticker={row.ticker} imageUrl={row.logoUrl} />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-white">{row.name}</p>
+                <p className="text-xs font-semibold uppercase text-muted">{row.ticker}</p>
               </div>
             </div>
-            <span className="text-sm text-muted">{row.ticker}</span>
+            <span className="text-right text-sm font-semibold text-white">{row.price}</span>
             <Percent value={row.day} />
             <Percent value={row.week} />
-            <span className="text-sm text-white">{row.cap}</span>
-            <span className="w-fit rounded-full bg-accent/14 px-3 py-1 text-sm font-semibold text-white">
-              {row.score}
-            </span>
-            <Link
-              href="/feed"
-              className="rounded-full border border-line px-3 py-1.5 text-center text-xs font-semibold text-white transition hover:border-white/16"
-            >
-              Voir
-            </Link>
+            <Percent value={row.month ?? 0} muted={row.month === undefined} />
+            <span className="text-right text-sm font-semibold text-white">{row.cap}</span>
+            <div className="flex justify-end">
+              <Sparkline values={row.sparkline} trend={row.week || row.day} />
+            </div>
           </div>
         ))}
       </div>
@@ -79,11 +75,51 @@ export function DataTable({ rows, endpoint }: { rows: MarketRow[]; endpoint?: st
   );
 }
 
-function Percent({ value }: { value: number }) {
+function Percent({ value, muted = false }: { value: number; muted?: boolean }) {
+  if (muted) {
+    return <span className="text-right text-sm font-medium text-muted">-</span>;
+  }
+
   return (
-    <span className={cn("text-sm font-medium", value >= 0 ? "text-positive" : "text-negative")}>
+    <span className={cn("text-right text-sm font-semibold", value >= 0 ? "text-positive" : "text-negative")}>
       {value >= 0 ? "+" : ""}
-      {value}%
+      {value.toFixed(2)}%
     </span>
+  );
+}
+
+function Sparkline({ values, trend }: { values?: number[]; trend: number }) {
+  const cleanValues = values?.filter((value) => typeof value === "number" && Number.isFinite(value)).slice(-80) ?? [];
+
+  if (cleanValues.length < 2) {
+    return <div className="h-12 w-44 rounded-xl border border-line bg-white/[0.025]" />;
+  }
+
+  const width = 176;
+  const height = 48;
+  const min = Math.min(...cleanValues);
+  const max = Math.max(...cleanValues);
+  const range = max - min || 1;
+  const points = cleanValues
+    .map((value, index) => {
+      const x = (index / (cleanValues.length - 1)) * width;
+      const y = height - ((value - min) / range) * (height - 8) - 4;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
+  const color = trend >= 0 ? "#23C782" : "#FF5B4D";
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-12 w-44 overflow-visible">
+      <polyline
+        points={points}
+        fill="none"
+        stroke={color}
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

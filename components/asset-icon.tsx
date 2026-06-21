@@ -16,7 +16,17 @@ const iconPalette: Record<string, string> = {
   SPX: "bg-[#6FA8FF] text-black"
 };
 
-export function AssetIcon({ ticker, className }: { ticker: string; className?: string }) {
+export function AssetIcon({ ticker, imageUrl, className }: { ticker: string; imageUrl?: string; className?: string }) {
+  if (imageUrl) {
+    return (
+      <img
+        src={imageUrl}
+        alt={ticker}
+        className={cn("h-9 w-9 shrink-0 rounded-full bg-panelSoft object-cover ring-2 ring-ink", className)}
+      />
+    );
+  }
+
   return (
     <span
       className={cn(
