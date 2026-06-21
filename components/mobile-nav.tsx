@@ -9,7 +9,7 @@ const items = [
   { label: "Crypto", href: "/cryptos", icon: CircleDollarSign },
   { label: "TradFi", href: "/tradfi", icon: LineChart },
   { label: "Treasuries", href: "/crypto-treasuries", icon: Landmark },
-  { label: "Our Take", href: "/feed", icon: Flame, premium: true },
+  { label: "Research", href: "/feed", icon: Flame, premium: true },
   { label: "Portfolio", href: "/portfolio", icon: BriefcaseBusiness, premium: true },
   { label: "Formation", href: "/formation", icon: GraduationCap, premium: true },
   { label: "Watchlist", href: "/feed?view=watchlist", icon: CircleDollarSign, premium: true }

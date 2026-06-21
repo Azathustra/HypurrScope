@@ -38,7 +38,7 @@ const sections = [
     title: "Premium",
     premium: true,
     items: [
-      { label: "Our Take", href: "/feed", icon: Flame },
+      { label: "Research", href: "/feed", icon: Flame },
       { label: "Portefeuille", href: "/portfolio", icon: BriefcaseBusiness },
       { label: "Formation", href: "/formation", icon: GraduationCap },
       { label: "Watchlist", href: "/feed?view=watchlist", icon: CircleDollarSign }
@@ -179,7 +179,7 @@ function PremiumAccessModal({ onClose }: { onClose: () => void }) {
         </div>
         <p className="mt-6 max-w-2xl text-base leading-7 text-muted">
           Cette rubrique est reservee aux membres Premium. Connecte-toi si tu as deja un acces, ou choisis un abonnement pour
-          debloquer Our Take, Portefeuille, Formation et Watchlist.
+          debloquer Research, Portefeuille, Formation et Watchlist.
         </p>
         <div className="mt-8 grid gap-3 sm:grid-cols-2">
           <Link

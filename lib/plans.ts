@@ -19,7 +19,7 @@ export const pricingPlans = [
     description: "Acces a nos theses d'investissement.",
     stripePriceEnv: "STRIPE_PRICE_THESES_MONTHLY",
     highlight: false,
-    features: ["Theses d'investissement", "Notes research", "Our Take", "Archives membres"]
+    features: ["Theses d'investissement", "Notes research", "Research", "Archives membres"]
   },
   {
     key: "portfolio_alerts_monthly",
