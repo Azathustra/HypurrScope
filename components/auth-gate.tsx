@@ -21,7 +21,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         icon={<LockKeyhole size={15} className="text-accent" />}
       >
         <Link
-          href="/#abonnements"
+          href="/pricing"
           className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-semibold text-ink transition hover:bg-white/90"
         >
           <Sparkles size={16} />

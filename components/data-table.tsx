@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AssetIcon } from "@/components/asset-icon";
 import { cn } from "@/lib/utils";
+import { BRAND_NAME } from "@/lib/brand";
 import type { MarketRow } from "@/lib/market-data";
 
 type SortKey = "rank" | "name" | "price" | "day" | "week" | "month" | "cap";
@@ -33,7 +34,7 @@ export function DataTable({
   liveStream?: "binance";
 }) {
   const [tableRows, setTableRows] = useState(rows);
-  const [source, setSource] = useState(endpoint ? "Chargement live..." : "Dossier Crypto Hold-Up");
+  const [source, setSource] = useState(endpoint ? "Chargement live..." : `Dossier ${BRAND_NAME}`);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const tableRowsRef = useRef(tableRows);
   const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection }>({

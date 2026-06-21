@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import { useAuth } from "@/components/auth-provider";
+import { BRAND_EMAIL, BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 
 type InfoModalType = "team" | "contact";
 
@@ -40,9 +41,9 @@ const sections = [
     premium: true,
     items: [
       { label: "Research", href: "/feed", icon: Flame },
-      { label: "Portefeuille", href: "/portfolio", icon: BriefcaseBusiness },
-      { label: "Formation", href: "/formation", icon: GraduationCap },
-      { label: "Watchlist", href: "/feed?view=watchlist", icon: CircleDollarSign }
+      { label: "Portefeuille", href: "/portfolios", icon: BriefcaseBusiness },
+      { label: "Formation", href: "/formations", icon: GraduationCap },
+      { label: "Watchlist", href: "/watchlists", icon: CircleDollarSign }
     ]
   },
   {
@@ -221,13 +222,13 @@ function SidebarModal({ type, onClose }: { type: InfoModalType; onClose: () => v
             <UsersRound size={24} />
           </span>
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Crypto Hold-Up</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">{BRAND_NAME}</p>
             <h2 className="text-3xl font-semibold tracking-tight text-white">Notre equipe</h2>
           </div>
         </div>
         <p className="mt-6 max-w-2xl text-base leading-7 text-muted">
-          Une equipe research orientee marche, allocation, donnees on-chain et pedagogie. Les profils detailles seront branches
-          dans une prochaine version.
+          Une equipe research orientee marche, allocation, donnees on-chain et pedagogie. Les profils detailles sont prepares
+          dans l'espace membres.
         </p>
         <button
           onClick={() => {
@@ -245,17 +246,17 @@ function SidebarModal({ type, onClose }: { type: InfoModalType; onClose: () => v
 }
 
 function ContactModal({ onClose }: { onClose: () => void }) {
-  const email = "contact@cryptoholdup.io";
+  const email = BRAND_EMAIL;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
       <ModalPanel>
         <ModalHeader onClose={onClose} />
         <div className="mt-3 flex items-center gap-4">
-          <img src="/brand/crypto-hold-up-logo.png" alt="Crypto Hold-Up" className="h-14 w-14 rounded-full object-cover" />
+          <img src="/brand/crypto-hold-up-logo.png" alt={BRAND_NAME} className="h-14 w-14 rounded-full object-cover" />
           <div>
-            <h2 className="text-3xl font-semibold tracking-tight text-white">Contactez Crypto Hold-Up</h2>
-            <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-muted">Crypto research terminal</p>
+            <h2 className="text-3xl font-semibold tracking-tight text-white">Contactez {BRAND_NAME}</h2>
+            <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-muted">{BRAND_TAGLINE}</p>
           </div>
         </div>
         <p className="mt-6 max-w-2xl text-base leading-7 text-muted">

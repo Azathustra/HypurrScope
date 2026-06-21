@@ -1,6 +1,8 @@
 import { PricingCard } from "@/components/saas/cards";
+import { DisclaimerBanner } from "@/components/disclaimer-banner";
 import { PublicNavbar } from "@/components/saas/public-navbar";
 import { SectionHeading } from "@/components/saas/section-heading";
+import { BRAND_NAME } from "@/lib/brand";
 import { pricingPlans } from "@/lib/plans";
 
 export default function PricingPage() {
@@ -10,7 +12,7 @@ export default function PricingPage() {
       <main className="mx-auto max-w-7xl space-y-8 px-4 py-10 lg:px-8">
         <SectionHeading
           eyebrow="Abonnements"
-          title="Choisir son acces Crypto Hold-Up"
+          title={`Choisir son acces ${BRAND_NAME}`}
           description="Trois offres simples : theses d'investissement, portefeuille avec alertes, ou formule annuelle avec 20% de reduction."
         />
         <div className="grid gap-5 lg:grid-cols-3">
@@ -27,6 +29,7 @@ export default function PricingPage() {
             />
           ))}
         </div>
+        <DisclaimerBanner />
       </main>
     </>
   );

@@ -5,10 +5,11 @@ import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { I18nProvider } from "@/components/i18n-provider";
 import { ThemeProvider } from "@/components/theme-provider";
+import { BRAND_NAME } from "@/lib/brand";
 
 export const metadata: Metadata = {
-  title: "Crypto Hold-Up",
-  description: "Terminal crypto premium pour portefeuilles, signaux et research."
+  title: BRAND_NAME,
+  description: "Plateforme crypto premium pour research, communaute, portefeuilles, formations et signaux."
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -1,6 +1,6 @@
-# Insider Crypto / HypurrScope
+# Crypto Hold-Up / HypurrScope
 
-SaaS crypto research premium en Next.js 15, TypeScript, Tailwind, Supabase et Stripe.
+Plateforme crypto premium en Next.js 15, TypeScript, Tailwind, Supabase et Stripe.
 
 ## Stack
 
@@ -29,58 +29,46 @@ pnpm start
 
 Copier `.env.example` vers `.env.local` :
 
-```bash
+```txt
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
-STRIPE_PRICE_MEMBER_MONTHLY=
-STRIPE_PRICE_MEMBER_YEARLY=
-STRIPE_PRICE_DESK_YEARLY=
+STRIPE_PRICE_THESES_MONTHLY=
+STRIPE_PRICE_PORTFOLIO_ALERTS_MONTHLY=
+STRIPE_PRICE_PORTFOLIO_ALERTS_YEARLY=
+RESEND_API_KEY=
+SENTRY_DSN=
+NEXT_PUBLIC_POSTHOG_KEY=
+NEXT_PUBLIC_POSTHOG_HOST=
 NEXT_PUBLIC_DEMO_ADMIN=false
 ```
 
 ## Supabase
 
-1. Créer un projet Supabase.
-2. Copier `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-3. Copier `SUPABASE_SERVICE_ROLE_KEY` côté serveur uniquement.
-4. Exécuter `supabase/schema.sql` dans SQL Editor.
-5. Activer l'auth email/password.
-6. Définir les admins via `profiles.role = 'admin'`.
+Executer `supabase/schema.sql`, puis `supabase/seed.sql` si un socle demo est souhaite.
 
-Le schéma contient :
+Le schema couvre notamment :
 
-- `profiles`
-- `subscriptions`
-- `research_posts`
-- `alpha_signals`
-- `portfolios`
-- `portfolio_allocations`
-- `portfolio_transactions`
-- `portfolio_performance_points`
-- `reports`
-- `bookmarks`
+- `profiles`, `subscriptions`, `invoices`
+- `research_posts`, `alpha_signals`, `reports`
+- `portfolios`, `portfolio_allocations`, `portfolio_transactions`, `portfolio_performance_points`
+- `rooms`, `room_memberships`, `community_posts`, `comments`, `reactions`
+- `watchlists`, `watchlist_items`, `alerts`, `notifications`
+- `formation_tracks`, `formation_lessons`, `lesson_progress`
+- `bookmarks`, `audit_logs`
 
-RLS est activé sur les tables sensibles. Les contenus premium doivent être servis côté serveur après vérification du plan.
+RLS est active sur les tables sensibles. Les contenus premium doivent etre servis cote serveur apres verification du plan.
 
 ## Stripe
 
-Créer 3 produits/prix :
+Creer 3 produits/prix :
 
-- `member_monthly` : 49 €/mois
-- `member_yearly` : 399 €/an
-- `desk` : 990 €/an ou sur demande
-
-Renseigner :
-
-- `STRIPE_SECRET_KEY`
-- `STRIPE_WEBHOOK_SECRET`
-- `STRIPE_PRICE_MEMBER_MONTHLY`
-- `STRIPE_PRICE_MEMBER_YEARLY`
-- `STRIPE_PRICE_DESK_YEARLY`
+- `theses_monthly` : 49 EUR/mois
+- `portfolio_alerts_monthly` : 99 EUR/mois
+- `portfolio_alerts_yearly` : 944 EUR/an
 
 Configurer le webhook Stripe vers :
 
@@ -88,21 +76,13 @@ Configurer le webhook Stripe vers :
 https://votre-domaine.com/api/stripe/webhook
 ```
 
-Événements suivis :
-
-- `checkout.session.completed`
-- `customer.subscription.created`
-- `customer.subscription.updated`
-- `customer.subscription.deleted`
-- `invoice.payment_succeeded`
-- `invoice.payment_failed`
-
-## Routes
+## Routes principales
 
 Publiques :
 
 - `/`
 - `/pricing`
+- `/community`
 - `/methodologie`
 - `/research`
 - `/research/[slug]`
@@ -114,20 +94,30 @@ Publiques :
 - `/legal/risques`
 - `/login`
 - `/signup`
+- `/forgot-password`
 
 Membres :
 
 - `/dashboard`
 - `/feed`
+- `/rooms`
+- `/rooms/[slug]`
+- `/posts/[id]`
+- `/research/premium`
 - `/portfolios`
 - `/portfolios/[slug]`
-- `/projects`
-- `/projects/[slug]`
-- `/hyperliquid`
-- `/reports`
+- `/watchlists`
+- `/watchlists/[id]`
+- `/alerts`
 - `/formations`
-- `/account`
-- `/account/billing`
+- `/formations/[slug]`
+- `/members`
+- `/members/[username]`
+- `/notifications`
+- `/settings`
+- `/settings/profile`
+- `/settings/billing`
+- `/settings/security`
 
 Admin :
 
@@ -140,15 +130,13 @@ Admin :
 - `/admin/users`
 - `/admin/subscriptions`
 
-API :
-
-- `/api/stripe/create-checkout-session`
-- `/api/stripe/create-portal-session`
-- `/api/stripe/webhook`
-- `/api/admin/posts`
-- `/api/admin/portfolios`
-- `/api/admin/signals`
-
 ## Disclaimer
 
-Contenu fourni à titre informatif et éducatif. Ne constitue pas un conseil en investissement personnalisé. Les crypto-actifs sont risqués.
+Contenu fourni a titre informatif et educatif. Ne constitue pas un conseil en investissement personnalise. Les crypto-actifs sont risques.
+
+## Guides
+
+- `docs/SETUP_SUPABASE.md`
+- `docs/SETUP_STRIPE.md`
+- `docs/DEPLOY_VERCEL.md`
+- `docs/PRODUCTION_CHECKLIST.md`
