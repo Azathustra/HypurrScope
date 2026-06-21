@@ -4,10 +4,12 @@ export type MarketRow = {
   ticker: string;
   logoUrl?: string;
   price: string;
+  priceValue?: number;
   day: number;
   week: number;
   month?: number;
   cap: string;
+  capValue?: number;
   score: number;
   sparkline?: number[];
 };

@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { cryptoFallbackRows, formatCompactUsd, formatUsd, type MarketRow } from "@/lib/market-data";
 
-export const revalidate = 60;
+export const revalidate = 15;
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
     const response = await fetch(
       "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&sparkline=true&price_change_percentage=24h,7d,30d",
-      { next: { revalidate: 60 } }
+      { cache: "no-store" }
     );
 
     if (!response.ok) {
@@ -32,10 +33,12 @@ export async function GET() {
       ticker: coin.symbol.toUpperCase(),
       logoUrl: coin.image,
       price: formatUsd(coin.current_price),
+      priceValue: coin.current_price,
       day: Number((coin.price_change_percentage_24h_in_currency ?? 0).toFixed(2)),
       week: Number((coin.price_change_percentage_7d_in_currency ?? 0).toFixed(2)),
       month: Number((coin.price_change_percentage_30d_in_currency ?? 0).toFixed(2)),
       cap: formatCompactUsd(coin.market_cap),
+      capValue: coin.market_cap,
       score: Math.max(50, Math.min(96, 98 - Math.round((coin.market_cap_rank ?? 100) / 2))),
       sparkline: coin.sparkline_in_7d?.price?.filter((value) => typeof value === "number").slice(-80)
     }));

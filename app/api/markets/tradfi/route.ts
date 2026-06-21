@@ -104,7 +104,7 @@ const trackedAssets = [
   ["HOOD", "Robinhood"]
 ] as const;
 
-export const revalidate = 60;
+export const revalidate = 15;
 export const dynamic = "force-dynamic";
 
 type TradFiAsset = {
@@ -141,10 +141,20 @@ async function fetchJson(url: string) {
       Accept: "application/json",
       "User-Agent": "Mozilla/5.0"
     },
-    next: { revalidate: 60 }
+    cache: "no-store"
   });
   if (!response.ok) return null;
   return response.json();
+}
+
+function parseCompactMarketCap(value: string) {
+  const match = value.replaceAll(",", "").match(/^(\d+(?:\.\d+)?)([TBM])?$/i);
+  if (!match) return undefined;
+
+  const amount = Number(match[1]);
+  const multiplier = match[2]?.toUpperCase() === "T" ? 1_000_000_000_000 : match[2]?.toUpperCase() === "B" ? 1_000_000_000 : match[2]?.toUpperCase() === "M" ? 1_000_000 : 1;
+
+  return amount * multiplier;
 }
 
 function latestPrice(closes: number[], quotePrice?: number) {
@@ -246,10 +256,12 @@ export async function GET() {
         ticker: asset.symbol,
         logoUrl: logoUrl(asset.yahooSymbol),
         price: price ? formatUsd(price) : "-",
+        priceValue: price || undefined,
         day: Number.isFinite(day) ? Number(day.toFixed(2)) : 0,
         week: Number.isFinite(week) ? Number(week.toFixed(2)) : 0,
         month: Number.isFinite(month) ? Number(month.toFixed(2)) : 0,
         cap: asset.cap,
+        capValue: parseCompactMarketCap(asset.cap),
         score: Math.max(50, Math.min(96, 96 - Math.round(index / 3))),
         sparkline: closes.length > 1 ? closes.slice(-30) : undefined
       };
@@ -268,10 +280,12 @@ function fallbackRows(): MarketRow[] {
     ticker: symbol,
     logoUrl: logoUrl(symbol),
     price: "-",
+    priceValue: undefined,
     day: 0,
     week: 0,
     month: 0,
     cap: "-",
+    capValue: undefined,
     score: Math.max(50, Math.min(96, 96 - Math.round(index / 3))),
     sparkline: undefined
   }));
