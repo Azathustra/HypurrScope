@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, UserRound } from "lucide-react";
+import { UserRound } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { SiteControls } from "@/components/site-controls";
 import { useI18n } from "@/components/i18n-provider";
@@ -10,19 +10,12 @@ export function Topbar() {
   const { locale } = useI18n();
   const copy =
     locale === "en"
-      ? { search: "Search an asset, thesis, signal...", member: "Member", login: "Login" }
-      : { search: "Rechercher un actif, une these, un signal...", member: "Membre", login: "Connexion" };
+      ? { member: "Member", login: "Login" }
+      : { member: "Membre", login: "Connexion" };
 
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-ink/78 px-4 py-4 backdrop-blur-xl lg:px-8">
-      <div className="mx-auto flex max-w-[1680px] items-center gap-3">
-        <label className="flex h-11 min-w-0 flex-1 items-center gap-3 rounded-full border border-line bg-panel px-4 text-sm text-muted">
-          <Search size={17} />
-          <input
-            className="w-full bg-transparent text-white placeholder:text-muted focus:outline-none"
-            placeholder={copy.search}
-          />
-        </label>
+    <header className="sticky top-0 z-30 border-b border-line bg-ink/78 px-4 py-3 backdrop-blur-xl lg:px-8">
+      <div className="mx-auto flex max-w-[1680px] items-center justify-end gap-3">
         <div className="hidden md:block">
           <SiteControls />
         </div>
