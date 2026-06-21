@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import { Toaster } from "sonner";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
+import { I18nProvider } from "@/components/i18n-provider";
+import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
   title: "Insider Crypto",
@@ -11,9 +13,13 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="fr">
+    <html lang="fr" suppressHydrationWarning>
       <body>
-        <AppShell>{children}</AppShell>
+        <ThemeProvider>
+          <I18nProvider>
+            <AppShell>{children}</AppShell>
+          </I18nProvider>
+        </ThemeProvider>
         <Toaster theme="dark" richColors position="top-right" />
       </body>
     </html>

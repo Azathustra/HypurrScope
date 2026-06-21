@@ -24,6 +24,7 @@ import {
   UsersRound,
   X
 } from "lucide-react";
+import { BrandLogo } from "@/components/brand-logo";
 
 type InfoModalType = "about" | "services" | "team" | "twitter" | "telegram" | "discord" | "contact";
 
@@ -123,15 +124,9 @@ export function Sidebar() {
   return (
     <>
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[250px] overflow-y-auto border-r border-line bg-[#07090D]/95 px-4 py-5 backdrop-blur-xl lg:block">
-        <Link href="/" className="mb-7 flex items-center gap-3 px-2">
-          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-sm font-black text-ink">
-            IC
-          </span>
-          <span>
-            <span className="block text-sm font-semibold text-white">Insider Crypto</span>
-            <span className="text-xs text-muted">Research Terminal</span>
-          </span>
-        </Link>
+        <div className="mb-7 px-2">
+          <BrandLogo />
+        </div>
 
         <nav className="space-y-6">
           {sections.map((section) => (
@@ -232,9 +227,7 @@ function ContactModal({ onClose }: { onClose: () => void }) {
       <div className="w-full max-w-md rounded-[22px] border border-white/10 bg-[#080A0F] p-6 shadow-glow">
         <ModalHeader onClose={onClose} />
         <div className="mt-3 flex items-center gap-3">
-          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-sm font-black text-ink">
-            IC
-          </span>
+          <img src="/brand/insider-crypto-logo.png" alt="Insider Crypto" className="h-11 w-11 rounded-full object-cover" />
           <div>
             <h2 className="text-2xl font-semibold tracking-tight text-white">Contactez Insider Crypto</h2>
             <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-muted">Crypto research terminal</p>
