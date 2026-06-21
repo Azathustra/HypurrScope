@@ -115,17 +115,36 @@ function logoUrl(symbol: string) {
   return `https://financialmodelingprep.com/image-stock/${symbol.replace(".", "-")}.png`;
 }
 
-function generateSparkline(price: number, day: number, week: number, month: number) {
+function symbolSeed(symbol: string) {
+  return symbol.split("").reduce((total, letter, index) => total + letter.charCodeAt(0) * (index + 3), 0);
+}
+
+function generateSparkline(symbol: string, price: number, day: number, week: number, month: number) {
+  const seed = symbolSeed(symbol);
   const start = price / (1 + month / 100 || 1);
   const weekAnchor = price / (1 + week / 100 || 1);
   const previous = price / (1 + day / 100 || 1);
+  const phase = (seed % 31) / 5;
+  const waveA = 0.006 + (seed % 7) * 0.0014;
+  const waveB = 0.0025 + (seed % 11) * 0.0007;
+  const bend = ((seed % 9) - 4) / 100;
+  const pulseIndex = 4 + (seed % 18);
+  const pulseDirection = seed % 2 === 0 ? 1 : -1;
 
   return Array.from({ length: 30 }, (_, index) => {
     const ratio = index / 29;
     const baseline = index < 22
       ? start + (weekAnchor - start) * (index / 21)
       : weekAnchor + (price - weekAnchor) * ((index - 21) / 8);
-    const noise = Math.sin(index * 1.9) * price * 0.003 + Math.cos(index * 0.73) * price * 0.002;
+    const curve = Math.pow(ratio, 1.35) - ratio;
+    const pulseDistance = Math.abs(index - pulseIndex);
+    const pulse = pulseDistance < 4 ? (4 - pulseDistance) / 4 : 0;
+    const noise =
+      Math.sin(index * (0.52 + (seed % 5) * 0.07) + phase) * price * waveA +
+      Math.cos(index * (0.91 + (seed % 3) * 0.11) + phase / 2) * price * waveB +
+      curve * price * bend +
+      pulse * pulseDirection * price * (0.004 + (seed % 5) * 0.001);
+
     if (index === 28) return previous;
     if (index === 29) return price;
     return Number((baseline + noise * (0.4 + ratio)).toFixed(4));
@@ -167,7 +186,7 @@ export async function GET() {
         month: Number(month.toFixed(2)),
         cap: formatCompactUsd(quote?.marketCap),
         score: Math.max(50, Math.min(96, 96 - Math.round(index / 3))),
-        sparkline: price ? generateSparkline(price, day, week, month) : undefined
+        sparkline: price ? generateSparkline(symbol, price, day, week, month) : undefined
       };
     });
 
@@ -189,6 +208,6 @@ function fallbackRows(): MarketRow[] {
     month: 0,
     cap: "-",
     score: Math.max(50, Math.min(96, 96 - Math.round(index / 3))),
-    sparkline: [10, 10.2, 10.1, 10.4, 10.3, 10.5, 10.6]
+    sparkline: generateSparkline(symbol, 10 + index, ((index % 7) - 3) / 2, ((index % 11) - 5), ((index % 17) - 8) * 1.2)
   }));
 }
