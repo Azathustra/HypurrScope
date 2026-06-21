@@ -169,31 +169,31 @@ export function Sidebar() {
 function PremiumAccessModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-[22px] border border-white/10 bg-[#080A0F] p-6 shadow-glow">
+      <div className="w-full max-w-3xl rounded-[26px] border border-white/10 bg-[#080A0F] p-8 shadow-glow lg:p-10">
         <ModalHeader onClose={onClose} />
-        <div className="mt-3 flex items-center gap-3">
-          <span className="flex h-11 w-11 items-center justify-center rounded-full border border-accent/30 bg-accent/10 text-accent">
-            <LockKeyhole size={20} />
+        <div className="mt-3 flex items-center gap-4">
+          <span className="flex h-14 w-14 items-center justify-center rounded-full border border-accent/30 bg-accent/10 text-accent">
+            <LockKeyhole size={24} />
           </span>
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Premium verrouille</p>
-            <h2 className="text-2xl font-semibold tracking-tight text-white">Se connecter ou s'abonner</h2>
+            <h2 className="text-3xl font-semibold tracking-tight text-white">Se connecter ou s'abonner</h2>
           </div>
         </div>
-        <p className="mt-5 text-sm leading-6 text-muted">
+        <p className="mt-6 max-w-2xl text-base leading-7 text-muted">
           Cette rubrique est reservee aux membres Premium. Connecte-toi si tu as deja un acces, ou choisis un abonnement pour
           debloquer Our Take, Portefeuille, Formation et Watchlist.
         </p>
-        <div className="mt-6 grid gap-3 sm:grid-cols-2">
+        <div className="mt-8 grid gap-3 sm:grid-cols-2">
           <Link
             href="/login"
-            className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-3 text-sm font-semibold text-ink transition hover:bg-white/90"
+            className="inline-flex items-center justify-center rounded-xl bg-white px-5 py-4 text-sm font-semibold text-ink transition hover:bg-white/90"
           >
             Se connecter
           </Link>
           <Link
             href="/pricing"
-            className="inline-flex items-center justify-center rounded-xl border border-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.04]"
+            className="inline-flex items-center justify-center rounded-xl border border-white/10 px-5 py-4 text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.04]"
           >
             S'abonner
           </Link>
