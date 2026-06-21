@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { formatCompactUsd, formatUsd, type MarketRow } from "@/lib/market-data";
+import { formatUsd, type MarketRow } from "@/lib/market-data";
 
 const trackedAssets = [
   ["AAPL", "Apple"],
@@ -107,6 +107,13 @@ const trackedAssets = [
 export const revalidate = 60;
 export const dynamic = "force-dynamic";
 
+type TradFiAsset = {
+  symbol: string;
+  yahooSymbol: string;
+  name: string;
+  cap: string;
+};
+
 function percentChange(current: number, previous?: number) {
   if (!previous) return 0;
   return ((current - previous) / previous) * 100;
@@ -114,6 +121,18 @@ function percentChange(current: number, previous?: number) {
 
 function logoUrl(symbol: string) {
   return `https://financialmodelingprep.com/image-stock/${symbol.replace(".", "-")}.png`;
+}
+
+function toYahooSymbol(symbol: string) {
+  return symbol.replace(".", "-");
+}
+
+function decodeEntities(value: string) {
+  return value
+    .replaceAll("&amp;", "&")
+    .replaceAll("&#x27;", "'")
+    .replaceAll("&#39;", "'")
+    .replaceAll("&quot;", "\"");
 }
 
 async function fetchJson(url: string) {
@@ -156,17 +175,63 @@ async function fetchSparkData(symbols: string[]) {
   }, {});
 }
 
+async function fetchTopCompanies(): Promise<TradFiAsset[]> {
+  const html = await fetch("https://stockanalysis.com/list/biggest-companies/", {
+    headers: {
+      Accept: "text/html",
+      "User-Agent": "Mozilla/5.0"
+    },
+    next: { revalidate: 60 * 60 }
+  }).then((response) => (response.ok ? response.text() : ""));
+
+  if (!html) return [];
+
+  const rows = html.match(/<tr class="svelte-1ro3niy">[\s\S]*?<\/tr>/g) ?? [];
+
+  return rows
+    .map((row) => {
+      const symbol = row.match(/<a href="\/stocks\/[^"]+\/">([^<]+)<\/a>/)?.[1];
+      const name = row.match(/<td class="slw svelte-1ro3niy">([^<]+)<\/td>/)?.[1];
+      const cells = [...row.matchAll(/<td[^>]*>(?:<!---->)?(?:<a[^>]*>)?([^<]+)(?:<\/a>)?(?:<!---->)?<\/td>/g)].map((match) =>
+        decodeEntities(match[1].trim())
+      );
+      const cap = cells[3];
+
+      if (!symbol || !name || !cap) return null;
+
+      return {
+        symbol: decodeEntities(symbol),
+        yahooSymbol: toYahooSymbol(decodeEntities(symbol)),
+        name: decodeEntities(name),
+        cap
+      };
+    })
+    .filter((asset): asset is TradFiAsset => Boolean(asset))
+    .slice(0, 100);
+}
+
+function fallbackAssets(): TradFiAsset[] {
+  return trackedAssets.map(([symbol, name]) => ({
+    symbol,
+    yahooSymbol: toYahooSymbol(symbol),
+    name,
+    cap: "-"
+  }));
+}
+
 export async function GET() {
   try {
-    const symbols = trackedAssets.map(([symbol]) => symbol);
+    const rankedAssets = await fetchTopCompanies();
+    const assets = rankedAssets.length ? rankedAssets : fallbackAssets();
+    const symbols = assets.map((asset) => asset.yahooSymbol);
     const sparkResults = await fetchSparkData(symbols);
 
     if (!Object.keys(sparkResults).length) {
       return NextResponse.json({ rows: fallbackRows(), source: "fallback" });
     }
 
-    const rows: MarketRow[] = trackedAssets.map(([symbol, fallbackName], index) => {
-      const closes = compactCloses(sparkResults[symbol]?.close);
+    const rows: MarketRow[] = assets.map((asset, index) => {
+      const closes = compactCloses(sparkResults[asset.yahooSymbol]?.close);
       const price = latestPrice(closes);
       const previousClose = closes.at(-2);
       const weekStart = closes.at(-6) ?? closes[0] ?? previousClose;
@@ -177,20 +242,20 @@ export async function GET() {
 
       return {
         rank: index + 1,
-        name: fallbackName,
-        ticker: symbol,
-        logoUrl: logoUrl(symbol),
+        name: asset.name,
+        ticker: asset.symbol,
+        logoUrl: logoUrl(asset.yahooSymbol),
         price: price ? formatUsd(price) : "-",
         day: Number.isFinite(day) ? Number(day.toFixed(2)) : 0,
         week: Number.isFinite(week) ? Number(week.toFixed(2)) : 0,
         month: Number.isFinite(month) ? Number(month.toFixed(2)) : 0,
-        cap: "-",
+        cap: asset.cap,
         score: Math.max(50, Math.min(96, 96 - Math.round(index / 3))),
         sparkline: closes.length > 1 ? closes.slice(-30) : undefined
       };
     });
 
-    return NextResponse.json({ rows, source: "yahoo-spark-live" });
+    return NextResponse.json({ rows, source: "stockanalysis-yahoo-live" });
   } catch {
     return NextResponse.json({ rows: fallbackRows(), source: "fallback" });
   }
