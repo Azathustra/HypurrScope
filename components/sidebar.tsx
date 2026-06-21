@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleDollarSign,
   Copy,
+  CreditCard,
   ExternalLink,
   Flame,
   GraduationCap,
@@ -43,6 +44,12 @@ const sections = [
       { label: "Formation", href: "/formation", icon: GraduationCap },
       { label: "Watchlist", href: "/feed?view=watchlist", icon: CircleDollarSign }
     ]
+  },
+  {
+    title: "",
+    items: [
+      { label: "Abonnement", href: "/pricing", icon: CreditCard }
+    ]
   }
 ];
 
@@ -72,22 +79,22 @@ export function Sidebar() {
 
   return (
     <>
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[250px] overflow-y-auto border-r border-line bg-[#07090D]/95 px-4 py-5 backdrop-blur-xl lg:block">
-        <div className="mb-7 px-2">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[280px] flex-col overflow-y-auto border-r border-line bg-[#07090D]/95 px-5 py-5 backdrop-blur-xl lg:flex">
+        <div className="mb-8 px-2">
           <BrandLogo />
         </div>
 
-        <nav className="space-y-6">
+        <nav className="space-y-7">
           {sections.map((section) => (
             <div key={section.title || "main"}>
               {section.title ? (
-                <div className="mb-2 flex items-center justify-between px-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted/70">
+                <div className="mb-3 flex items-center justify-between px-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted/70">
                     {section.title}
                   </p>
                 </div>
               ) : null}
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 {section.items.map((item) => {
                   const Icon = item.icon;
                   const isLocked = Boolean(section.premium && !hasPremiumAccess);
@@ -97,9 +104,9 @@ export function Sidebar() {
                       <button
                         key={item.label}
                         onClick={() => setShowPremiumModal(true)}
-                        className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left text-sm text-muted transition hover:bg-white/[0.04] hover:text-white"
+                        className="flex w-full items-center gap-3.5 rounded-xl px-3 py-2.5 text-left text-[15px] font-medium text-muted transition hover:bg-white/[0.04] hover:text-white"
                       >
-                        <Icon size={17} />
+                        <Icon size={18} />
                         <span>{item.label}</span>
                         <LockKeyhole className="ml-auto text-accent/80" size={14} />
                       </button>
@@ -110,9 +117,9 @@ export function Sidebar() {
                     <Link
                       key={item.label}
                       href={item.href}
-                      className="flex items-center gap-3 rounded-xl px-2.5 py-2 text-sm text-muted transition hover:bg-white/[0.04] hover:text-white"
+                      className="flex items-center gap-3.5 rounded-xl px-3 py-2.5 text-[15px] font-medium text-muted transition hover:bg-white/[0.04] hover:text-white"
                     >
-                      <Icon size={17} />
+                      <Icon size={18} />
                       <span>{item.label}</span>
                       {section.premium ? <LockKeyhole className="ml-auto text-positive/80" size={14} /> : null}
                     </Link>
@@ -123,16 +130,16 @@ export function Sidebar() {
           ))}
         </nav>
 
-        <div className="mt-6 space-y-1 border-t border-line pt-4">
+        <div className="mt-auto space-y-1.5 border-t border-line pt-5">
           {footerItems.map((item) => {
             const Icon = item.icon;
             return (
               <button
                 key={item.label}
                 onClick={() => setActiveModal(item.modal)}
-                className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left text-sm text-muted transition hover:bg-white/[0.04] hover:text-white"
+                className="flex w-full items-center gap-3.5 rounded-xl px-3 py-2.5 text-left text-[15px] font-medium text-muted transition hover:bg-white/[0.04] hover:text-white"
               >
-                <Icon size={16} />
+                <Icon size={17} />
                 {item.label}
                 <ChevronRight className="ml-auto opacity-30" size={14} />
               </button>
@@ -140,7 +147,7 @@ export function Sidebar() {
           })}
         </div>
 
-        <div className="mt-5 flex items-center gap-2 px-2">
+        <div className="mt-5 flex items-center gap-2 px-2 pb-1">
           {socialLinks.map((item) => {
             const Icon = item.icon;
             return (

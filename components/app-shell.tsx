@@ -28,7 +28,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen">
       <Sidebar />
-      <div className="lg:pl-[250px]">
+      <div className="lg:pl-[280px]">
         <Topbar />
         <main className="mx-auto max-w-[1680px] px-4 pb-28 pt-6 lg:px-8 lg:pb-8">
           {children}
