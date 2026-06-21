@@ -11,6 +11,7 @@ import {
   Flame,
   GraduationCap,
   LineChart,
+  LockKeyhole,
   Mail,
   MessageCircle,
   Send,
@@ -19,6 +20,7 @@ import {
   X
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
+import { useAuth } from "@/components/auth-provider";
 
 type InfoModalType = "team" | "contact";
 
@@ -32,6 +34,7 @@ const sections = [
   },
   {
     title: "Premium",
+    premium: true,
     items: [
       { label: "Our Take", href: "/feed", icon: Flame },
       { label: "Portefeuille", href: "/portfolio", icon: BriefcaseBusiness },
@@ -54,6 +57,9 @@ const socialLinks = [
 
 export function Sidebar() {
   const [activeModal, setActiveModal] = useState<InfoModalType | null>(null);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const { hasSubscription, isLoggedIn } = useAuth();
+  const hasPremiumAccess = hasSubscription && isLoggedIn;
 
   useEffect(() => {
     const openContact = () => setActiveModal("contact");
@@ -73,13 +79,36 @@ export function Sidebar() {
           {sections.map((section) => (
             <div key={section.title || "main"}>
               {section.title ? (
-                <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted/70">
-                  {section.title}
-                </p>
+                <div className="mb-2 flex items-center justify-between px-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted/70">
+                    {section.title}
+                  </p>
+                  {section.premium ? (
+                    <span className="rounded-full border border-accent/25 bg-accent/10 p-1 text-accent" title="Premium a debloquer">
+                      <LockKeyhole size={12} />
+                    </span>
+                  ) : null}
+                </div>
               ) : null}
               <div className="space-y-1">
                 {section.items.map((item) => {
                   const Icon = item.icon;
+                  const isLocked = Boolean(section.premium && !hasPremiumAccess);
+
+                  if (isLocked) {
+                    return (
+                      <button
+                        key={item.label}
+                        onClick={() => setShowPremiumModal(true)}
+                        className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left text-sm text-muted transition hover:bg-white/[0.04] hover:text-white"
+                      >
+                        <Icon size={17} />
+                        <span>{item.label}</span>
+                        <LockKeyhole className="ml-auto text-accent/80" size={14} />
+                      </button>
+                    );
+                  }
+
                   return (
                     <Link
                       key={item.label}
@@ -87,7 +116,8 @@ export function Sidebar() {
                       className="flex items-center gap-3 rounded-xl px-2.5 py-2 text-sm text-muted transition hover:bg-white/[0.04] hover:text-white"
                     >
                       <Icon size={17} />
-                      {item.label}
+                      <span>{item.label}</span>
+                      {section.premium ? <LockKeyhole className="ml-auto text-positive/80" size={14} /> : null}
                     </Link>
                   );
                 })}
@@ -131,7 +161,45 @@ export function Sidebar() {
       </aside>
 
       {activeModal ? <SidebarModal type={activeModal} onClose={() => setActiveModal(null)} /> : null}
+      {showPremiumModal ? <PremiumAccessModal onClose={() => setShowPremiumModal(false)} /> : null}
     </>
+  );
+}
+
+function PremiumAccessModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-[22px] border border-white/10 bg-[#080A0F] p-6 shadow-glow">
+        <ModalHeader onClose={onClose} />
+        <div className="mt-3 flex items-center gap-3">
+          <span className="flex h-11 w-11 items-center justify-center rounded-full border border-accent/30 bg-accent/10 text-accent">
+            <LockKeyhole size={20} />
+          </span>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Premium verrouille</p>
+            <h2 className="text-2xl font-semibold tracking-tight text-white">Se connecter ou s'abonner</h2>
+          </div>
+        </div>
+        <p className="mt-5 text-sm leading-6 text-muted">
+          Cette rubrique est reservee aux membres Premium. Connecte-toi si tu as deja un acces, ou choisis un abonnement pour
+          debloquer Our Take, Portefeuille, Formation et Watchlist.
+        </p>
+        <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          <Link
+            href="/login"
+            className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-3 text-sm font-semibold text-ink transition hover:bg-white/90"
+          >
+            Se connecter
+          </Link>
+          <Link
+            href="/pricing"
+            className="inline-flex items-center justify-center rounded-xl border border-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.04]"
+          >
+            S'abonner
+          </Link>
+        </div>
+      </div>
+    </div>
   );
 }
 
