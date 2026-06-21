@@ -10,9 +10,10 @@ type SortDirection = "asc" | "desc";
 
 const tableColumns = "grid-cols-[42px_minmax(250px,2fr)_92px_76px_76px_76px_120px_144px]";
 
-export function DataTable({ rows, endpoint }: { rows: MarketRow[]; endpoint?: string }) {
+export function DataTable({ rows, endpoint, refreshMs = 30000 }: { rows: MarketRow[]; endpoint?: string; refreshMs?: number }) {
   const [tableRows, setTableRows] = useState(rows);
   const [source, setSource] = useState(endpoint ? "Chargement live..." : "Dossier Crypto Hold-Up");
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection }>({
     key: "rank",
     direction: "asc"
@@ -26,10 +27,11 @@ export function DataTable({ rows, endpoint }: { rows: MarketRow[]; endpoint?: st
     const loadRows = () => {
       fetch(endpoint, { cache: "no-store" })
         .then((response) => response.json())
-        .then((payload: { rows?: MarketRow[]; source?: string }) => {
+        .then((payload: { rows?: MarketRow[]; source?: string; updatedAt?: string }) => {
           if (!active || !payload.rows?.length) return;
           setTableRows(payload.rows);
           setSource(payload.source === "fallback" ? "Donnees de secours" : "Flux marche live");
+          setUpdatedAt(formatUpdateTime(payload.updatedAt));
         })
         .catch(() => {
           if (active) setSource("Donnees de secours");
@@ -37,13 +39,13 @@ export function DataTable({ rows, endpoint }: { rows: MarketRow[]; endpoint?: st
     };
 
     loadRows();
-    const refresh = window.setInterval(loadRows, 30000);
+    const refresh = window.setInterval(loadRows, refreshMs);
 
     return () => {
       active = false;
       window.clearInterval(refresh);
     };
-  }, [endpoint]);
+  }, [endpoint, refreshMs]);
 
   const sortedRows = useMemo(() => {
     return [...tableRows].sort((first, second) => {
@@ -73,7 +75,11 @@ export function DataTable({ rows, endpoint }: { rows: MarketRow[]; endpoint?: st
     <div className="premium-card overflow-hidden rounded-[20px]">
       <div className="flex items-center justify-between border-b border-line px-5 py-3">
         <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">{source}</p>
-        {endpoint ? <p className="text-xs text-muted">Mise a jour auto 30s</p> : null}
+        {endpoint ? (
+          <p className="text-xs text-muted">
+            Mise a jour auto {Math.round(refreshMs / 1000)}s{updatedAt ? ` - ${updatedAt}` : ""}
+          </p>
+        ) : null}
       </div>
       <div className="overflow-x-auto">
         <div className="min-w-[978px]">
@@ -124,6 +130,17 @@ export function DataTable({ rows, endpoint }: { rows: MarketRow[]; endpoint?: st
       </div>
     </div>
   );
+}
+
+function formatUpdateTime(value?: string) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return null;
+
+  return new Intl.DateTimeFormat("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(date);
 }
 
 function getSortValue(row: MarketRow, key: SortKey) {

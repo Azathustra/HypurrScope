@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { BriefcaseBusiness, CircleDollarSign, Flame, GraduationCap, LineChart, LockKeyhole, X } from "lucide-react";
+import { BriefcaseBusiness, CircleDollarSign, Flame, GraduationCap, Landmark, LineChart, LockKeyhole, X } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 
 const items = [
   { label: "Crypto", href: "/cryptos", icon: CircleDollarSign },
   { label: "TradFi", href: "/tradfi", icon: LineChart },
+  { label: "Treasuries", href: "/crypto-treasuries", icon: Landmark },
   { label: "Our Take", href: "/feed", icon: Flame, premium: true },
   { label: "Portfolio", href: "/portfolio", icon: BriefcaseBusiness, premium: true },
   { label: "Formation", href: "/formation", icon: GraduationCap, premium: true },
@@ -22,7 +23,7 @@ export function MobileNav() {
   return (
     <>
       <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-line bg-ink/92 px-2 py-2 backdrop-blur-xl lg:hidden">
-        <div className="grid grid-cols-6 gap-1">
+        <div className="grid grid-cols-4 gap-1">
           {items.map((item) => {
             const Icon = item.icon;
             const isLocked = Boolean(item.premium && !hasPremiumAccess);

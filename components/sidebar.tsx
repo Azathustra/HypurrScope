@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Flame,
   GraduationCap,
+  Landmark,
   LineChart,
   LockKeyhole,
   Mail,
@@ -29,7 +30,8 @@ const sections = [
     title: "Donnees",
     items: [
       { label: "Cryptos", href: "/cryptos", icon: CircleDollarSign },
-      { label: "TradFi", href: "/tradfi", icon: LineChart }
+      { label: "TradFi", href: "/tradfi", icon: LineChart },
+      { label: "Crypto treasuries", href: "/crypto-treasuries", icon: Landmark }
     ]
   },
   {

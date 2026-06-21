@@ -37,10 +37,13 @@ export const tradfiFallbackRows: MarketRow[] = [
 export function formatUsd(value: number | null | undefined) {
   if (typeof value !== "number" || Number.isNaN(value)) return "-";
 
+  const decimals = value >= 1 ? 2 : 6;
+
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: value >= 100 ? 0 : 2
+    minimumFractionDigits: value >= 1 ? 2 : 0,
+    maximumFractionDigits: decimals
   }).format(value);
 }
 

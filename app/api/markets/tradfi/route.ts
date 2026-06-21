@@ -267,7 +267,7 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json({ rows, source: "stockanalysis-yahoo-live" });
+    return NextResponse.json({ rows, source: "stockanalysis-yahoo-live", updatedAt: new Date().toISOString() });
   } catch {
     return NextResponse.json({ rows: fallbackRows(), source: "fallback" });
   }
