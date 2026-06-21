@@ -115,82 +115,61 @@ function logoUrl(symbol: string) {
   return `https://financialmodelingprep.com/image-stock/${symbol.replace(".", "-")}.png`;
 }
 
-function symbolSeed(symbol: string) {
-  return symbol.split("").reduce((total, letter, index) => total + letter.charCodeAt(0) * (index + 3), 0);
+async function fetchJson(url: string) {
+  const response = await fetch(url, { next: { revalidate: 60 } });
+  if (!response.ok) return null;
+  return response.json();
 }
 
-function generateSparkline(symbol: string, price: number, day: number, week: number, month: number) {
-  const seed = symbolSeed(symbol);
-  const start = price / (1 + month / 100 || 1);
-  const weekAnchor = price / (1 + week / 100 || 1);
-  const previous = price / (1 + day / 100 || 1);
-  const phase = (seed % 31) / 5;
-  const waveA = 0.006 + (seed % 7) * 0.0014;
-  const waveB = 0.0025 + (seed % 11) * 0.0007;
-  const bend = ((seed % 9) - 4) / 100;
-  const pulseIndex = 4 + (seed % 18);
-  const pulseDirection = seed % 2 === 0 ? 1 : -1;
+function latestPrice(closes: number[], quotePrice?: number) {
+  return quotePrice || closes.at(-1) || 0;
+}
 
-  return Array.from({ length: 30 }, (_, index) => {
-    const ratio = index / 29;
-    const baseline = index < 22
-      ? start + (weekAnchor - start) * (index / 21)
-      : weekAnchor + (price - weekAnchor) * ((index - 21) / 8);
-    const curve = Math.pow(ratio, 1.35) - ratio;
-    const pulseDistance = Math.abs(index - pulseIndex);
-    const pulse = pulseDistance < 4 ? (4 - pulseDistance) / 4 : 0;
-    const noise =
-      Math.sin(index * (0.52 + (seed % 5) * 0.07) + phase) * price * waveA +
-      Math.cos(index * (0.91 + (seed % 3) * 0.11) + phase / 2) * price * waveB +
-      curve * price * bend +
-      pulse * pulseDirection * price * (0.004 + (seed % 5) * 0.001);
-
-    if (index === 28) return previous;
-    if (index === 29) return price;
-    return Number((baseline + noise * (0.4 + ratio)).toFixed(4));
-  });
+function compactCloses(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is number => typeof item === "number" && Number.isFinite(item))
+    : [];
 }
 
 export async function GET() {
   try {
     const symbols = trackedAssets.map(([symbol]) => symbol).join(",");
-    const response = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbols)}`, {
-      next: { revalidate: 60 }
-    });
+    const sparkPayload = await fetchJson(
+      `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${encodeURIComponent(symbols)}&range=1mo&interval=1d`
+    );
 
-    if (!response.ok) {
+    if (!sparkPayload) {
       return NextResponse.json({ rows: fallbackRows(), source: "fallback" });
     }
 
-    const payload = await response.json();
-    const quotes = payload.quoteResponse?.result ?? [];
+    const sparkResults = sparkPayload ?? {};
 
     const rows: MarketRow[] = trackedAssets.map(([symbol, fallbackName], index) => {
-      const quote = quotes.find((item: { symbol: string }) => item.symbol === symbol);
-      const price = quote?.regularMarketPrice ?? quote?.postMarketPrice ?? 0;
-      const previousClose = quote?.regularMarketPreviousClose;
-      const weekStart = quote?.fiftyDayAverage ? quote.fiftyDayAverage : previousClose;
-      const monthStart = quote?.twoHundredDayAverage ? quote.twoHundredDayAverage : weekStart;
-      const day = price ? percentChange(price, previousClose) : 0;
-      const week = price ? percentChange(price, weekStart) : 0;
-      const month = price ? percentChange(price, monthStart) : 0;
+      const closes = compactCloses(sparkResults[symbol]?.close);
+      const price = latestPrice(closes);
+      const previousClose = closes.at(-2);
+      const weekStart = closes.at(-6) ?? closes[0] ?? previousClose;
+      const monthStart = closes[0] ?? weekStart;
+      const day = price ? percentChange(price, previousClose) : Number.NaN;
+      const week = price ? percentChange(price, weekStart) : Number.NaN;
+      const month = price ? percentChange(price, monthStart) : Number.NaN;
 
       return {
         rank: index + 1,
-        name: quote?.shortName ?? quote?.longName ?? fallbackName,
+        name: fallbackName,
         ticker: symbol,
         logoUrl: logoUrl(symbol),
         price: price ? formatUsd(price) : "-",
-        day: Number(day.toFixed(2)),
-        week: Number(week.toFixed(2)),
-        month: Number(month.toFixed(2)),
-        cap: formatCompactUsd(quote?.marketCap),
+        day: Number.isFinite(day) ? Number(day.toFixed(2)) : 0,
+        week: Number.isFinite(week) ? Number(week.toFixed(2)) : 0,
+        month: Number.isFinite(month) ? Number(month.toFixed(2)) : 0,
+        cap: "-",
         score: Math.max(50, Math.min(96, 96 - Math.round(index / 3))),
-        sparkline: price ? generateSparkline(symbol, price, day, week, month) : undefined
+        sparkline: closes.length > 1 ? closes.slice(-30) : undefined
       };
     });
 
-    return NextResponse.json({ rows, source: "yahoo-top-100" });
+    return NextResponse.json({ rows, source: "yahoo-spark-live" });
   } catch {
     return NextResponse.json({ rows: fallbackRows(), source: "fallback" });
   }
@@ -208,6 +187,6 @@ function fallbackRows(): MarketRow[] {
     month: 0,
     cap: "-",
     score: Math.max(50, Math.min(96, 96 - Math.round(index / 3))),
-    sparkline: generateSparkline(symbol, 10 + index, ((index % 7) - 3) / 2, ((index % 11) - 5), ((index % 17) - 8) * 1.2)
+    sparkline: undefined
   }));
 }
