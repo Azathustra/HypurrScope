@@ -22,13 +22,15 @@ export function DataTable({
   endpoint,
   refreshMs = 30000,
   liveEndpoint,
-  liveRefreshMs = 5000
+  liveRefreshMs = 5000,
+  liveStream
 }: {
   rows: MarketRow[];
   endpoint?: string;
   refreshMs?: number;
   liveEndpoint?: string;
   liveRefreshMs?: number;
+  liveStream?: "binance";
 }) {
   const [tableRows, setTableRows] = useState(rows);
   const [source, setSource] = useState(endpoint ? "Chargement live..." : "Dossier Crypto Hold-Up");
@@ -119,6 +121,75 @@ export function DataTable({
     };
   }, [liveEndpoint, liveRefreshMs]);
 
+  const streamSymbolsKey = useMemo(() => {
+    if (liveStream !== "binance") return "";
+
+    return [
+      ...new Set(
+        tableRows
+          .map((row) => binanceStreamTicker(row.ticker))
+          .filter((ticker): ticker is string => Boolean(ticker))
+          .slice(0, 80)
+      )
+    ].join(",");
+  }, [liveStream, tableRows]);
+
+  useEffect(() => {
+    if (liveStream !== "binance" || !streamSymbolsKey) return;
+
+    let active = true;
+    const streams = streamSymbolsKey
+      .split(",")
+      .map((ticker) => `${ticker.toLowerCase()}usdt@ticker`)
+      .join("/");
+    const socket = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+
+    socket.onopen = () => {
+      if (!active) return;
+      setSource("Flux WebSocket live");
+      setUpdatedAt(formatUpdateTime());
+    };
+
+    socket.onmessage = (event) => {
+      if (!active) return;
+
+      try {
+        const payload = JSON.parse(event.data) as { data?: { s?: string; c?: string; P?: string } };
+        const symbol = payload.data?.s;
+        const priceValue = Number(payload.data?.c);
+        const dayValue = Number(payload.data?.P);
+        if (!symbol || !Number.isFinite(priceValue) || priceValue <= 0) return;
+
+        const ticker = symbol.replace(/USDT$/, "");
+        setTableRows((current) =>
+          current.map((row) => {
+            if (binanceStreamTicker(row.ticker) !== ticker) return row;
+
+            return {
+              ...row,
+              price: formatLiveUsd(priceValue),
+              priceValue,
+              day: Number.isFinite(dayValue) ? Number(dayValue.toFixed(2)) : row.day
+            };
+          })
+        );
+        setUpdatedAt(formatUpdateTime());
+      } catch {
+        return;
+      }
+    };
+
+    socket.onerror = () => {
+      if (!active) return;
+      setSource("Flux prix live");
+    };
+
+    return () => {
+      active = false;
+      socket.close();
+    };
+  }, [liveStream, streamSymbolsKey]);
+
   const sortedRows = useMemo(() => {
     return [...tableRows].sort((first, second) => {
       const firstValue = getSortValue(first, sort.key);
@@ -149,7 +220,11 @@ export function DataTable({
         <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">{source}</p>
         {endpoint ? (
           <p className="text-xs text-muted">
-            {liveEndpoint ? `Prix live ${Math.round(liveRefreshMs / 1000)}s` : `Mise a jour auto ${Math.round(refreshMs / 1000)}s`}
+            {liveStream === "binance"
+              ? "Prix WebSocket live"
+              : liveEndpoint
+                ? `Prix live ${Math.round(liveRefreshMs / 1000)}s`
+                : `Mise a jour auto ${Math.round(refreshMs / 1000)}s`}
             {updatedAt ? ` - ${updatedAt}` : ""}
           </p>
         ) : null}
@@ -203,6 +278,76 @@ export function DataTable({
       </div>
     </div>
   );
+}
+
+function binanceStreamTicker(ticker: string) {
+  const normalized = ticker.toUpperCase();
+  const aliases: Record<string, string> = {
+    WBTC: "BTC",
+    WETH: "ETH",
+    STETH: "ETH",
+    WBETH: "ETH"
+  };
+  const supported = new Set([
+    "BTC",
+    "ETH",
+    "BNB",
+    "SOL",
+    "XRP",
+    "DOGE",
+    "TRX",
+    "ADA",
+    "LINK",
+    "AVAX",
+    "SUI",
+    "LTC",
+    "BCH",
+    "DOT",
+    "UNI",
+    "AAVE",
+    "PEPE",
+    "SHIB",
+    "NEAR",
+    "APT",
+    "ARB",
+    "OP",
+    "ETC",
+    "XLM",
+    "HBAR",
+    "ICP",
+    "FIL",
+    "ATOM",
+    "INJ",
+    "WIF",
+    "TIA",
+    "SEI",
+    "FET",
+    "RENDER",
+    "MKR",
+    "RUNE",
+    "ALGO",
+    "VET",
+    "JUP",
+    "PENDLE",
+    "ENA",
+    "CRV",
+    "LDO",
+    "GRT",
+    "IMX",
+    "MNT"
+  ]);
+  const resolved = aliases[normalized] ?? normalized;
+
+  return supported.has(resolved) ? resolved : null;
+}
+
+function formatLiveUsd(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: value >= 1 ? 2 : 0,
+    maximumFractionDigits: value >= 1 ? 2 : 6
+  }).format(value);
 }
 
 function formatUpdateTime(value?: string) {
