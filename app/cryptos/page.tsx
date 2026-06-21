@@ -14,10 +14,16 @@ export default function CryptosPage() {
       </div>
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard label="Univers" value="Top 100" detail="Classement par market cap" />
-        <StatCard label="Frequence" value="10s" detail="Prix Binance + CoinGecko" tone="positive" />
+        <StatCard label="Frequence" value="5s" detail="Prix Binance, top CoinGecko" tone="positive" />
         <StatCard label="Tendance" value="7j" detail="Sparkline par actif" />
       </div>
-      <DataTable rows={cryptoFallbackRows} endpoint="/api/markets/crypto" refreshMs={10000} />
+      <DataTable
+        rows={cryptoFallbackRows}
+        endpoint="/api/markets/crypto"
+        refreshMs={60000}
+        liveEndpoint="/api/markets/crypto/live"
+        liveRefreshMs={5000}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AssetIcon } from "@/components/asset-icon";
 import { cn } from "@/lib/utils";
 import type { MarketRow } from "@/lib/market-data";
@@ -10,14 +10,38 @@ type SortDirection = "asc" | "desc";
 
 const tableColumns = "grid-cols-[42px_minmax(250px,2fr)_92px_76px_76px_76px_120px_144px]";
 
-export function DataTable({ rows, endpoint, refreshMs = 30000 }: { rows: MarketRow[]; endpoint?: string; refreshMs?: number }) {
+type LivePrice = {
+  ticker: string;
+  price: string;
+  priceValue: number;
+  day?: number;
+};
+
+export function DataTable({
+  rows,
+  endpoint,
+  refreshMs = 30000,
+  liveEndpoint,
+  liveRefreshMs = 5000
+}: {
+  rows: MarketRow[];
+  endpoint?: string;
+  refreshMs?: number;
+  liveEndpoint?: string;
+  liveRefreshMs?: number;
+}) {
   const [tableRows, setTableRows] = useState(rows);
   const [source, setSource] = useState(endpoint ? "Chargement live..." : "Dossier Crypto Hold-Up");
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const tableRowsRef = useRef(tableRows);
   const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection }>({
     key: "rank",
     direction: "asc"
   });
+
+  useEffect(() => {
+    tableRowsRef.current = tableRows;
+  }, [tableRows]);
 
   useEffect(() => {
     if (!endpoint) return;
@@ -46,6 +70,54 @@ export function DataTable({ rows, endpoint, refreshMs = 30000 }: { rows: MarketR
       window.clearInterval(refresh);
     };
   }, [endpoint, refreshMs]);
+
+  useEffect(() => {
+    if (!liveEndpoint) return;
+
+    let active = true;
+
+    const loadLivePrices = () => {
+      const symbols = [...new Set(tableRowsRef.current.map((row) => row.ticker).filter(Boolean))];
+      if (!symbols.length) return;
+
+      const url = new URL(liveEndpoint, window.location.origin);
+      url.searchParams.set("symbols", symbols.join(","));
+
+      fetch(url.toString(), { cache: "no-store" })
+        .then((response) => response.json())
+        .then((payload: { prices?: LivePrice[]; updatedAt?: string }) => {
+          if (!active || !payload.prices?.length) return;
+
+          const prices = new Map(payload.prices.map((price) => [price.ticker, price]));
+          setTableRows((current) =>
+            current.map((row) => {
+              const live = prices.get(row.ticker);
+              if (!live) return row;
+
+              return {
+                ...row,
+                price: live.price,
+                priceValue: live.priceValue,
+                day: typeof live.day === "number" ? live.day : row.day
+              };
+            })
+          );
+          setSource("Flux prix live");
+          setUpdatedAt(formatUpdateTime(payload.updatedAt));
+        })
+        .catch(() => {
+          if (active) setUpdatedAt(formatUpdateTime());
+        });
+    };
+
+    loadLivePrices();
+    const refresh = window.setInterval(loadLivePrices, liveRefreshMs);
+
+    return () => {
+      active = false;
+      window.clearInterval(refresh);
+    };
+  }, [liveEndpoint, liveRefreshMs]);
 
   const sortedRows = useMemo(() => {
     return [...tableRows].sort((first, second) => {
@@ -77,7 +149,8 @@ export function DataTable({ rows, endpoint, refreshMs = 30000 }: { rows: MarketR
         <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">{source}</p>
         {endpoint ? (
           <p className="text-xs text-muted">
-            Mise a jour auto {Math.round(refreshMs / 1000)}s{updatedAt ? ` - ${updatedAt}` : ""}
+            {liveEndpoint ? `Prix live ${Math.round(liveRefreshMs / 1000)}s` : `Mise a jour auto ${Math.round(refreshMs / 1000)}s`}
+            {updatedAt ? ` - ${updatedAt}` : ""}
           </p>
         ) : null}
       </div>

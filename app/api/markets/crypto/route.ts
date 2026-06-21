@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
+import { applyCryptoLivePrices, fetchCryptoLivePrices } from "@/lib/crypto-live-prices";
 import { cryptoFallbackRows, formatCompactUsd, formatUsd, type MarketRow } from "@/lib/market-data";
 
-export const revalidate = 15;
+export const revalidate = 0;
 export const dynamic = "force-dynamic";
 
-type BinanceTicker = {
-  symbol: string;
-  lastPrice?: string;
-  priceChangePercent?: string;
-};
+const COINGECKO_CACHE_MS = 120000;
+
+let cachedRows: MarketRow[] | null = null;
+let cachedRowsAt = 0;
 
 type CoinGeckoCoin = {
   market_cap_rank?: number;
@@ -24,102 +24,84 @@ type CoinGeckoCoin = {
 };
 
 export async function GET() {
-  try {
-    const [response, binanceTickers] = await Promise.all([
-      fetch(
-        "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&sparkline=true&price_change_percentage=24h,7d,30d",
-        { cache: "no-store" }
-      ),
-      fetchBinanceTickers()
-    ]);
+  const base = await getBaseRows();
+  const livePrices = await fetchCryptoLivePrices(base.rows.map((row) => row.ticker));
+  const rows = applyCryptoLivePrices(base.rows, livePrices);
 
-    if (!response.ok) {
-      return NextResponse.json({ rows: cryptoFallbackRows, source: "fallback" });
-    }
-
-    const payload: CoinGeckoCoin[] = await response.json();
-    const rows: MarketRow[] = payload.map((coin) => {
-      const ticker = coin.symbol.toUpperCase();
-      const liveTicker = findLiveTicker(ticker, binanceTickers);
-      const livePriceValue = toNumber(liveTicker?.lastPrice);
-      const livePrice = livePriceValue && livePriceValue > 0 ? livePriceValue : undefined;
-      const liveDay = toNumber(liveTicker?.priceChangePercent);
-      const priceValue = livePrice ?? coin.current_price;
-
-      return {
-        rank: coin.market_cap_rank,
-        name: coin.name,
-        ticker,
-        logoUrl: coin.image,
-        price: formatUsd(priceValue),
-        priceValue,
-        day: Number(((liveDay ?? coin.price_change_percentage_24h_in_currency) ?? 0).toFixed(2)),
-        week: Number((coin.price_change_percentage_7d_in_currency ?? 0).toFixed(2)),
-        month: Number((coin.price_change_percentage_30d_in_currency ?? 0).toFixed(2)),
-        cap: formatCompactUsd(coin.market_cap),
-        capValue: coin.market_cap,
-        score: Math.max(50, Math.min(96, 98 - Math.round((coin.market_cap_rank ?? 100) / 2))),
-        sparkline: coin.sparkline_in_7d?.price?.filter((value) => typeof value === "number").slice(-80)
-      };
-    });
-
-    return NextResponse.json({ rows, source: "coingecko-binance-live", updatedAt: new Date().toISOString() });
-  } catch {
-    return NextResponse.json({ rows: cryptoFallbackRows, source: "fallback" });
-  }
+  return NextResponse.json({
+    rows,
+    source: livePrices.length ? "crypto-live" : base.source,
+    updatedAt: new Date().toISOString()
+  });
 }
 
-async function fetchBinanceTickers() {
-  const endpoints = ["https://api.binance.com/api/v3/ticker/24hr", "https://api.binance.us/api/v3/ticker/24hr"];
-  const tickers = new Map<string, BinanceTicker>();
+async function getBaseRows(): Promise<{ rows: MarketRow[]; source: string }> {
+  const now = Date.now();
 
-  for (const endpoint of endpoints) {
-    try {
-      const response = await fetch(endpoint, {
+  if (cachedRows && now - cachedRowsAt < COINGECKO_CACHE_MS) {
+    return { rows: cloneRows(cachedRows), source: "coingecko-cache" };
+  }
+
+  try {
+    const response = await fetch(
+      "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&sparkline=true&price_change_percentage=24h,7d,30d",
+      {
         cache: "no-store",
         headers: {
           Accept: "application/json",
           "User-Agent": "Mozilla/5.0"
         }
-      });
-
-      if (!response.ok) continue;
-
-      const payload = await response.json();
-      if (!Array.isArray(payload)) continue;
-
-      for (const ticker of payload as BinanceTicker[]) {
-        const base = getUsdBase(ticker.symbol);
-        if (!base || tickers.has(base)) continue;
-        tickers.set(base, ticker);
       }
-    } catch {
-      continue;
+    );
+
+    if (!response.ok) {
+      return getCachedOrSeedRows();
     }
+
+    const payload: CoinGeckoCoin[] = await response.json();
+    const rows = payload.map(toMarketRow);
+
+    if (rows.length) {
+      cachedRows = rows;
+      cachedRowsAt = now;
+      return { rows: cloneRows(rows), source: "coingecko-top-100" };
+    }
+
+    return getCachedOrSeedRows();
+  } catch {
+    return getCachedOrSeedRows();
+  }
+}
+
+function getCachedOrSeedRows() {
+  if (cachedRows?.length) {
+    return { rows: cloneRows(cachedRows), source: "coingecko-cache" };
   }
 
-  return tickers;
+  return { rows: cloneRows(cryptoFallbackRows), source: "seeded-top-list" };
 }
 
-function getUsdBase(symbol: string) {
-  if (symbol.endsWith("USDT")) return symbol.slice(0, -4);
-  if (symbol.endsWith("USD")) return symbol.slice(0, -3);
-  return null;
-}
-
-function findLiveTicker(ticker: string, tickers: Map<string, BinanceTicker>) {
-  const alias: Record<string, string> = {
-    WBTC: "BTC",
-    WETH: "ETH",
-    STETH: "ETH",
-    WBETH: "ETH"
+function toMarketRow(coin: CoinGeckoCoin): MarketRow {
+  return {
+    rank: coin.market_cap_rank,
+    name: coin.name,
+    ticker: coin.symbol.toUpperCase(),
+    logoUrl: coin.image,
+    price: formatUsd(coin.current_price),
+    priceValue: coin.current_price,
+    day: Number((coin.price_change_percentage_24h_in_currency ?? 0).toFixed(2)),
+    week: Number((coin.price_change_percentage_7d_in_currency ?? 0).toFixed(2)),
+    month: Number((coin.price_change_percentage_30d_in_currency ?? 0).toFixed(2)),
+    cap: formatCompactUsd(coin.market_cap),
+    capValue: coin.market_cap,
+    score: Math.max(50, Math.min(96, 98 - Math.round((coin.market_cap_rank ?? 100) / 2))),
+    sparkline: coin.sparkline_in_7d?.price?.filter((value) => typeof value === "number").slice(-80)
   };
-
-  return tickers.get(alias[ticker] ?? ticker);
 }
 
-function toNumber(value?: string) {
-  if (!value) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+function cloneRows(rows: MarketRow[]) {
+  return rows.map((row) => ({
+    ...row,
+    sparkline: row.sparkline ? [...row.sparkline] : undefined
+  }));
 }
