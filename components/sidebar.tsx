@@ -3,30 +3,24 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
-  BarChart3,
   BriefcaseBusiness,
   ChevronRight,
   CircleDollarSign,
-  Compass,
   Copy,
-  Disc3,
   ExternalLink,
-  FileText,
-  Flame,
   GraduationCap,
   Home,
   LineChart,
   Mail,
   MessageCircle,
-  Radio,
-  Search,
   Send,
+  Twitter,
   UsersRound,
   X
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 
-type InfoModalType = "about" | "services" | "team" | "twitter" | "telegram" | "discord" | "contact";
+type InfoModalType = "team" | "contact";
 
 const sections = [
   {
@@ -34,82 +28,37 @@ const sections = [
     items: [{ label: "Accueil", href: "/", icon: Home }]
   },
   {
-    title: "Données",
+    title: "Donnees",
     items: [
       { label: "Cryptos", href: "/cryptos", icon: CircleDollarSign },
-      { label: "TradFi", href: "/research?category=tradfi", icon: LineChart },
+      { label: "TradFi", href: "/tradfi", icon: LineChart },
       { label: "Portefeuilles", href: "/portfolio", icon: BriefcaseBusiness }
     ]
   },
   {
-    title: "Recherche",
-    items: [
-      { label: "Voir tout", href: "/research", icon: Search },
-      { label: "Formation", href: "/formation", icon: GraduationCap }
-    ]
+    title: "Formation",
+    items: [{ label: "Formation", href: "/formation", icon: GraduationCap }]
   },
   {
-    title: "Fil d'actualité",
+    title: "Our Take",
     items: [
-      { label: "Actualités", href: "/feed?view=news", icon: Radio },
-      { label: "Alpha Feed", href: "/feed?view=alpha", icon: Flame },
-      { label: "Recap", href: "/feed?view=recap", icon: FileText },
-      { label: "Monitoring", href: "/feed?view=monitoring", icon: BarChart3 }
+      { label: "Convictions", href: "/feed?view=convictions", icon: MessageCircle },
+      { label: "Market notes", href: "/feed?view=notes", icon: LineChart },
+      { label: "Watchlist", href: "/feed?view=watchlist", icon: CircleDollarSign }
     ]
   }
 ];
 
-const footerItems: Array<{ label: string; modal: InfoModalType; icon: typeof Compass }> = [
-  { label: "À propos", modal: "about", icon: Compass },
-  { label: "Services", modal: "services", icon: Disc3 },
-  { label: "Notre équipe", modal: "team", icon: UsersRound },
-  { label: "Twitter", modal: "twitter", icon: MessageCircle },
-  { label: "Telegram", modal: "telegram", icon: MessageCircle },
-  { label: "Discord", modal: "discord", icon: MessageCircle },
+const footerItems: Array<{ label: string; modal: InfoModalType; icon: typeof UsersRound }> = [
+  { label: "Notre equipe", modal: "team", icon: UsersRound },
   { label: "Contact", modal: "contact", icon: MessageCircle }
 ];
 
-const modalContent: Record<
-  Exclude<InfoModalType, "contact">,
-  { title: string; description: string; actions: Array<{ label: string; href: string }> }
-> = {
-  about: {
-    title: "À propos d'Insider Crypto",
-    description:
-      "Insider Crypto est un terminal privé pour suivre portefeuilles, formations, signaux et recherche crypto avec une approche structurée.",
-    actions: [{ label: "Voir la recherche", href: "/research" }]
-  },
-  services: {
-    title: "Services Insider Crypto",
-    description:
-      "Research crypto & macro, portefeuilles modèles, formations premium, monitoring on-chain et accompagnement investisseurs.",
-    actions: [
-      { label: "Voir les formations", href: "/formation" },
-      { label: "Voir les portefeuilles", href: "/portfolio" }
-    ]
-  },
-  team: {
-    title: "Notre équipe",
-    description:
-      "Une équipe research orientée marché, allocation, données on-chain et pédagogie. Les profils détaillés seront branchés dans une prochaine version.",
-    actions: [{ label: "Contacter l'équipe", href: "#contact" }]
-  },
-  twitter: {
-    title: "Twitter Insider Crypto",
-    description: "Suivez les publications courtes, alertes et commentaires marché d'Insider Crypto.",
-    actions: [{ label: "Ouvrir Twitter", href: "https://twitter.com" }]
-  },
-  telegram: {
-    title: "Telegram Insider Crypto",
-    description: "Rejoignez le canal Telegram pour les annonces, alertes et suivis rapides.",
-    actions: [{ label: "Ouvrir Telegram", href: "https://t.me" }]
-  },
-  discord: {
-    title: "Discord Insider Crypto",
-    description: "Accédez à l'espace communauté, aux discussions privées et aux salons de suivi.",
-    actions: [{ label: "Ouvrir Discord", href: "https://discord.com" }]
-  }
-};
+const socialLinks = [
+  { label: "Twitter", href: "#", icon: Twitter },
+  { label: "Telegram", href: "#", icon: Send },
+  { label: "Discord", href: "#", icon: MessageCircle }
+];
 
 export function Sidebar() {
   const [activeModal, setActiveModal] = useState<InfoModalType | null>(null);
@@ -171,6 +120,22 @@ export function Sidebar() {
             );
           })}
         </div>
+
+        <div className="mt-5 flex items-center gap-2 px-2">
+          {socialLinks.map((item) => {
+            const Icon = item.icon;
+            return (
+              <a
+                key={item.label}
+                href={item.href}
+                aria-label={item.label}
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-line text-muted transition hover:border-white/20 hover:text-white"
+              >
+                <Icon size={16} />
+              </a>
+            );
+          })}
+        </div>
       </aside>
 
       {activeModal ? <SidebarModal type={activeModal} onClose={() => setActiveModal(null)} /> : null}
@@ -183,37 +148,25 @@ function SidebarModal({ type, onClose }: { type: InfoModalType; onClose: () => v
     return <ContactModal onClose={onClose} />;
   }
 
-  const content = modalContent[type];
-
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-[22px] border border-white/10 bg-[#080A0F] p-6 shadow-glow">
         <ModalHeader onClose={onClose} />
-        <h2 className="mt-4 text-2xl font-semibold tracking-tight text-white">{content.title}</h2>
-        <p className="mt-3 text-sm leading-6 text-muted">{content.description}</p>
-        <div className="mt-6 grid gap-3">
-          {content.actions.map((action) => {
-            const isExternal = action.href.startsWith("http");
-            return (
-              <Link
-                key={action.label}
-                href={action.href === "#contact" ? "#" : action.href}
-                target={isExternal ? "_blank" : undefined}
-                onClick={(event) => {
-                  if (action.href === "#contact") {
-                    event.preventDefault();
-                    onClose();
-                    setTimeout(() => window.dispatchEvent(new CustomEvent("open-insider-contact")), 0);
-                  }
-                }}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.04]"
-              >
-                {action.label}
-                {isExternal ? <ExternalLink size={15} /> : <ChevronRight size={15} />}
-              </Link>
-            );
-          })}
-        </div>
+        <h2 className="mt-4 text-2xl font-semibold tracking-tight text-white">Notre equipe</h2>
+        <p className="mt-3 text-sm leading-6 text-muted">
+          Une equipe research orientee marche, allocation, donnees on-chain et pedagogie. Les profils detailles seront branches
+          dans une prochaine version.
+        </p>
+        <button
+          onClick={() => {
+            onClose();
+            setTimeout(() => window.dispatchEvent(new CustomEvent("open-insider-contact")), 0);
+          }}
+          className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.04]"
+        >
+          Contacter l'equipe
+          <ExternalLink size={15} />
+        </button>
       </div>
     </div>
   );
@@ -258,8 +211,7 @@ function ContactModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <a
-          href="https://t.me"
-          target="_blank"
+          href="#"
           className="mt-4 flex h-12 items-center justify-center gap-2 rounded-xl border border-white/10 text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.04]"
         >
           <Send size={17} />

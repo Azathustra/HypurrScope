@@ -5,9 +5,13 @@ import { alphaSignals } from "@/lib/mock-saas-data";
 export default function FeedPage() {
   return (
     <div className="space-y-7">
-      <SectionHeading eyebrow="Alpha Feed" title="Signaux et briefs research" description="Thèse, trigger, invalidation, horizon et niveau de risque." />
+      <SectionHeading
+        eyebrow="Our Take"
+        title="Convictions et notes marche"
+        description="Lecture Insider des setups, invalidations, horizons et niveaux de risque."
+      />
       <div className="flex flex-wrap gap-2">
-        {["All", "Bitcoin", "L1", "DeFi", "AI", "Hyperliquid", "TradFi"].map((filter) => (
+        {["All", "Convictions", "Market notes", "Watchlist", "Risk", "Macro"].map((filter) => (
           <span key={filter} className="rounded-full border border-line px-3 py-1.5 text-sm text-muted">{filter}</span>
         ))}
       </div>

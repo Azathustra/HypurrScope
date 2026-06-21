@@ -1,13 +1,13 @@
 import Link from "next/link";
-import { BriefcaseBusiness, CircleDollarSign, Flame, GraduationCap, Home, Search } from "lucide-react";
+import { BriefcaseBusiness, CircleDollarSign, Flame, GraduationCap, Home, LineChart } from "lucide-react";
 
 const items = [
   { label: "Accueil", href: "/", icon: Home },
   { label: "Crypto", href: "/cryptos", icon: CircleDollarSign },
+  { label: "TradFi", href: "/tradfi", icon: LineChart },
   { label: "Portfolio", href: "/portfolio", icon: BriefcaseBusiness },
-  { label: "Feed", href: "/feed", icon: Flame },
-  { label: "Formation", href: "/formation", icon: GraduationCap },
-  { label: "Recherche", href: "/research", icon: Search }
+  { label: "Our Take", href: "/feed", icon: Flame },
+  { label: "Formation", href: "/formation", icon: GraduationCap }
 ];
 
 export function MobileNav() {
