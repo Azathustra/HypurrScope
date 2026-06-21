@@ -50,8 +50,7 @@ const landingCopy: Record<Locale, {
   pricingKicker: string;
   pricingTitle: string;
   pricingIntro: string;
-  changePlan: string;
-  choosePlan: string;
+  subscribePlan: string;
   servicesKicker: string;
   servicesTitle: string;
   linksKicker: string;
@@ -84,9 +83,9 @@ const landingCopy: Record<Locale, {
       "Alpha Feed, monitoring et recap pour ne pas manquer les rotations importantes."
     ],
     plans: [
-      { name: "Mensuel", price: "49 EUR", cadence: "par mois", detail: "Pour suivre le marche chaque semaine.", perks: ["Terminal prive", "Alpha Feed", "Formations", "Support communaute"] },
-      { name: "Annuel", price: "399 EUR", cadence: "par an", detail: "Le meilleur choix pour construire un vrai process.", perks: ["Tout le mensuel", "Rapports longs", "Portefeuille modele", "Priorite services"] },
-      { name: "Desk", price: "990 EUR", cadence: "sur demande", detail: "Pour profils avances et accompagnement premium.", perks: ["Session strategique", "Watchlist privee", "Review portefeuille", "Acces prioritaire"] }
+      { name: "Theses", price: "49 EUR", cadence: "par mois", detail: "Acces a nos theses d'investissement.", perks: ["Theses d'investissement", "Notes research", "Our Take", "Archives membres"] },
+      { name: "Portefeuille & alertes", price: "99 EUR", cadence: "par mois", detail: "Acces au portefeuille modele et aux alertes.", perks: ["Tout l'acces theses", "Portefeuille modele", "Alertes marche", "Suivi des mouvements"] },
+      { name: "Annuel", price: "944 EUR", cadence: "par an", detail: "La meme offre portefeuille & alertes avec 20% de reduction annuelle.", perks: ["Portefeuille & alertes", "12 mois d'acces", "20% de reduction", "Priorite sur les mises a jour"] }
     ],
     services: ["Research crypto & macro", "Portefeuilles modeles", "Formations premium", "Monitoring on-chain", "Recaps marche", "Services investisseurs"],
     links: ["Twitter", "Telegram", "Discord", "Newsletter"],
@@ -110,8 +109,7 @@ const landingCopy: Record<Locale, {
     pricingKicker: "Abonnements",
     pricingTitle: "Choisir son acces",
     pricingIntro: "Choisis une formule, verifie le recapitulatif, puis continue vers le paiement. Le bouton final simule le paiement en attendant l'integration Stripe.",
-    changePlan: "Changer d'abonnement",
-    choosePlan: "Choisir l'abonnement",
+    subscribePlan: "S'abonner",
     servicesKicker: "Services",
     servicesTitle: "Un desk crypto dans une interface",
     linksKicker: "Liens",
@@ -144,9 +142,9 @@ const landingCopy: Record<Locale, {
       "Alpha Feed, monitoring and recaps so you do not miss important rotations."
     ],
     plans: [
-      { name: "Monthly", price: "49 EUR", cadence: "per month", detail: "For following the market every week.", perks: ["Private terminal", "Alpha Feed", "Training", "Community support"] },
-      { name: "Yearly", price: "399 EUR", cadence: "per year", detail: "The best choice to build a real process.", perks: ["Everything monthly", "Long reports", "Model portfolio", "Priority services"] },
-      { name: "Desk", price: "990 EUR", cadence: "on request", detail: "For advanced profiles and premium support.", perks: ["Strategy session", "Private watchlist", "Portfolio review", "Priority access"] }
+      { name: "Theses", price: "49 EUR", cadence: "per month", detail: "Access to our investment theses.", perks: ["Investment theses", "Research notes", "Our Take", "Member archives"] },
+      { name: "Portfolio & alerts", price: "99 EUR", cadence: "per month", detail: "Access to the model portfolio and market alerts.", perks: ["Everything in theses", "Model portfolio", "Market alerts", "Move tracking"] },
+      { name: "Yearly", price: "944 EUR", cadence: "per year", detail: "The same portfolio & alerts plan with a 20% yearly discount.", perks: ["Portfolio & alerts", "12 months access", "20% discount", "Priority updates"] }
     ],
     services: ["Crypto & macro research", "Model portfolios", "Premium training", "On-chain monitoring", "Market recaps", "Investor services"],
     links: ["Twitter", "Telegram", "Discord", "Newsletter"],
@@ -170,8 +168,7 @@ const landingCopy: Record<Locale, {
     pricingKicker: "Pricing",
     pricingTitle: "Choose your access",
     pricingIntro: "Choose a plan, check the summary, then continue to payment. The final button simulates payment until Stripe is connected.",
-    changePlan: "Change plan",
-    choosePlan: "Choose plan",
+    subscribePlan: "Subscribe",
     servicesKicker: "Services",
     servicesTitle: "A crypto desk in one interface",
     linksKicker: "Links",
@@ -388,7 +385,7 @@ export default function HomePage() {
                   onClick={() => setSelectedPlan(plan)}
                   className="mt-7 w-full rounded-full bg-white px-5 py-3 text-sm font-black uppercase tracking-[0.16em] text-black transition hover:bg-white/90"
                 >
-                  {hasSubscription ? copy.changePlan : copy.choosePlan}
+                  {copy.subscribePlan}
                 </button>
               </article>
             ))}

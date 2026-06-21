@@ -57,7 +57,7 @@ export async function POST(request: Request) {
 
 function mapPriceToPlan(priceId?: string): string {
   if (!priceId) return "member";
-  if (priceId === process.env.STRIPE_PRICE_DESK_YEARLY) return "desk";
-  if (priceId === process.env.STRIPE_PRICE_MEMBER_YEARLY) return "pro";
+  if (priceId === process.env.STRIPE_PRICE_PORTFOLIO_ALERTS_MONTHLY) return "pro";
+  if (priceId === process.env.STRIPE_PRICE_PORTFOLIO_ALERTS_YEARLY) return "pro";
   return "member";
 }

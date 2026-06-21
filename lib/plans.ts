@@ -11,43 +11,41 @@ export const activeStripeStatuses = ["active", "trialing"] as const;
 
 export const pricingPlans = [
   {
-    key: "member_monthly",
+    key: "theses_monthly",
     plan: "member" as PlanKey,
-    name: "Mensuel",
-    price: "49 €",
+    name: "Theses",
+    price: "49 EUR",
     cadence: "par mois",
-    stripePriceEnv: "STRIPE_PRICE_MEMBER_MONTHLY",
-    highlight: false
+    description: "Acces a nos theses d'investissement.",
+    stripePriceEnv: "STRIPE_PRICE_THESES_MONTHLY",
+    highlight: false,
+    features: ["Theses d'investissement", "Notes research", "Our Take", "Archives membres"]
   },
   {
-    key: "member_yearly",
+    key: "portfolio_alerts_monthly",
+    plan: "pro" as PlanKey,
+    name: "Portefeuille & alertes",
+    price: "99 EUR",
+    cadence: "par mois",
+    description: "Acces au portefeuille modele et aux alertes.",
+    stripePriceEnv: "STRIPE_PRICE_PORTFOLIO_ALERTS_MONTHLY",
+    highlight: true,
+    features: ["Tout l'acces theses", "Portefeuille modele", "Alertes marche", "Suivi des mouvements"]
+  },
+  {
+    key: "portfolio_alerts_yearly",
     plan: "pro" as PlanKey,
     name: "Annuel",
-    price: "399 €",
+    price: "944 EUR",
     cadence: "par an",
-    stripePriceEnv: "STRIPE_PRICE_MEMBER_YEARLY",
-    highlight: true
-  },
-  {
-    key: "desk",
-    plan: "desk" as PlanKey,
-    name: "Desk",
-    price: "990 €",
-    cadence: "par an ou sur demande",
-    stripePriceEnv: "STRIPE_PRICE_DESK_YEARLY",
-    highlight: false
+    description: "20% de reduction par rapport a l'abonnement mensuel.",
+    stripePriceEnv: "STRIPE_PRICE_PORTFOLIO_ALERTS_YEARLY",
+    highlight: false,
+    features: ["Portefeuille & alertes", "12 mois d'acces", "20% de reduction", "Priorite sur les mises a jour"]
   }
 ];
 
-export const pricingFeatures = [
-  "Accès terminal",
-  "Research premium",
-  "Alpha feed",
-  "Portefeuilles modèles",
-  "Rapports longs",
-  "Formations",
-  "Support communauté"
-];
+export const pricingFeatures = pricingPlans[1].features;
 
 export function canAccess(requiredPlan: PlanKey, userPlan: PlanKey) {
   return planRank[userPlan] >= planRank[requiredPlan];

@@ -7,6 +7,7 @@ export function PricingCard({
   name,
   price,
   cadence,
+  description,
   highlight,
   features,
   priceKey
@@ -14,6 +15,7 @@ export function PricingCard({
   name: string;
   price: string;
   cadence: string;
+  description?: string;
   highlight?: boolean;
   features: string[];
   priceKey: string;
@@ -26,6 +28,7 @@ export function PricingCard({
         <h3 className="text-xl font-semibold text-white">{name}</h3>
         <p className="mt-4 text-4xl font-semibold text-white">{price}</p>
         <p className="mt-1 text-sm text-muted">{cadence}</p>
+        {description ? <p className="mt-3 text-sm leading-6 text-muted">{description}</p> : null}
         <div className="mt-6 space-y-3">
           {features.map((feature) => (
             <p key={feature} className="flex items-center gap-2 text-sm text-white">
