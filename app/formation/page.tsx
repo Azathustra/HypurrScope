@@ -7,7 +7,7 @@ export default function FormationPage() {
       <div>
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-accent">Formation</p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white lg:text-5xl">
-          Se former avec Insider Crypto
+          Se former avec Crypto Hold-Up
         </h1>
         <p className="mt-3 max-w-3xl text-base leading-7 text-muted">
           Parcours premium pour apprendre à lire le marché, construire un portefeuille et transformer les données crypto en décisions.

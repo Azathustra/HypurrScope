@@ -8,7 +8,7 @@ import type { MarketRow } from "@/lib/market-data";
 
 export function DataTable({ rows, endpoint }: { rows: MarketRow[]; endpoint?: string }) {
   const [tableRows, setTableRows] = useState(rows);
-  const [source, setSource] = useState(endpoint ? "Chargement live..." : "Dossier Insider");
+  const [source, setSource] = useState(endpoint ? "Chargement live..." : "Dossier Crypto Hold-Up");
 
   useEffect(() => {
     if (!endpoint) return;

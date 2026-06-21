@@ -35,7 +35,7 @@ export default function LoginPage() {
       <main className="mx-auto flex min-h-[calc(100vh-72px)] max-w-md items-center px-4">
         <form onSubmit={onSubmit} className="premium-card w-full rounded-[20px] p-6">
           <h1 className="text-2xl font-semibold text-white">Connexion</h1>
-          <p className="mt-2 text-sm text-muted">Accéder à l'espace membre Insider Crypto.</p>
+          <p className="mt-2 text-sm text-muted">Accéder à l'espace membre Crypto Hold-Up.</p>
           <input className="mt-6 w-full rounded-xl border border-line bg-black/20 px-4 py-3 text-white" placeholder="Email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
           <input className="mt-3 w-full rounded-xl border border-line bg-black/20 px-4 py-3 text-white" placeholder="Mot de passe" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required />
           <button className="mt-5 w-full rounded-full bg-white px-5 py-3 text-sm font-semibold text-ink">Se connecter</button>

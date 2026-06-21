@@ -8,7 +8,7 @@ export default function FeedPage() {
       <SectionHeading
         eyebrow="Our Take"
         title="Convictions et notes marche"
-        description="Lecture Insider des setups, invalidations, horizons et niveaux de risque."
+        description="Lecture Crypto Hold-Up des setups, invalidations, horizons et niveaux de risque."
       />
       <div className="flex flex-wrap gap-2">
         {["All", "Our Take", "Watchlist", "Risk", "Macro"].map((filter) => (

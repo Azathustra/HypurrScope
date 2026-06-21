@@ -10,7 +10,7 @@ export default function PricingPage() {
       <main className="mx-auto max-w-7xl space-y-8 px-4 py-10 lg:px-8">
         <SectionHeading
           eyebrow="Abonnements"
-          title="Choisir son acces Insider Crypto"
+          title="Choisir son acces Crypto Hold-Up"
           description="Trois offres simples : theses d'investissement, portefeuille avec alertes, ou formule annuelle avec 20% de reduction."
         />
         <div className="grid gap-5 lg:grid-cols-3">

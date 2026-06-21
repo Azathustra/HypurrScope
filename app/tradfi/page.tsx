@@ -9,7 +9,7 @@ export default function TradFiPage() {
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-accent">Donnees TradFi</p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white lg:text-5xl">Marches suivis</h1>
         <p className="mt-3 max-w-3xl text-base leading-7 text-muted">
-          Indices, actions et couvertures macro suivis avec prix live et score Insider.
+          Indices, actions et couvertures macro suivis avec prix live et score Crypto Hold-Up.
         </p>
       </div>
       <div className="grid gap-4 md:grid-cols-3">

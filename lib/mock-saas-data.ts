@@ -109,7 +109,7 @@ export const alphaSignals: AlphaSignal[] = Array.from({ length: 10 }, (_, index)
 export const portfolios: ModelPortfolio[] = [
   {
     id: "portfolio-1",
-    name: "Insider Portfolio",
+    name: "Crypto Hold-Up Portfolio",
     slug: "insider-portfolio",
     description: "Allocation multi-actifs crypto, TradFi et cash conçue pour comparer la performance à Bitcoin.",
     initialValue: 50000,
@@ -203,7 +203,7 @@ export const performancePoints = Array.from({ length: 200 }, (_, index) => ({
 
 export const reports = Array.from({ length: 8 }, (_, index) => ({
   id: `report-${index + 1}`,
-  title: `Rapport mensuel Insider Crypto #${index + 1}`,
+  title: `Rapport mensuel Crypto Hold-Up #${index + 1}`,
   slug: `rapport-mensuel-${index + 1}`,
   excerpt: "Rapport long sur liquidité, cycles crypto, risques et allocations modèles.",
   requiredPlan: index < 2 ? "member" : index < 6 ? "pro" : "desk",

@@ -8,7 +8,7 @@ export default function AboutPage() {
       <main className="mx-auto max-w-5xl px-4 py-10 lg:px-8">
         <SectionHeading
           eyebrow="À propos"
-          title="Insider Crypto, terminal research privé"
+          title="Crypto Hold-Up, terminal research privé"
           description="Un produit média/SaaS pour agréger recherche, portefeuilles modèles, formations et signaux crypto dans une interface premium."
         />
         <div className="premium-card mt-8 rounded-[20px] p-6 text-sm leading-7 text-muted">

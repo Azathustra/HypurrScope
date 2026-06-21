@@ -16,7 +16,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <GateCard
         eyebrow="Abonnement requis"
-        title="Cette zone est réservée aux abonnés Insider Crypto."
+        title="Cette zone est réservée aux abonnés Crypto Hold-Up."
         description="Choisis d'abord un abonnement depuis la page d'accueil. Une fois abonné, tu pourras te connecter et accéder au terminal, aux portefeuilles, aux formations et aux signaux."
         icon={<LockKeyhole size={15} className="text-accent" />}
       >

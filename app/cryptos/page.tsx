@@ -9,7 +9,7 @@ export default function CryptosPage() {
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-accent">Donnees crypto</p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white lg:text-5xl">Cryptos monitorees</h1>
         <p className="mt-3 max-w-3xl text-base leading-7 text-muted">
-          Prix live, momentum et score Insider sur les actifs suivis par l'equipe research.
+          Prix live, momentum et score Crypto Hold-Up sur les actifs suivis par l'equipe research.
         </p>
       </div>
       <div className="grid gap-4 md:grid-cols-3">

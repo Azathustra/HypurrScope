@@ -20,7 +20,7 @@ export default async function AdminPage() {
 
   return (
     <div className="space-y-7">
-      <SectionHeading eyebrow="Admin" title="Back-office Insider Crypto" description="Gestion éditoriale, abonnements et utilisateurs." />
+      <SectionHeading eyebrow="Admin" title="Back-office Crypto Hold-Up" description="Gestion éditoriale, abonnements et utilisateurs." />
       <div className="grid gap-4 md:grid-cols-3">
         {adminLinks.map(([href, label]) => (
           <Link key={href} href={href} className="premium-card rounded-[20px] p-5 text-lg font-semibold text-white">{label}</Link>

@@ -29,7 +29,7 @@ export type FeedPost = {
 };
 
 export const portfolioSummary = {
-  name: "Insider Portfolio",
+  name: "Crypto Hold-Up Portfolio",
   riskScore: 50,
   assets: 5,
   initialInvestment: "$50K",

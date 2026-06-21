@@ -83,11 +83,6 @@ export function Sidebar() {
                   <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted/70">
                     {section.title}
                   </p>
-                  {section.premium ? (
-                    <span className="rounded-full border border-accent/25 bg-accent/10 p-1 text-accent" title="Premium a debloquer">
-                      <LockKeyhole size={12} />
-                    </span>
-                  ) : null}
                 </div>
               ) : null}
               <div className="space-y-1">
@@ -217,7 +212,7 @@ function SidebarModal({ type, onClose }: { type: InfoModalType; onClose: () => v
             <UsersRound size={24} />
           </span>
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Insider Crypto</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Crypto Hold-Up</p>
             <h2 className="text-3xl font-semibold tracking-tight text-white">Notre equipe</h2>
           </div>
         </div>
@@ -241,16 +236,16 @@ function SidebarModal({ type, onClose }: { type: InfoModalType; onClose: () => v
 }
 
 function ContactModal({ onClose }: { onClose: () => void }) {
-  const email = "contact@insidercrypto.io";
+  const email = "contact@cryptoholdup.io";
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
       <ModalPanel>
         <ModalHeader onClose={onClose} />
         <div className="mt-3 flex items-center gap-4">
-          <img src="/brand/insider-crypto-logo.png" alt="Insider Crypto" className="h-14 w-14 rounded-full object-cover" />
+          <img src="/brand/crypto-hold-up-logo.png" alt="Crypto Hold-Up" className="h-14 w-14 rounded-full object-cover" />
           <div>
-            <h2 className="text-3xl font-semibold tracking-tight text-white">Contactez Insider Crypto</h2>
+            <h2 className="text-3xl font-semibold tracking-tight text-white">Contactez Crypto Hold-Up</h2>
             <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-muted">Crypto research terminal</p>
           </div>
         </div>

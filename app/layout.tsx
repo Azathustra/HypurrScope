@@ -7,7 +7,7 @@ import { I18nProvider } from "@/components/i18n-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
-  title: "Insider Crypto",
+  title: "Crypto Hold-Up",
   description: "Terminal crypto premium pour portefeuilles, signaux et research."
 };
 

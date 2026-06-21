@@ -5,7 +5,7 @@ export default function AdminUsersPage() {
   return (
     <div className="space-y-7">
       <SectionHeading eyebrow="Admin" title="Utilisateurs" />
-      <AdminTable title="Utilisateurs mockés" rows={[{ email: "member@insidercrypto.io", role: "user", plan: "member" }, { email: "admin@insidercrypto.io", role: "admin", plan: "desk" }]} />
+      <AdminTable title="Utilisateurs mockés" rows={[{ email: "member@cryptoholdup.io", role: "user", plan: "member" }, { email: "admin@cryptoholdup.io", role: "admin", plan: "desk" }]} />
     </div>
   );
 }
