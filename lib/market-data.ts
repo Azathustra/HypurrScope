@@ -13,14 +13,14 @@ export type MarketRow = {
 };
 
 export const cryptoFallbackRows: MarketRow[] = [
-  { rank: 1, name: "Bitcoin", ticker: "BTC", price: "$104,840", day: 1.8, week: 5.4, month: 8.2, cap: "$2.08T", score: 92, sparkline: [96, 98, 101, 99, 103, 105, 104] },
-  { rank: 2, name: "Ethereum", ticker: "ETH", price: "$3,740", day: -0.7, week: 2.2, month: 4.1, cap: "$451B", score: 81, sparkline: [92, 94, 95, 93, 96, 97, 95] },
-  { rank: 3, name: "Solana", ticker: "SOL", price: "$187.32", day: 3.1, week: 9.8, month: 12.4, cap: "$91B", score: 84, sparkline: [70, 74, 78, 81, 86, 90, 94] },
-  { rank: 4, name: "Hyperliquid", ticker: "HYPE", price: "$66.00", day: 4.6, week: 18.2, month: 22.1, cap: "$21.9B", score: 89, sparkline: [44, 47, 51, 58, 61, 64, 66] },
-  { rank: 5, name: "Bittensor", ticker: "TAO", price: "$481.10", day: -2.4, week: 6.1, month: -3.3, cap: "$3.6B", score: 76, sparkline: [500, 492, 488, 494, 486, 478, 481] },
-  { rank: 6, name: "Chainlink", ticker: "LINK", price: "$22.41", day: 0.9, week: 4.7, month: 6.6, cap: "$14.3B", score: 78, sparkline: [20, 20.4, 21, 21.6, 22.1, 21.9, 22.4] },
-  { rank: 7, name: "BNB", ticker: "BNB", price: "$702.50", day: 1.2, week: 3.1, month: 2.7, cap: "$102B", score: 72, sparkline: [680, 688, 692, 697, 701, 699, 702] },
-  { rank: 8, name: "XRP", ticker: "XRP", price: "$2.28", day: -1.6, week: -3.4, month: -5.1, cap: "$131B", score: 61, sparkline: [2.42, 2.39, 2.36, 2.31, 2.34, 2.29, 2.28] }
+  { rank: 1, name: "Bitcoin", ticker: "BTC", logoUrl: "https://assets.coingecko.com/coins/images/1/small/bitcoin.png", price: "$104,840", day: 1.8, week: 5.4, month: 8.2, cap: "$2.08T", score: 92, sparkline: [96, 98, 101, 99, 103, 105, 104] },
+  { rank: 2, name: "Ethereum", ticker: "ETH", logoUrl: "https://assets.coingecko.com/coins/images/279/small/ethereum.png", price: "$3,740", day: -0.7, week: 2.2, month: 4.1, cap: "$451B", score: 81, sparkline: [92, 94, 95, 93, 96, 97, 95] },
+  { rank: 3, name: "Solana", ticker: "SOL", logoUrl: "https://assets.coingecko.com/coins/images/4128/small/solana.png", price: "$187.32", day: 3.1, week: 9.8, month: 12.4, cap: "$91B", score: 84, sparkline: [70, 74, 78, 81, 86, 90, 94] },
+  { rank: 4, name: "Hyperliquid", ticker: "HYPE", logoUrl: "https://assets.coingecko.com/coins/images/50882/small/hyperliquid.jpg", price: "$66.00", day: 4.6, week: 18.2, month: 22.1, cap: "$21.9B", score: 89, sparkline: [44, 47, 51, 58, 61, 64, 66] },
+  { rank: 5, name: "Bittensor", ticker: "TAO", logoUrl: "https://assets.coingecko.com/coins/images/28452/small/ARUsPeNQ_400x400.jpeg", price: "$481.10", day: -2.4, week: 6.1, month: -3.3, cap: "$3.6B", score: 76, sparkline: [500, 492, 488, 494, 486, 478, 481] },
+  { rank: 6, name: "Chainlink", ticker: "LINK", logoUrl: "https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png", price: "$22.41", day: 0.9, week: 4.7, month: 6.6, cap: "$14.3B", score: 78, sparkline: [20, 20.4, 21, 21.6, 22.1, 21.9, 22.4] },
+  { rank: 7, name: "BNB", ticker: "BNB", logoUrl: "https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png", price: "$702.50", day: 1.2, week: 3.1, month: 2.7, cap: "$102B", score: 72, sparkline: [680, 688, 692, 697, 701, 699, 702] },
+  { rank: 8, name: "XRP", ticker: "XRP", logoUrl: "https://assets.coingecko.com/coins/images/44/small/xrp-symbol-white-128.png", price: "$2.28", day: -1.6, week: -3.4, month: -5.1, cap: "$131B", score: 61, sparkline: [2.42, 2.39, 2.36, 2.31, 2.34, 2.29, 2.28] }
 ];
 
 export const tradfiFallbackRows: MarketRow[] = [
