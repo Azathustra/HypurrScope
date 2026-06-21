@@ -11,7 +11,7 @@ export default function FeedPage() {
         description="Lecture Insider des setups, invalidations, horizons et niveaux de risque."
       />
       <div className="flex flex-wrap gap-2">
-        {["All", "Convictions", "Market notes", "Watchlist", "Risk", "Macro"].map((filter) => (
+        {["All", "Our Take", "Watchlist", "Risk", "Macro"].map((filter) => (
           <span key={filter} className="rounded-full border border-line px-3 py-1.5 text-sm text-muted">{filter}</span>
         ))}
       </div>

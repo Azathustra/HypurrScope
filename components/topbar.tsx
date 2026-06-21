@@ -6,12 +6,12 @@ import { SiteControls } from "@/components/site-controls";
 import { useI18n } from "@/components/i18n-provider";
 
 export function Topbar() {
-  const { hasSubscription, isLoggedIn, login, logout } = useAuth();
+  const { isLoggedIn, login, logout } = useAuth();
   const { locale } = useI18n();
   const copy =
     locale === "en"
-      ? { search: "Search an asset, thesis, signal...", calendar: "Calendar", member: "Member", login: "Login", subscribe: "Subscribe" }
-      : { search: "Rechercher un actif, une these, un signal...", calendar: "Calendrier", member: "Membre", login: "Connexion", subscribe: "S'abonner" };
+      ? { search: "Search an asset, thesis, signal...", calendar: "Calendar", member: "Member", login: "Login" }
+      : { search: "Rechercher un actif, une these, un signal...", calendar: "Calendrier", member: "Membre", login: "Connexion" };
 
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-ink/78 px-4 py-4 backdrop-blur-xl lg:px-8">
@@ -36,7 +36,7 @@ export function Topbar() {
         >
           <UserRound size={18} />
           <span className="hidden text-sm font-medium sm:inline">
-            {isLoggedIn ? copy.member : hasSubscription ? copy.login : copy.subscribe}
+            {isLoggedIn ? copy.member : copy.login}
           </span>
         </button>
       </div>

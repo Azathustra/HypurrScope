@@ -6,9 +6,8 @@ import { Sidebar } from "@/components/sidebar";
 import { Topbar } from "@/components/topbar";
 import { MobileNav } from "@/components/mobile-nav";
 import { AuthProvider } from "@/components/auth-provider";
-import { AuthGate } from "@/components/auth-gate";
 
-const publicPrefixes = ["/", "/pricing", "/methodologie", "/research", "/about", "/faq", "/legal", "/login", "/signup"];
+const publicPrefixes = ["/pricing", "/methodologie", "/research", "/about", "/faq", "/legal", "/login", "/signup"];
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
@@ -32,7 +31,7 @@ function ShellContent({ children }: { children: ReactNode }) {
       <div className="lg:pl-[250px]">
         <Topbar />
         <main className="mx-auto max-w-7xl px-4 pb-28 pt-8 lg:px-8 lg:pb-8">
-          <AuthGate>{children}</AuthGate>
+          {children}
         </main>
       </div>
       <MobileNav />

@@ -8,8 +8,8 @@ import {
   CircleDollarSign,
   Copy,
   ExternalLink,
+  Flame,
   GraduationCap,
-  Home,
   LineChart,
   Mail,
   MessageCircle,
@@ -24,26 +24,18 @@ type InfoModalType = "team" | "contact";
 
 const sections = [
   {
-    title: "",
-    items: [{ label: "Accueil", href: "/", icon: Home }]
-  },
-  {
     title: "Donnees",
     items: [
       { label: "Cryptos", href: "/cryptos", icon: CircleDollarSign },
-      { label: "TradFi", href: "/tradfi", icon: LineChart },
-      { label: "Portefeuilles", href: "/portfolio", icon: BriefcaseBusiness }
+      { label: "TradFi", href: "/tradfi", icon: LineChart }
     ]
   },
   {
-    title: "Formation",
-    items: [{ label: "Formation", href: "/formation", icon: GraduationCap }]
-  },
-  {
-    title: "Our Take",
+    title: "Premium",
     items: [
-      { label: "Convictions", href: "/feed?view=convictions", icon: MessageCircle },
-      { label: "Market notes", href: "/feed?view=notes", icon: LineChart },
+      { label: "Our Take", href: "/feed", icon: Flame },
+      { label: "Portefeuille", href: "/portfolio", icon: BriefcaseBusiness },
+      { label: "Formation", href: "/formation", icon: GraduationCap },
       { label: "Watchlist", href: "/feed?view=watchlist", icon: CircleDollarSign }
     ]
   }
