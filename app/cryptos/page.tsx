@@ -22,7 +22,7 @@ export default function CryptosPage() {
         endpoint="/api/markets/crypto"
         refreshMs={60000}
         liveEndpoint="/api/markets/crypto/live"
-        liveRefreshMs={3000}
+        liveRefreshMs={2000}
         liveStream="binance"
       />
     </div>

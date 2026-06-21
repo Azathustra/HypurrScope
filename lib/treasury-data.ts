@@ -86,23 +86,32 @@ const supplies = {
   ETH: 120_700_000
 };
 
-export async function getCryptoTreasuryData(): Promise<CryptoTreasuryData> {
-  const [btcCompaniesHtml, btcEtfsHtml, btcGovernmentsHtml, ethCompaniesHtml, livePrices] = await Promise.all([
-    fetchTreasuryPage(sources.btcCompanies),
-    fetchTreasuryPage(sources.btcEtfs),
-    fetchTreasuryPage(sources.btcGovernments),
-    fetchTreasuryPage(sources.ethCompanies),
-    fetchCryptoLivePrices(["BTC", "ETH"])
-  ]);
+const TREASURY_SOURCE_CACHE_MS = 10 * 60 * 1000;
+const MARKET_PROFILE_CACHE_MS = 5 * 60 * 1000;
 
+let sourceCache: {
+  at: number;
+  rows: {
+    btcCompanies: RawTreasuryItem[];
+    btcEtfs: RawTreasuryItem[];
+    btcGovernments: RawTreasuryItem[];
+    ethCompanies: RawTreasuryItem[];
+  };
+} | null = null;
+
+let profileCache: {
+  at: number;
+  key: string;
+  profiles: Map<string, MarketProfile>;
+} | null = null;
+
+export async function getCryptoTreasuryData(): Promise<CryptoTreasuryData> {
+  const [sourceRows, livePrices] = await Promise.all([getTreasurySourceRows(), fetchCryptoLivePrices(["BTC", "ETH"])]);
   const btcPrice = livePrices.find((price) => price.ticker === "BTC")?.priceValue;
   const ethPrice = livePrices.find((price) => price.ticker === "ETH")?.priceValue;
-  const btcCompanies = parseBtcCompanies(btcCompaniesHtml) || fallbackBtcCompanies;
-  const btcEtfs = parseBtcEtfs(btcEtfsHtml) || fallbackBtcEtfs;
-  const btcGovernments = parseBtcGovernments(btcGovernmentsHtml) || fallbackBtcGovernments;
-  const ethCompanies = parseEthCompanies(ethCompaniesHtml) || fallbackEthCompanies;
+  const { btcCompanies, btcEtfs, btcGovernments, ethCompanies } = sourceRows;
 
-  const profiles = await fetchMarketProfiles([
+  const profiles = await getMarketProfiles([
     ...btcEtfs,
     ...btcCompanies,
     ...ethEtfs,
@@ -193,6 +202,48 @@ export async function getCryptoTreasuryData(): Promise<CryptoTreasuryData> {
       makeAsset("BTC", "Bitcoin", btcPrice, btcSections),
       makeAsset("ETH", "Ethereum", ethPrice, ethSections)
     ]
+  };
+}
+
+async function getTreasurySourceRows() {
+  const now = Date.now();
+  if (sourceCache && now - sourceCache.at < TREASURY_SOURCE_CACHE_MS) {
+    return cloneSourceRows(sourceCache.rows);
+  }
+
+  const [btcCompaniesHtml, btcEtfsHtml, btcGovernmentsHtml, ethCompaniesHtml] = await Promise.all([
+    fetchTreasuryPage(sources.btcCompanies),
+    fetchTreasuryPage(sources.btcEtfs),
+    fetchTreasuryPage(sources.btcGovernments),
+    fetchTreasuryPage(sources.ethCompanies)
+  ]);
+
+  const rows = {
+    btcCompanies: parseBtcCompanies(btcCompaniesHtml) || sourceCache?.rows.btcCompanies || fallbackBtcCompanies,
+    btcEtfs: parseBtcEtfs(btcEtfsHtml) || sourceCache?.rows.btcEtfs || fallbackBtcEtfs,
+    btcGovernments: parseBtcGovernments(btcGovernmentsHtml) || sourceCache?.rows.btcGovernments || fallbackBtcGovernments,
+    ethCompanies: parseEthCompanies(ethCompaniesHtml) || sourceCache?.rows.ethCompanies || fallbackEthCompanies
+  };
+
+  sourceCache = {
+    at: now,
+    rows: cloneSourceRows(rows)
+  };
+
+  return cloneSourceRows(rows);
+}
+
+function cloneSourceRows(rows: {
+  btcCompanies: RawTreasuryItem[];
+  btcEtfs: RawTreasuryItem[];
+  btcGovernments: RawTreasuryItem[];
+  ethCompanies: RawTreasuryItem[];
+}) {
+  return {
+    btcCompanies: rows.btcCompanies.map((row) => ({ ...row })),
+    btcEtfs: rows.btcEtfs.map((row) => ({ ...row })),
+    btcGovernments: rows.btcGovernments.map((row) => ({ ...row })),
+    ethCompanies: rows.ethCompanies.map((row) => ({ ...row }))
   };
 }
 
@@ -307,7 +358,7 @@ function splitTrailingTicker(value: string) {
   return { name: name.trim(), ticker };
 }
 
-async function fetchMarketProfiles(rows: RawTreasuryItem[]) {
+async function getMarketProfiles(rows: RawTreasuryItem[]) {
   const tickers = [
     ...new Set(
       rows
@@ -316,7 +367,24 @@ async function fetchMarketProfiles(rows: RawTreasuryItem[]) {
         .map((ticker) => ticker.toUpperCase().replace(".", "-"))
     )
   ].slice(0, 90);
+  const cacheKey = tickers.join(",");
+  const now = Date.now();
 
+  if (profileCache && profileCache.key === cacheKey && now - profileCache.at < MARKET_PROFILE_CACHE_MS) {
+    return new Map(profileCache.profiles);
+  }
+
+  const profiles = await fetchMarketProfiles(tickers);
+  profileCache = {
+    at: now,
+    key: cacheKey,
+    profiles: new Map(profiles)
+  };
+
+  return profiles;
+}
+
+async function fetchMarketProfiles(tickers: string[]) {
   const entries = await mapLimit(tickers, 12, async (ticker, index) => [ticker, await fetchMarketProfile(ticker, index < 35)] as const);
   return new Map(entries.filter((entry): entry is readonly [string, MarketProfile] => Boolean(entry[1])));
 }
@@ -335,7 +403,7 @@ async function fetchYahooPrice(ticker: string) {
   try {
     const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=1d&interval=1d`, {
       headers: { "User-Agent": "Mozilla/5.0" },
-      cache: "no-store"
+      next: { revalidate: 60 }
     });
     if (!response.ok) return undefined;
 

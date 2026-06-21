@@ -56,7 +56,7 @@ export function applyCryptoLivePrices(rows: MarketRow[], livePrices: CryptoLiveP
 
 async function fetchBinanceTickers() {
   const now = Date.now();
-  if (cachedTickers && now - cachedAt < 3000) return cachedTickers;
+  if (cachedTickers && now - cachedAt < 1000) return cachedTickers;
 
   const endpoints = ["https://api.binance.com/api/v3/ticker/24hr", "https://api.binance.us/api/v3/ticker/24hr"];
   const tickers = new Map<string, BinanceTicker>();
