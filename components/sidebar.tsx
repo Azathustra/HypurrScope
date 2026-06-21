@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   BriefcaseBusiness,
   ChevronRight,
@@ -169,7 +169,7 @@ export function Sidebar() {
 function PremiumAccessModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-3xl rounded-[26px] border border-white/10 bg-[#080A0F] p-8 shadow-glow lg:p-10">
+      <ModalPanel>
         <ModalHeader onClose={onClose} />
         <div className="mt-3 flex items-center gap-4">
           <span className="flex h-14 w-14 items-center justify-center rounded-full border border-accent/30 bg-accent/10 text-accent">
@@ -198,7 +198,7 @@ function PremiumAccessModal({ onClose }: { onClose: () => void }) {
             S'abonner
           </Link>
         </div>
-      </div>
+      </ModalPanel>
     </div>
   );
 }
@@ -210,10 +210,18 @@ function SidebarModal({ type, onClose }: { type: InfoModalType; onClose: () => v
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-[22px] border border-white/10 bg-[#080A0F] p-6 shadow-glow">
+      <ModalPanel>
         <ModalHeader onClose={onClose} />
-        <h2 className="mt-4 text-2xl font-semibold tracking-tight text-white">Notre equipe</h2>
-        <p className="mt-3 text-sm leading-6 text-muted">
+        <div className="mt-3 flex items-center gap-4">
+          <span className="flex h-14 w-14 items-center justify-center rounded-full border border-accent/30 bg-accent/10 text-accent">
+            <UsersRound size={24} />
+          </span>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Insider Crypto</p>
+            <h2 className="text-3xl font-semibold tracking-tight text-white">Notre equipe</h2>
+          </div>
+        </div>
+        <p className="mt-6 max-w-2xl text-base leading-7 text-muted">
           Une equipe research orientee marche, allocation, donnees on-chain et pedagogie. Les profils detailles seront branches
           dans une prochaine version.
         </p>
@@ -222,12 +230,12 @@ function SidebarModal({ type, onClose }: { type: InfoModalType; onClose: () => v
             onClose();
             setTimeout(() => window.dispatchEvent(new CustomEvent("open-insider-contact")), 0);
           }}
-          className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.04]"
+          className="mt-8 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-5 py-4 text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.04]"
         >
           Contacter l'equipe
           <ExternalLink size={15} />
         </button>
-      </div>
+      </ModalPanel>
     </div>
   );
 }
@@ -237,21 +245,21 @@ function ContactModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-[22px] border border-white/10 bg-[#080A0F] p-6 shadow-glow">
+      <ModalPanel>
         <ModalHeader onClose={onClose} />
-        <div className="mt-3 flex items-center gap-3">
-          <img src="/brand/insider-crypto-logo.png" alt="Insider Crypto" className="h-11 w-11 rounded-full object-cover" />
+        <div className="mt-3 flex items-center gap-4">
+          <img src="/brand/insider-crypto-logo.png" alt="Insider Crypto" className="h-14 w-14 rounded-full object-cover" />
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-white">Contactez Insider Crypto</h2>
+            <h2 className="text-3xl font-semibold tracking-tight text-white">Contactez Insider Crypto</h2>
             <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-muted">Crypto research terminal</p>
           </div>
         </div>
-        <p className="mt-5 text-sm leading-6 text-muted">
+        <p className="mt-6 max-w-2xl text-base leading-7 text-muted">
           Contactez-nous pour un partenariat, une demande professionnelle ou un accompagnement sur votre projet crypto.
         </p>
 
-        <div className="mt-6 grid grid-cols-[1fr_44px] gap-3">
-          <div className="flex h-12 items-center justify-between rounded-xl border border-white/10 bg-black/30 px-4 text-accent">
+        <div className="mt-8 grid grid-cols-[1fr_52px] gap-3">
+          <div className="flex h-14 items-center justify-between rounded-xl border border-white/10 bg-black/30 px-4 text-accent">
             <span className="truncate">{email}</span>
             <button
               onClick={() => navigator.clipboard.writeText(email)}
@@ -263,7 +271,7 @@ function ContactModal({ onClose }: { onClose: () => void }) {
           </div>
           <a
             href={`mailto:${email}`}
-            className="flex h-12 items-center justify-center rounded-xl border border-white/10 text-white transition hover:border-white/20 hover:bg-white/[0.04]"
+            className="flex h-14 items-center justify-center rounded-xl border border-white/10 text-white transition hover:border-white/20 hover:bg-white/[0.04]"
             title="Envoyer un email"
           >
             <Mail size={18} />
@@ -272,12 +280,20 @@ function ContactModal({ onClose }: { onClose: () => void }) {
 
         <a
           href="#"
-          className="mt-4 flex h-12 items-center justify-center gap-2 rounded-xl border border-white/10 text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.04]"
+          className="mt-4 flex h-14 items-center justify-center gap-2 rounded-xl border border-white/10 text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.04]"
         >
           <Send size={17} />
           Contacter sur Telegram
         </a>
-      </div>
+      </ModalPanel>
+    </div>
+  );
+}
+
+function ModalPanel({ children }: { children: ReactNode }) {
+  return (
+    <div className="w-full max-w-3xl rounded-[26px] border border-white/10 bg-[#080A0F] p-8 shadow-glow lg:p-10">
+      {children}
     </div>
   );
 }
