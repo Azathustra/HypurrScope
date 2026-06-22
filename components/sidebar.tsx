@@ -41,7 +41,7 @@ const sections = [
     premium: true,
     items: [
       { label: "Research", href: "/feed", icon: Flame },
-      { label: "Portefeuille", href: "/portfolios", icon: BriefcaseBusiness },
+      { label: "Portefeuille", href: "/portfolio", icon: BriefcaseBusiness },
       { label: "Formation", href: "/formations", icon: GraduationCap },
       { label: "Watchlist", href: "/watchlists", icon: CircleDollarSign }
     ]
